@@ -589,8 +589,14 @@ def _memory_metrics(
     chain = truth.get("stale_chain") or {}
     reached = expected_ends = 0
     if chain:
-        flagged_cards = {
-            run.get("card_id")
+        # Matched on `card_ref`, the "board_id/card_id" the run came from, and
+        # not on `card_id`. A card the pipeline produced carries a ulid, while
+        # the planted chain names cards in the synthetic boards, so comparing
+        # the two would silently never match. The verify_only run that lands
+        # with M8 imports those boards and records which synthetic card each
+        # run is re-verifying.
+        flagged = {
+            run.get("card_ref")
             for run in runs
             for flag in run.get("flags", [])
             if isinstance(flag, dict) and flag.get("rule_id") == "stale_source"
@@ -600,7 +606,7 @@ def _memory_metrics(
             if not ref:
                 continue
             expected_ends += 1
-            if ref.split("/")[-1] in flagged_cards:
+            if ref in flagged:
                 reached += 1
     metrics.append(
         _ratio("stale_propagation", reached, expected_ends)
