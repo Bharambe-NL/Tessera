@@ -17,10 +17,14 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
-# generated corpora and eval output, reproducible from a seed
+# generated corpora, reproducible from a seed
 /gen/synthetic/
 /eval/synthetic/
-/eval/results/
+
+# Mock eval output is reproducible and disposable. A sweep against a live
+# provider is neither: it cost money, it cannot be reproduced exactly, and it is
+# the record of what the product scored on the day. Those are kept.
+/eval/results/*/mock/
 
 # local profile data, never committed
 *.sqlite
