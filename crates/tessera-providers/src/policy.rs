@@ -93,6 +93,32 @@ impl ModelPolicy {
         }
     }
 
+    /// Every stage on one OpenAI-compatible provider, for a bulk eval sweep.
+    ///
+    /// Doc 02 section 10.1 records the model policy under test alongside the
+    /// results, which is what keeps two policies' numbers comparable instead of
+    /// mixed. The three tiers point at the same model unless the caller
+    /// separates them: this family has no effort parameter, so a cheaper tier
+    /// is a different model rather than a different setting (BN-020).
+    pub fn single_provider(provider: &str, key_ref: &str, small: &str, medium: &str, frontier: &str) -> Self {
+        let alias = |model: &str| Alias {
+            provider: provider.into(),
+            model: model.into(),
+            key_ref: key_ref.into(),
+        };
+        let mut policy = Self::default_anthropic(key_ref);
+        policy.aliases = BTreeMap::from([
+            ("small".into(), alias(small)),
+            ("medium".into(), alias(medium)),
+            ("frontier".into(), alias(frontier)),
+            // Vision is left on the same provider; a run that reads no image
+            // never resolves it, and one that does will fail loudly rather than
+            // silently using a model that cannot see.
+            ("vision".into(), alias(frontier)),
+        ]);
+        policy
+    }
+
     /// Overlay another policy. Only the stages and aliases the overlay names are
     /// replaced, so a board override of one stage does not drop the rest.
     pub fn overlay(&self, other: &ModelPolicy) -> ModelPolicy {

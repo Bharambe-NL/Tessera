@@ -95,6 +95,7 @@ class Report:
     metrics: list[Metric] = field(default_factory=list)
     per_question: list[dict] = field(default_factory=list)
     per_edge_case: dict[str, dict] = field(default_factory=dict)
+    per_provider: dict[str, dict] = field(default_factory=dict)
 
     @property
     def failed(self) -> list[Metric]:
@@ -109,6 +110,7 @@ class Report:
             "manifest": self.manifest,
             "metrics": [m.to_json() for m in self.metrics],
             "per_edge_case": self.per_edge_case,
+            "per_provider": self.per_provider,
             "failed": [m.name for m in self.failed],
         }
 
@@ -433,8 +435,80 @@ def score(results: Path, corpus: Path) -> Report:
 
     # ------------------------------------------------------ breakdowns -----
     report.per_edge_case = _by_edge_case(answered, facts)
+    report.per_provider = _by_provider(runs, facts)
     report.per_question = [_question_row(r, facts) for r in runs]
     return report
+
+
+def _by_provider(runs: list[dict], facts: dict[str, dict]) -> dict[str, dict]:
+    """Split every headline number by which provider answered.
+
+    A run that sends most questions to one model and a sample to another has two
+    populations in it. Averaging them produces a number that describes neither,
+    and doc 02 section 10.1 records the policy under test precisely so results
+    stay attributable.
+
+    The reference sample is small on purpose, so its numbers carry wide error
+    bars. It is there to say whether the cheap provider is in the same league,
+    not to be a score in its own right.
+    """
+    out: dict[str, dict] = {}
+    for run in runs:
+        name = run.get("provider") or "unknown"
+        entry = out.setdefault(
+            name,
+            {
+                "leg": run.get("leg") or "",
+                "questions": 0,
+                "cards": 0,
+                "required": 0,
+                "recalled": 0,
+                "forbidden": 0,
+                "citations": 0,
+                "flags": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "latency_ms": [],
+            },
+        )
+        entry["questions"] += 1
+        if not run.get("ok"):
+            continue
+
+        entry["cards"] += 1
+        text = _answer_text(run)
+        for fact_id in run.get("required_facts", []):
+            fact = facts.get(fact_id)
+            if fact is None:
+                continue
+            entry["required"] += 1
+            if matchers.matches(fact["kind"], fact["value"], text):
+                entry["recalled"] += 1
+
+        if any(
+            matchers.matches(facts[f]["kind"], facts[f]["value"], text)
+            for f in run.get("forbidden_facts", [])
+            if f in facts
+        ):
+            entry["forbidden"] += 1
+
+        entry["citations"] += len(run.get("citations") or [])
+        entry["flags"] += len(run.get("flags") or [])
+        cost = run.get("cost") or {}
+        entry["input_tokens"] += cost.get("input_tokens", 0) or 0
+        entry["output_tokens"] += cost.get("output_tokens", 0) or 0
+        entry["latency_ms"].append(run.get("latency_ms", 0))
+
+    for entry in out.values():
+        latencies = sorted(entry.pop("latency_ms"))
+        entry["latency_p50_ms"] = latencies[len(latencies) // 2] if latencies else None
+        entry["recall"] = (
+            round(entry["recalled"] / entry["required"], 3) if entry["required"] else None
+        )
+        entry["cards_produced"] = (
+            round(entry["cards"] / entry["questions"], 3) if entry["questions"] else None
+        )
+    return dict(sorted(out.items()))
 
 
 #: Notices that fire on every card of their mode by design, so counting them as
@@ -595,6 +669,26 @@ def render(report: Report, previous: Path | None) -> str:
             f"| {m.name} | {m.reported} | "
             f"{'' if threshold is None else threshold} | {m.verdict()} | {m.note} |"
         )
+
+    if len(report.per_provider) > 1:
+        lines += [
+            "",
+            "## By provider",
+            "",
+            "The reference sample is small on purpose. It is there to say whether the "
+            "bulk provider is in the same league, not to be a score in its own right.",
+            "",
+            "| Provider | Leg | Questions | Cards | Recall | Forbidden | Tokens | p50 latency |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for name, e in report.per_provider.items():
+            recall = "n/a" if e["recall"] is None else f"{e['recall']:.3f}"
+            tokens = e["input_tokens"] + e["output_tokens"]
+            latency = "n/a" if e["latency_p50_ms"] is None else f"{e['latency_p50_ms']} ms"
+            lines.append(
+                f"| {name} | {e['leg']} | {e['questions']} | {e['cards']} | {recall} | "
+                f"{e['forbidden']} | {tokens} | {latency} |"
+            )
 
     if report.per_edge_case:
         lines += [

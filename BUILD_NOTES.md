@@ -246,6 +246,51 @@ trains everyone to ignore a red line that will one day mean something. The deep 
 in this build correctly reports that it found no sources, so it recalled nothing
 because it asserted nothing.
 
+### BN-020 An OpenAI-compatible adapter, and what depth means on it
+
+**Spec** 10 section 3 lists anthropic, openai, google, mistral and ollama. It does not
+mention Moonshot's Kimi. Pattern 21 exists so a provider is an adapter rather than a
+change to any agent.
+
+**Decision** One adapter for the whole OpenAI-compatible family, taking a base url, a
+provider id and a model. It serves Moonshot, OpenAI and Ollama. Anthropic keeps its own
+adapter, because its request shape is not in this family.
+
+**Reason** The eval sweep is 400 questions, which is a real cost at frontier rates, and
+the author asked for the bulk of it to run on Kimi. Doc 10 section 3's list is about
+which providers to support, not about which wire formats exist, and three of the five
+speak this one.
+
+Two consequences worth stating rather than discovering.
+
+BN-007 carries depth through `output_config.effort`, which this family does not have.
+Temperature is the only dial, so a cheaper tier here is a *different model* rather than
+a different setting, and `single_provider` takes three model ids for that reason. A run
+that leaves them all the same is measuring one model three times, which is fine as long
+as the report says so.
+
+This family also does not accept a schema, only `response_format: json_object`. That
+is doc 10 section 7's "else schema prompting plus validation" path: the prompt carries
+the schema and the schema guard catches what the model got wrong. Expect more retries
+here than on a provider with real structured output, and expect that difference to show
+up in the per provider token counts rather than being hidden.
+
+### BN-021 Keys are pasted into the keychain, never into an argument
+
+**Spec** 01 section 4.16 and 12 operating principle 7: model keys live in the OS
+keychain, the database never holds a secret, and no secret appears in any file.
+
+**Decision** `tessera-keys set <key_ref>` reads the key from the terminal without echo
+and writes it straight to the keychain. It is never accepted as a command line argument.
+`check` proves the key works and lists the models the provider actually offers.
+
+**Reason** A key passed as an argument lands in the shell history, in the process table,
+and in whatever terminal scrollback later gets pasted into a bug report. The spec
+forbids a secret in a file; an argument is worse than a file, because nobody thinks to
+clean it up. `check` exists because model names move: guessing one produces a 404 that
+reads like an outage, and confirming the key before a 400 question sweep is cheaper than
+discovering it halfway through.
+
 ---
 
 ## Measured findings

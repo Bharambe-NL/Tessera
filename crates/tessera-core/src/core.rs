@@ -119,6 +119,17 @@ impl Core {
         Ok(resolve(&self.policy, self.keys.as_ref(), CARD_STAGES)?)
     }
 
+    /// Point the core at a different provider and the policy that names its
+    /// models.
+    ///
+    /// The two move together on purpose. A provider swapped without its policy
+    /// would be sent model ids it has never heard of, and the failure would
+    /// arrive as a bad request rather than as the configuration error it is.
+    pub fn use_provider(&mut self, provider: Arc<dyn ModelProvider>, policy: ModelPolicy) {
+        self.provider = provider;
+        self.policy = policy;
+    }
+
     /// Use a different doctrine pack for boards created from here on.
     ///
     /// Existing boards keep the pack version they pinned, which is what doc 10

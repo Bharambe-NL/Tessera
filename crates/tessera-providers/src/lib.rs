@@ -11,6 +11,7 @@ pub mod error;
 pub mod keychain;
 pub mod mock;
 pub mod model;
+pub mod openai_compat;
 pub mod policy;
 
 pub use anthropic::AnthropicProvider;
@@ -18,6 +19,7 @@ pub use error::{ProviderError, Result};
 pub use keychain::{KeyStore, MemoryKeyStore, OsKeychain};
 pub use mock::{MockFailure, MockProvider, MockResponse};
 pub use model::{Completion, CompletionRequest, ContentBlock, Effort, Message, ModelProvider, Role, Usage};
+pub use openai_compat::{Endpoint, MOONSHOT, OLLAMA, OPENAI, OpenAiCompatProvider, endpoint_for};
 pub use policy::{
     Alias, ModelPolicy, ResolvedPolicy, ResolvedStage, STAGES, StagePolicy, effort_for, resolve,
 };

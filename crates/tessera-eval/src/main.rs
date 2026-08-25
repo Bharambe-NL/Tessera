@@ -24,7 +24,10 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tessera_core::Core;
-use tessera_providers::{MockProvider, MockResponse, ModelProvider};
+use tessera_providers::{
+    AnthropicProvider, KeyStore, MockProvider, MockResponse, ModelPolicy, ModelProvider,
+    OpenAiCompatProvider, OsKeychain, endpoint_for,
+};
 use tessera_store::Source;
 
 #[derive(Parser, Debug)]
@@ -63,6 +66,38 @@ struct Args {
     /// shipped finance pack with the synthetic issuers substituted in.
     #[arg(long, default_value = "finance-eu-synthetic")]
     pack: String,
+
+    /// The provider carrying the bulk of the sweep. A 400 question set is a real
+    /// cost against a frontier model, so the default is to send most of it
+    /// somewhere cheaper and keep a reference sample on the expensive one.
+    #[arg(long, default_value = "moonshot")]
+    bulk_provider: String,
+
+    /// The keychain entry for the bulk provider.
+    #[arg(long, default_value = "moonshot-default")]
+    bulk_key_ref: String,
+
+    /// Model ids for the bulk provider's three tiers. `tessera-keys check`
+    /// lists what the account actually offers, which beats guessing at names
+    /// that move.
+    #[arg(long, default_value = "kimi-k2-turbo-preview")]
+    bulk_small: String,
+    #[arg(long, default_value = "kimi-k2-turbo-preview")]
+    bulk_medium: String,
+    #[arg(long, default_value = "kimi-k2-0905-preview")]
+    bulk_frontier: String,
+
+    /// How many questions of each depth also go to the reference provider.
+    ///
+    /// The point is not coverage, it is calibration: a handful of questions
+    /// answered on both is what turns "Kimi scored X" into "Kimi scored X where
+    /// Anthropic scored Y on the same questions".
+    #[arg(long, default_value_t = 3)]
+    sample_per_depth: usize,
+
+    /// The reference provider's keychain entry.
+    #[arg(long, default_value = "anthropic-default")]
+    reference_key_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +161,12 @@ struct RunRecord {
     events: Vec<Value>,
     cost: Value,
     latency_ms: u128,
+    /// Which provider answered. Doc 02 section 10.1 records the policy under
+    /// test with the results; on a split run that has to be per question, or
+    /// every metric silently averages two different models.
+    provider: String,
+    /// `reference` or `bulk`.
+    leg: String,
 }
 
 fn main() -> std::process::ExitCode {
@@ -143,11 +184,23 @@ fn main() -> std::process::ExitCode {
     println!(
         "running {total} of {} questions against the {} provider",
         questions.len(),
-        if args.mock { "mock" } else { "configured" }
+        if args.mock {
+            "mock"
+        } else {
+            args.bulk_provider.as_str()
+        }
     );
 
-    let provider = build_provider(args.mock);
-    let mut core = match Core::in_memory(provider) {
+    let plan = match build_plan(&args, &questions, total) {
+        Ok(p) => p,
+        Err(message) => {
+            eprintln!("{message}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    println!("{}", plan.describe());
+
+    let mut core = match Core::in_memory(Arc::clone(&plan.bulk.provider)) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("could not bring the core up: {e}");
@@ -165,11 +218,23 @@ fn main() -> std::process::ExitCode {
     let mut records = Vec::with_capacity(total);
     let mut failures = 0usize;
 
+    let mut current = String::new();
     for (i, q) in questions.iter().take(total).enumerate() {
         if i % 25 == 0 && i > 0 {
             println!("  {i}/{total}");
         }
-        records.push(run_one(&mut core, q, &mut failures));
+
+        let on_reference = plan.reference_ids.contains(&q.q_id);
+        let leg = if on_reference { &plan.reference } else { &plan.bulk };
+        if leg.name != current {
+            core.use_provider(Arc::clone(&leg.provider), leg.policy.clone());
+            current = leg.name.clone();
+        }
+
+        let mut record = run_one(&mut core, q, &mut failures);
+        record.provider = leg.name.clone();
+        record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
+        records.push(record);
     }
 
     let dir = args
@@ -306,7 +371,129 @@ fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> R
         events: Vec::new(),
         cost: Value::Null,
         latency_ms: started.elapsed().as_millis(),
+        provider: String::new(),
+        leg: String::new(),
     }
+}
+
+/// One provider and the policy naming its models.
+struct Leg {
+    name: String,
+    provider: Arc<dyn ModelProvider>,
+    policy: ModelPolicy,
+}
+
+/// Which questions go where.
+struct Plan {
+    bulk: Leg,
+    reference: Leg,
+    /// The questions the reference provider answers as well.
+    reference_ids: std::collections::BTreeSet<String>,
+}
+
+impl Plan {
+    fn describe(&self) -> String {
+        if self.reference_ids.is_empty() {
+            return format!("every question on {}", self.bulk.name);
+        }
+        format!(
+            "{} questions on {} as a reference sample, the rest on {}",
+            self.reference_ids.len(),
+            self.reference.name,
+            self.bulk.name
+        )
+    }
+}
+
+fn build_plan(args: &Args, questions: &[Question], total: usize) -> Result<Plan, String> {
+    if args.mock {
+        let mock: Arc<dyn ModelProvider> = Arc::new(MockProvider::new().with_default(MockResponse::Garbage));
+        let leg = |provider: Arc<dyn ModelProvider>| Leg {
+            name: "mock".to_string(),
+            provider,
+            policy: ModelPolicy::default_anthropic("test-key"),
+        };
+        return Ok(Plan {
+            bulk: leg(Arc::clone(&mock)),
+            reference: leg(mock),
+            reference_ids: Default::default(),
+        });
+    }
+
+    let keys = OsKeychain;
+
+    // Fail before spending anything. Doc 03 section 8.3's posture: a missing key
+    // stops the run rather than being discovered halfway through it.
+    let bulk_secret = keys.get(&args.bulk_key_ref).map_err(|_| {
+        format!(
+            "No key stored under `{}`. Set one with: tessera-keys set {}",
+            args.bulk_key_ref, args.bulk_key_ref
+        )
+    })?;
+
+    let endpoint = endpoint_for(&args.bulk_provider)
+        .ok_or_else(|| format!("No adapter for `{}`.", args.bulk_provider))?;
+    let bulk = Leg {
+        name: args.bulk_provider.clone(),
+        provider: Arc::new(
+            OpenAiCompatProvider::new(endpoint, bulk_secret)
+                .map_err(|e| format!("Could not build the {} client: {e}", args.bulk_provider))?,
+        ),
+        policy: ModelPolicy::single_provider(
+            &args.bulk_provider,
+            &args.bulk_key_ref,
+            &args.bulk_small,
+            &args.bulk_medium,
+            &args.bulk_frontier,
+        ),
+    };
+
+    if args.sample_per_depth == 0 {
+        return Ok(Plan {
+            reference: Leg {
+                name: bulk.name.clone(),
+                provider: Arc::clone(&bulk.provider),
+                policy: bulk.policy.clone(),
+            },
+            bulk,
+            reference_ids: Default::default(),
+        });
+    }
+
+    let reference_secret = keys.get(&args.reference_key_ref).map_err(|_| {
+        format!(
+            "No key stored under `{}`. Set one with: tessera-keys set {}",
+            args.reference_key_ref, args.reference_key_ref
+        )
+    })?;
+    let reference = Leg {
+        name: "anthropic".to_string(),
+        provider: Arc::new(
+            AnthropicProvider::new(reference_secret)
+                .map_err(|e| format!("Could not build the Anthropic client: {e}"))?,
+        ),
+        policy: ModelPolicy::default_anthropic(&args.reference_key_ref),
+    };
+
+    // The first N of each depth, in question order, so the sample is the same
+    // set on every run and two runs stay comparable.
+    let mut reference_ids = std::collections::BTreeSet::new();
+    for depth in ["fast", "deep", "research"] {
+        for q in questions
+            .iter()
+            .take(total)
+            .filter(|q| q.depth_expected == depth)
+            .take(args.sample_per_depth)
+        {
+            reference_ids.insert(q.q_id.clone());
+        }
+    }
+
+    Ok(Plan {
+        bulk,
+        reference,
+        reference_ids,
+    })
 }
 
 /// Doc 02 section 10.2's cost and latency, read off the Run the way the
@@ -322,28 +509,6 @@ fn run_cost(core: &Core, board_id: &str) -> Value {
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or(Value::Null)
-}
-
-fn build_provider(mock: bool) -> Arc<dyn ModelProvider> {
-    if mock {
-        // Doc 12 phase 3's acceptance: end to end on the mock, every metric 0 or
-        // n/a. The default response is garbage, so nothing here can pass by
-        // accident (doc 12 operating principle 5).
-        return Arc::new(MockProvider::new().with_default(MockResponse::Garbage));
-    }
-    match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(key) => match tessera_providers::AnthropicProvider::new(key) {
-            Ok(p) => Arc::new(p),
-            Err(e) => {
-                eprintln!("could not build the provider ({e}); falling back to the mock");
-                Arc::new(MockProvider::new())
-            }
-        },
-        Err(_) => {
-            eprintln!("no ANTHROPIC_API_KEY; falling back to the mock");
-            Arc::new(MockProvider::new())
-        }
-    }
 }
 
 fn load_questions(path: &Path) -> std::io::Result<Vec<Question>> {
@@ -391,7 +556,15 @@ fn write_records(
         "policy": args.policy,
         "pack": args.pack,
         "snapshot": args.snapshot,
-        "provider": if args.mock { "mock" } else { "configured" },
+        "provider": if args.mock { "mock" } else { args.bulk_provider.as_str() },
+        "bulk_provider": args.bulk_provider,
+        "bulk_models": {
+            "small": args.bulk_small,
+            "medium": args.bulk_medium,
+            "frontier": args.bulk_frontier
+        },
+        "reference_provider": if args.mock { "mock" } else { "anthropic" },
+        "sample_per_depth": args.sample_per_depth,
         "questions_run": total,
         "cards_failed": failures,
         // Doc 07 section B9: the support check is not enabled until its
