@@ -14,11 +14,45 @@
   <body>
     <main id="main" aria-label="Board">
       <div id="grid" aria-hidden="true"></div>
+
       <div id="world">
         <svg id="edges" aria-hidden="true"></svg>
         <svg id="ink" aria-hidden="true"></svg>
         <div id="cards"></div>
       </div>
+
+      <!-- Doc 11 section 5: mode indicator top left, board title centred at top,
+           toolbar top right, composer bottom centre. -->
+      <div id="mode" data-no-pan><span class="dot"></span><span id="mode-label">Starting</span></div>
+
+      <div id="titlebar" data-no-pan>
+        <input id="title" aria-label="Board title" value="Untitled board" />
+      </div>
+
+      <div id="toolbar" data-no-pan>
+        <button id="zoom-out" aria-label="Zoom out">−</button>
+        <button id="zoom-in" aria-label="Zoom in">+</button>
+        <button id="tidy">Tidy</button>
+        <button id="fit">Fit</button>
+      </div>
+
+      <div id="empty" hidden>Ask something to start a board.</div>
+
+      <form id="composer" data-no-pan>
+        <textarea id="ask" rows="1" placeholder="Ask something" aria-label="Ask a question"></textarea>
+        <div id="modes" role="group" aria-label="Depth">
+          <button type="button" data-depth="fast" class="on">fast</button>
+          <button type="button" data-depth="deep">deep</button>
+          <button type="button" data-depth="research">research</button>
+        </div>
+        <button id="send" type="submit" aria-label="Send">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
+        </button>
+      </form>
+
+      <div id="toasts" role="status" aria-live="polite"></div>
       <pre id="gate" hidden></pre>
     </main>
     <script type="module" src="/src/main.ts"></script>

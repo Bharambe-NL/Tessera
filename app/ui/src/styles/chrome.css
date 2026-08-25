@@ -1,0 +1,239 @@
+/* Application shell. Doc 11 section 5: mode indicator top left, board title
+   centred at top, toolbar top right, composer bottom centre. */
+
+#mode,
+#titlebar,
+#toolbar,
+#composer,
+#toasts,
+#empty {
+  position: absolute;
+  z-index: var(--z-sticky);
+}
+
+/* ---- mode indicator ---- */
+
+#mode {
+  top: var(--s6);
+  left: var(--s7);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+#mode .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+#mode[data-tone='live'] .dot {
+  background: var(--olive-ink);
+}
+
+#mode[data-tone='busy'] .dot {
+  background: var(--amber-ink);
+}
+
+#mode[data-tone='offline'] .dot {
+  background: var(--rust-ink);
+}
+
+/* ---- title ---- */
+
+#titlebar {
+  top: var(--s5);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+#title {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-node);
+  padding: var(--s2) var(--s4);
+  min-width: 280px;
+  text-wrap: balance;
+}
+
+#title:hover {
+  border-color: var(--line);
+}
+
+#title:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+/* ---- toolbar ---- */
+
+#toolbar {
+  top: var(--s5);
+  right: var(--s7);
+  display: flex;
+  gap: var(--s1);
+  padding: var(--s1);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
+#toolbar button {
+  padding: var(--s2) var(--s3);
+  font-size: 12px;
+  border-radius: var(--r-node);
+}
+
+#toolbar button:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+/* ---- composer ---- */
+
+#composer {
+  bottom: var(--s8);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(680px, calc(100vw - var(--s9)));
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: end;
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s4) var(--s6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-composer);
+  box-shadow: var(--shadow-popover);
+}
+
+#composer.busy {
+  border-color: var(--amber-ink);
+}
+
+#composer.disabled {
+  opacity: 0.7;
+}
+
+#ask {
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  resize: none;
+  outline: none;
+  padding: var(--s2) 0;
+  max-height: 160px;
+}
+
+#ask::placeholder {
+  color: var(--ink-3);
+}
+
+#modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border-radius: var(--r-pill);
+}
+
+#modes button {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  padding: var(--s1) var(--s3);
+  border-radius: var(--r-pill);
+  color: var(--ink-3);
+}
+
+#modes button.on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+}
+
+#send {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--surface);
+}
+
+#send:hover {
+  background: var(--accent);
+}
+
+/* ---- empty state and toasts ---- */
+
+/* Doc 11 section 9: empty states instruct. */
+#empty {
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--ink-3);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+#toasts {
+  bottom: calc(var(--s8) + 76px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: var(--s2);
+  width: min(560px, calc(100vw - var(--s9)));
+}
+
+.toast {
+  padding: var(--s3) var(--s5);
+  font-size: 12.5px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ink-3);
+  border-radius: var(--r-button);
+  box-shadow: var(--shadow-popover);
+  color: var(--ink-2);
+}
+
+.toast.warn {
+  border-left-color: var(--amber-ink);
+}
+
+.toast.error {
+  border-left-color: var(--rust-ink);
+}
+
+/* ---- gate output ---- */
+
+#gate {
+  position: absolute;
+  bottom: var(--s6);
+  left: var(--s7);
+  z-index: var(--z-tooltip);
+  margin: 0;
+  padding: var(--s4);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-button);
+  box-shadow: var(--shadow-card);
+}

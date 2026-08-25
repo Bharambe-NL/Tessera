@@ -16,4 +16,6 @@ tauri-build = "2.6.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tauri = "2.11.5"
-tokio = "1.53.1"
+tessera-core = { version = "0.1.0", path = "../../crates/tessera-core" }
+tessera-providers = { version = "0.1.0", path = "../../crates/tessera-providers" }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }

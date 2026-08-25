@@ -365,3 +365,41 @@ fn an_empty_question_is_refused_with_something_the_user_can_act_on() {
     assert_eq!(error.message, "Type a question first.");
     assert_eq!(error.data.expect("data")["kind"], "empty_question");
 }
+
+#[test]
+fn asking_with_no_model_key_says_where_to_fix_it() {
+    // Doc 03 section 10 policy_unresolvable fails before any retrieval, and doc
+    // 11 section 9 wants the message to say what and how: "No search key. Add one
+    // in Profile to enable web search." This is the same shape for a model key.
+    use tessera_providers::MemoryKeyStore;
+
+    let root = std::env::temp_dir().join(format!("tessera-nokey-{}", tessera_store::new_id()));
+    let mut core = Core::open(
+        &root,
+        // A keystore with no entry: exactly a fresh install before first run.
+        Box::new(MemoryKeyStore::new()),
+        mock(),
+        "anthropic-default",
+    )
+    .expect("the app still opens without a key");
+
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let router = build_router();
+    let response = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "card.ask",
+                json!({ "board_id": board_id, "question": "what are world models?" }),
+                1,
+            ),
+        )
+        .expect("reply");
+
+    let error = response.error.expect("asking without a key must fail");
+    assert_eq!(error.message, "No model key. Add one in Profile to answer cards.");
+    assert_eq!(error.data.expect("data")["kind"], "policy_unresolvable");
+
+    let _ = std::fs::remove_dir_all(&root);
+}

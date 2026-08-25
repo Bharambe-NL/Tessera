@@ -4667,6 +4667,8 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tessera-core",
+ "tessera-providers",
  "tokio",
 ]
 
