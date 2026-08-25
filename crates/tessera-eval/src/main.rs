@@ -269,11 +269,7 @@ fn main() -> std::process::ExitCode {
                 let mut current = String::new();
                 let mut local_failures = 0usize;
 
-                loop {
-                    let Some(q) = queue.lock().ok().and_then(|mut q| q.pop_front()) else {
-                        break;
-                    };
-
+                while let Some(q) = queue.lock().ok().and_then(|mut q| q.pop_front()) {
                     let on_reference = plan.reference_ids.contains(&q.q_id);
                     let leg = if on_reference { &plan.reference } else { &plan.bulk };
                     if leg.name != current {
@@ -286,7 +282,7 @@ fn main() -> std::process::ExitCode {
                     record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
 
                     let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if finished % 10 == 0 || finished == total {
+                    if finished.is_multiple_of(10) || finished == total {
                         println!("  {finished}/{total}");
                     }
                     if let Ok(mut out) = collected.lock() {
