@@ -54,6 +54,18 @@ pub const OLLAMA: Endpoint = Endpoint {
     json_mode: false,
 };
 
+/// Extra output budget for a model that reasons before it answers.
+///
+/// The agents size `max_tokens` for the content they expect: the Router asks for
+/// 1,200, which is generous for a classification block. A reasoning model spends
+/// that budget thinking and stops at the limit having emitted nothing, which
+/// arrives as `finish_reason: length` with empty content rather than as anything
+/// resembling a useful error.
+///
+/// The headroom is added rather than the caller's figure replaced, so an agent
+/// that asks for a long answer still gets one.
+const REASONING_HEADROOM: u32 = 6_000;
+
 pub fn endpoint_for(provider: &str) -> Option<Endpoint> {
     match provider {
         "moonshot" | "kimi" => Some(MOONSHOT),
@@ -190,14 +202,22 @@ impl OpenAiCompatProvider {
         let mut body = json!({
             "model": req.model,
             "messages": messages,
-            "max_tokens": req.max_tokens,
+            "max_tokens": req.max_tokens + REASONING_HEADROOM,
         });
 
+        // Temperature is deliberately not sent.
+        //
         // This family has no adaptive thinking and no effort parameter, so the
-        // depth signal cannot be carried the way it is on Anthropic (BN-007).
-        // Temperature is the only dial, and a low one is what a structured
-        // extraction wants; the agents' prompts carry the rest.
-        body["temperature"] = json!(0.2);
+        // depth signal cannot be carried the way it is on Anthropic (BN-007),
+        // and a low temperature looked like the natural substitute for a
+        // structured extraction. It is not: a reasoning model in this family
+        // fixes temperature and rejects anything else outright. Kimi K2.6
+        // answers "only 1 is allowed for this model" with a 400.
+        //
+        // Omitting it takes the provider's own default, which is correct on
+        // every model in the family including the ones that would have accepted
+        // a value. The same conservative-request rule as BN-022: send what a
+        // model is known to take, not what would be nice to set.
 
         if self.json_mode && req.output_schema.is_some() {
             // The schema itself is not accepted here, only the mode. The prompt
@@ -301,9 +321,18 @@ impl ModelProvider for OpenAiCompatProvider {
             .to_string();
 
         if text.is_empty() {
+            // Distinguish the two ways this happens, because the fixes differ.
+            // Running out of budget mid reasoning is a configuration problem;
+            // an empty answer for any other reason is a provider problem.
+            let detail = if finish.as_deref() == Some("length") {
+                "the model used its whole output budget before writing anything, which usually means it reasoned for longer than the budget allowed"
+                    .to_string()
+            } else {
+                format!("no content in the response (finish reason {finish:?})")
+            };
             return Err(ProviderError::Malformed {
                 provider: self.id.clone(),
-                detail: format!("no content in the response (finish reason {finish:?})"),
+                detail,
             });
         }
 
@@ -435,6 +464,28 @@ mod tests {
         );
         assert!(body.get("response_format").is_none());
         assert!(!p.has_json_mode());
+    }
+
+    #[test]
+    fn a_reasoning_model_gets_headroom_above_what_the_agent_asked_for() {
+        // The Router asks for 1,200 tokens of classification. A reasoning model
+        // spends that thinking and returns nothing, so the request carries the
+        // agent's figure plus room to reason.
+        let body = provider().body(
+            &CompletionRequest::new("kimi-k2.6", "route")
+                .user("q")
+                .max_tokens(1200),
+        );
+        assert_eq!(body["max_tokens"], 1200 + REASONING_HEADROOM);
+    }
+
+    #[test]
+    fn temperature_is_never_sent() {
+        // A reasoning model in this family fixes it and rejects any value with
+        // a 400, so setting it turns every call into a bad request.
+        let body = provider().body(&CompletionRequest::new("kimi-k2.6", "synthesize").user("q"));
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
     }
 
     #[test]

@@ -203,7 +203,20 @@ fn main() -> std::process::ExitCode {
     };
     println!("{}", plan.describe());
 
-    let mut core = match Core::in_memory(Arc::clone(&plan.bulk.provider)) {
+    // The real keychain, because the policies name the providers' own key_refs
+    // and a core holding a fake key refuses every stage before it calls anything.
+    let keys: Box<dyn KeyStore> = if args.mock {
+        Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
+    } else {
+        Box::new(OsKeychain)
+    };
+    let first_key_ref = if args.mock {
+        "test-key"
+    } else {
+        args.bulk_key_ref.as_str()
+    };
+
+    let mut core = match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("could not bring the core up: {e}");

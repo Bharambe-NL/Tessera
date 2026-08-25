@@ -315,6 +315,34 @@ Structured output is deliberately not gated the same way: it is not part of that
 generation, and dropping it alongside thinking would push every call onto the schema
 prompting path for no reason.
 
+### BN-023 What a live provider taught that the mock could not
+
+**Spec** 12 phase 4 onward reports numbers from a real provider. Doc 12 operating
+principle 6 runs the eval from phase 3.
+
+Three failures surfaced on the first live calls, none of which any mock test could have
+caught, because a mock accepts whatever it is sent.
+
+**Adaptive thinking on an older model.** BN-022. A 400 on every Router call.
+
+**Temperature on a reasoning model.** The OpenAI-compatible adapter sent
+`temperature: 0.2`, on the reasoning that a low temperature suits structured
+extraction. Kimi K2.6 answers "only 1 is allowed for this model" with a 400. Temperature
+is now not sent at all: the provider's default is correct on every model in the family,
+including the ones that would have accepted a value.
+
+**Output budget consumed by reasoning.** The agents size `max_tokens` for the content
+they expect, and the Router asks for 1,200, which is generous for a classification
+block. A reasoning model spends that budget thinking and stops at the limit having
+written nothing, which arrives as `finish_reason: length` with empty content. The
+adapter now adds headroom on top of the caller's figure rather than replacing it, so an
+agent that asks for a long answer still gets one.
+
+The pattern across all three is the same, and it is worth naming: **send a model only
+what it is known to accept.** Every one of these was a parameter set because it seemed
+useful, on a model that did not take it. The conservative request works everywhere; the
+optimistic one works until it meets a model nobody tested against.
+
 ---
 
 ## Measured findings

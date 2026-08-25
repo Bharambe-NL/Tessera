@@ -104,15 +104,27 @@ impl Core {
         })
     }
 
-    /// An in memory core for tests and for the eval harness.
+    /// An in memory core for tests, with a keystore holding one fake key.
     pub fn in_memory(provider: Arc<dyn ModelProvider>) -> Result<Self, CoreError> {
-        let root = std::env::temp_dir().join(format!("tessera-core-{}", tessera_store::new_id()));
-        Self::open(
-            root,
-            Box::new(MemoryKeyStore::with("test-key", "sk-test")),
+        Self::in_memory_with_keys(
             provider,
+            Box::new(MemoryKeyStore::with("test-key", "sk-test")),
             "test-key",
         )
+    }
+
+    /// A throwaway profile against a real keystore.
+    ///
+    /// The eval harness needs this: it resolves policies naming several
+    /// providers' key_refs, and a core holding only a fake one refuses every
+    /// stage with `policy_unresolvable` before a single call goes out.
+    pub fn in_memory_with_keys(
+        provider: Arc<dyn ModelProvider>,
+        keys: Box<dyn KeyStore>,
+        key_ref: &str,
+    ) -> Result<Self, CoreError> {
+        let root = std::env::temp_dir().join(format!("tessera-core-{}", tessera_store::new_id()));
+        Self::open(root, keys, provider, key_ref)
     }
 
     fn resolved(&self) -> Result<ResolvedPolicy, CoreError> {
