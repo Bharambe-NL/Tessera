@@ -1,0 +1,19 @@
+{
+  "bulk_models": {
+    "frontier": "kimi-k3",
+    "medium": "kimi-k2.6",
+    "small": "kimi-k2.6"
+  },
+  "bulk_provider": "moonshot",
+  "cards_failed": 2,
+  "corpus": "42",
+  "pack": "finance-eu-synthetic",
+  "policy": "kimi-bulk",
+  "provider": "moonshot",
+  "questions_run": 400,
+  "reference_provider": "anthropic",
+  "retrievers_enabled": false,
+  "sample_per_depth": 3,
+  "snapshot": "T1",
+  "support_check_enabled": false
+}
