@@ -440,3 +440,98 @@ fn the_router_prompt_carries_the_packs_domain_vocabulary() {
         "the instruction that vocabulary is evidence rather than a checklist is missing"
     );
 }
+
+fn plan_output() -> Value {
+    json!({
+        "sub_questions": [
+            {
+                "text": "What does the capital rule say about the buffer?",
+                "purpose": "Establish the current rule.",
+                "queries": { "regulatory": "capital conservation buffer article" }
+            },
+            {
+                "text": "What changed in the latest revision?",
+                "purpose": "Establish what moved.",
+                "queries": { "web": "capital rule buffer change" },
+                "depends_on_previous": true
+            }
+        ],
+        "answer_scope": "The current buffer and what changed, without recommending an action.",
+        "caveats": []
+    })
+}
+
+#[test]
+fn a_research_card_is_planned_before_it_is_synthesized() {
+    // Doc 04: the Planner runs when the Router set plan_required, and its
+    // completion event carries the plan summary doc 04 section 7 declares.
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output()))
+            .on("visualize", MockResponse::Json(visual_output())),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    let board_id = core.create_board("Board", "research").expect("board");
+    core.ask(&board_id, "what changed in the capital buffer?", Some("research"))
+        .expect("the card runs");
+
+    assert_eq!(provider.calls_for("plan"), 1, "the Planner made its call");
+
+    let events = core.store.events(Some(&board_id)).expect("events");
+    let planned = events
+        .iter()
+        .find(|e| e.event_type == "card.planned.v1")
+        .expect("card.planned.v1 was emitted");
+    assert_eq!(planned.payload["sub_question_count"], 2);
+    let ids = planned.payload["retriever_ids"].as_array().expect("retriever ids");
+    assert!(
+        ids.iter().any(|i| i == "regulatory"),
+        "a governed domain always includes the regulatory retriever: {ids:?}"
+    );
+    assert!(
+        ids.iter().any(|i| i == "boards"),
+        "memory is on by default, so doc 05 section 8.5 adds boards: {ids:?}"
+    );
+
+    // Doc 04 section 7: one entity.resolved.v1 per literal.
+    let resolved: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == "entity.resolved.v1")
+        .collect();
+    assert!(!resolved.is_empty(), "the Router's entities were resolved");
+    for event in resolved {
+        assert_eq!(
+            event.payload["ambiguity"], "unknown",
+            "no Concept graph exists yet, so every literal is unknown"
+        );
+    }
+}
+
+#[test]
+fn no_enabled_retriever_fails_the_card_with_a_pointer_at_the_fix() {
+    // Doc 04 section 10 no_retriever_enabled. The general pack enables nothing
+    // by default, and with memory switched off there is nothing to plan with.
+    // Doc 06 section A10 covers retrieval that found nothing; this covers
+    // having nothing to retrieve with, and they must not be confused: one is an
+    // honest thin card, the other is a failure that names its fix.
+    let mut core = core_with(mock());
+    core.store
+        .conn()
+        .execute("UPDATE profile SET memory_enabled = 0", [])
+        .expect("memory off");
+
+    let board_id = core.create_board("Board", "deep").expect("board");
+    let error = match core.ask(&board_id, "what changed in the capital rule?", Some("deep")) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("a plan with no retrievers is not a plan"),
+    };
+    assert!(
+        error.contains("no_retriever_enabled") || error.contains("No retriever is enabled"),
+        "the failure names itself: {error}"
+    );
+    assert!(error.contains("Profile"), "the failure points at the fix: {error}");
+}

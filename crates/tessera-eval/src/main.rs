@@ -171,6 +171,11 @@ struct RunRecord {
     /// "board_id/card_id". Empty until M6 builds it, and the manifest's
     /// `memory_enabled` is what tells the scorer which of those it is.
     prior_cards: Vec<String>,
+    /// The Planner's full output, read back from its Step. The card.planned.v1
+    /// event carries only the summary doc 04 section 7 declares, and doc 04
+    /// section 12 scores fields the summary leaves out: must_exclude, filters,
+    /// the assignment per sub-question.
+    plan: Option<Value>,
     status: Option<String>,
     confidence: Option<f64>,
     /// Every event the run emitted, so the scorer can check what happened rather
@@ -334,6 +339,21 @@ fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
     };
 
     let outcome = core.ask(&board_id, &q.text, Some(&q.depth_expected));
+
+    let plan: Option<Value> = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT s.output FROM step s
+             JOIN run r ON r.id = s.run_id
+             WHERE r.board_id = ?1 AND s.agent_id = 'planner' AND s.output IS NOT NULL
+             ORDER BY s.started_at DESC LIMIT 1",
+            [&board_id],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+
     let events: Vec<Value> = core
         .store
         .events(Some(&board_id))
@@ -388,6 +408,7 @@ fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
                     .unwrap_or_default(),
                 citations: card.map(|c| c.citations.clone()).unwrap_or_default(),
                 prior_cards: Vec::new(),
+                plan: plan.clone(),
                 flags: card.map(|c| c.flags.clone()).unwrap_or_default(),
                 status: Some(o.status),
                 confidence: Some(o.confidence),
@@ -436,6 +457,7 @@ fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> R
         block_index: Vec::new(),
         citations: Vec::new(),
         prior_cards: Vec::new(),
+        plan: None,
         flags: Vec::new(),
         status: None,
         confidence: None,
@@ -608,6 +630,28 @@ fn stamp() -> String {
     format!("run-{secs}")
 }
 
+/// The union of the pack's per retriever exclusions, doc 04 section 4's
+/// `doctrine.must_exclude`.
+fn doctrine_must_exclude(pack_code: &str) -> Vec<String> {
+    let Ok(registry) = tessera_schema::Registry::load() else {
+        return Vec::new();
+    };
+    let Ok(packs) = tessera_doctrine::PackLibrary::load_built_in(&registry) else {
+        return Vec::new();
+    };
+    let Ok(pack) = packs.get(pack_code) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = pack
+        .retrievers
+        .iter()
+        .flat_map(|r| r.must_exclude.iter().cloned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn write_records(
     dir: &Path,
     records: &[RunRecord],
@@ -649,6 +693,10 @@ fn write_records(
         // ever been offered a prior card would say the rule holds when nothing
         // has tested it.
         "memory_enabled": false,
+        // Doc 04 section 5: the plan's must_exclude may add to the doctrine's
+        // list and never remove from it. The scorer needs the floor to check
+        // compliance, and the pack is loaded here, not there.
+        "doctrine_must_exclude": doctrine_must_exclude(&args.pack),
     });
     std::fs::write(
         dir.join("manifest.json"),

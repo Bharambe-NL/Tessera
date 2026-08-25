@@ -41,6 +41,11 @@ THRESHOLDS: dict[str, float] = {
     "route_accuracy": 0.85,
     "domain_accuracy": 0.90,
     "override_compliance": 1.0,
+    # Doc 04 section 12's Planner targets.
+    "sub_question_coverage": 0.90,
+    "retriever_assignment_accuracy": 0.95,
+    "must_exclude_compliance": 1.0,
+    "stale_ancestor_reverification": 1.0,
     # Doc 15 section 5's memory targets.
     "prior_card_recall": 0.85,
     "own_card_sole_support_rate": 0.0,  # at most
@@ -512,6 +517,9 @@ def score(results: Path, corpus: Path) -> Report:
         )
     )
 
+    # ---------------------------------------------------------- planner ----
+    report.metrics.extend(_planner_metrics(runs, facts, manifest))
+
     # ----------------------------------------------------------- memory ----
     report.metrics.extend(_memory_metrics(runs, answered, load_memory(corpus), manifest))
 
@@ -520,6 +528,164 @@ def score(results: Path, corpus: Path) -> Report:
     report.per_provider = _by_provider(runs, facts)
     report.per_question = [_question_row(r, facts) for r in runs]
     return report
+
+
+#: Which retriever reaches which kind of corpus document. Doc 05's classes.
+RETRIEVER_FOR_KIND = {"regulatory": "regulatory", "internal": "local", "web": "web"}
+
+
+def _planner_metrics(runs: list[dict], facts: dict[str, dict], manifest: dict) -> list[Metric]:
+    """Doc 04 section 12, scored from the plan each run recorded.
+
+    All four report n/a when no run carried a plan, which is every run before
+    M5 and every fast question after it.
+    """
+    planned = [r for r in runs if r.get("plan")]
+    metrics: list[Metric] = []
+    pending = "no run carried a plan"
+
+    if not planned:
+        for name in (
+            "sub_question_coverage",
+            "retriever_assignment_accuracy",
+            "must_exclude_compliance",
+            "stale_ancestor_reverification",
+        ):
+            metrics.append(Metric(name, None, 0, 0, pending))
+        metrics.append(Metric("planner_latency_p95_ms", None, 0, 0, pending))
+        metrics.append(Metric("planner_tokens_mean", None, 0, 0, pending))
+        return metrics
+
+    def assigned_ids(plan: dict) -> set[str]:
+        return {
+            r.get("id") for sq in plan.get("sub_questions", []) for r in sq.get("retrievers", [])
+        }
+
+    # ---- sub-question coverage --------------------------------------------
+    # A required fact is reachable when, for at least one document that plants
+    # it, some sub-question is assigned the retriever that reaches that kind of
+    # document. Fact level rather than class level, because that is what the
+    # spec says the Synthesizer will starve without.
+    covered = required = 0
+    for run in planned:
+        ids = assigned_ids(run["plan"])
+        for fact_id in run.get("required_facts", []):
+            fact = facts.get(fact_id)
+            if fact is None:
+                continue
+            required += 1
+            kinds = {p.get("doc_id", "").split("-")[0] for p in fact.get("planted_in", [])}
+            reachable_kinds = {
+                "reg": "regulatory",
+                "int": "local",
+                "web": "web",
+            }
+            if any(reachable_kinds.get(k) in ids for k in kinds):
+                covered += 1
+    metrics.append(_ratio("sub_question_coverage", covered, required))
+
+    # ---- retriever assignment accuracy ------------------------------------
+    # Doc 04 section 12: "against required_sources classes". Each question's
+    # required documents imply the retriever classes a correct plan assigns.
+    hits = total = 0
+    for run in planned:
+        ids = assigned_ids(run["plan"])
+        wanted = {
+            {"reg": "regulatory", "int": "local", "web": "web"}.get(doc.split("-")[0])
+            for doc in run.get("required_sources", [])
+        }
+        for retriever in sorted(w for w in wanted if w):
+            total += 1
+            if retriever in ids:
+                hits += 1
+    metrics.append(_ratio("retriever_assignment_accuracy", hits, total))
+
+    # ---- must exclude compliance ------------------------------------------
+    # Doc 04 section 5: the plan may add to the doctrine's exclusions and never
+    # remove from them. The floor comes from the manifest, written by the
+    # runner from the loaded pack.
+    floor = set(manifest.get("doctrine_must_exclude", []))
+    if floor:
+        compliant = sum(
+            1
+            for run in planned
+            if floor <= set(run["plan"].get("constraints", {}).get("must_exclude", []))
+        )
+        metrics.append(_ratio("must_exclude_compliance", compliant, len(planned)))
+    else:
+        metrics.append(
+            Metric(
+                "must_exclude_compliance",
+                None,
+                0,
+                len(planned),
+                "the pack declares no exclusions, so there is nothing to hold",
+            )
+        )
+
+    # ---- stale ancestor re-verification ------------------------------------
+    # Doc 04 section 12 scores this on the T3 snapshot, where ancestors exist
+    # and some of their citations are stale. Runs at T1 have no ancestors.
+    snapshot = manifest.get("snapshot", "T1")
+    if snapshot == "T3":
+        hits = total = 0
+        for run in planned:
+            stale = run["plan"].get("constraints", {}).get("stale_ancestor_citations", [])
+            if not stale:
+                continue
+            total += 1
+            texts = " ".join(
+                sq.get("text", "") for sq in run["plan"].get("sub_questions", [])
+            ).lower()
+            if "verif" in texts or "current" in texts:
+                hits += 1
+        metrics.append(_ratio("stale_ancestor_reverification", hits, total))
+    else:
+        metrics.append(
+            Metric(
+                "stale_ancestor_reverification",
+                None,
+                0,
+                0,
+                "measured at T3, where ancestors with stale citations exist",
+            )
+        )
+
+    # ---- cost -------------------------------------------------------------
+    # Doc 04 section 13: one or two medium calls, 3 to 4 seconds, 2,500 tokens.
+    latencies = []
+    tokens = []
+    for run in planned:
+        for event in run.get("events", []):
+            if (
+                event.get("type") == "model.call.v1"
+                and event.get("payload", {}).get("stage") == "plan"
+            ):
+                payload = event["payload"]
+                latencies.append(payload.get("latency_ms", 0))
+                tokens.append(
+                    (payload.get("input_tokens", 0) or 0) + (payload.get("output_tokens", 0) or 0)
+                )
+    latencies.sort()
+    metrics.append(
+        Metric(
+            "planner_latency_p95_ms",
+            float(latencies[int(len(latencies) * 0.95) - 1]) if latencies else None,
+            0,
+            len(latencies),
+            "doc 04 section 12 targets under 4000",
+        )
+    )
+    metrics.append(
+        Metric(
+            "planner_tokens_mean",
+            sum(tokens) / len(tokens) if tokens else None,
+            sum(tokens),
+            len(tokens),
+            "doc 04 section 12 targets under 2500",
+        )
+    )
+    return metrics
 
 
 def _memory_metrics(

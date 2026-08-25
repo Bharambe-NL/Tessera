@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/planner.v1",
+  "title": "Planner task packet",
+  "description": "Doc 04 section 4. The Planner runs only when the Router set plan_required, so depth here is deep or research, never fast.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "card_id",
+    "request",
+    "routing",
+    "context",
+    "concepts",
+    "retrievers",
+    "doctrine",
+    "effort_budget"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "card_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "request": {
+      "type": "object",
+      "required": ["text", "kind"],
+      "properties": {
+        "text": { "type": "string" },
+        "kind": { "enum": ["root", "follow", "branch", "read_follow"] },
+        "anchor_text": { "type": ["string", "null"] },
+        "anchor_block_ref": { "type": ["string", "null"] }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "required": ["question_type", "domain", "depth"],
+      "properties": {
+        "question_type": { "type": "string" },
+        "domain": { "type": "string" },
+        "audience_id": { "type": ["string", "null"] },
+        "entities": { "type": "array", "items": { "type": "string" } },
+        "needs_current_information": { "type": "boolean" },
+        "needs_internal_documents": { "type": "boolean" },
+        "needs_structured_data": { "type": "boolean" },
+        "depth": { "enum": ["deep", "research"] },
+        "router_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "early_flags": { "type": "array" }
+      }
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "board_seed": { "type": ["string", "null"] },
+        "board_context": { "type": ["string", "null"] },
+        "ancestors": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["card_id", "question"],
+            "properties": {
+              "card_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+              "question": { "type": "string" },
+              "answer_excerpt": { "type": "string", "maxLength": 800 },
+              "citations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["ordinal"],
+                  "properties": {
+                    "ordinal": { "type": "integer", "minimum": 1 },
+                    "source_title": { "type": "string" },
+                    "source_class": { "type": "string" },
+                    "stale": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parent_visual_block": {
+          "type": ["object", "null"],
+          "properties": {
+            "ref": { "type": "string" },
+            "label": { "type": "string" },
+            "note": { "type": "string" }
+          }
+        }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept_id", "term"],
+        "properties": {
+          "concept_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "term": { "type": "string" },
+          "definition": { "type": ["string", "null"] },
+          "aliases": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "retrievers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled"],
+        "properties": {
+          "id": { "enum": ["web", "local", "regulatory", "structured", "boards"] },
+          "enabled": { "type": "boolean" },
+          "config_summary": { "type": "string" }
+        }
+      }
+    },
+    "doctrine": {
+      "type": "object",
+      "properties": {
+        "must_exclude": { "type": "array", "items": { "type": "string" } },
+        "domain_vocabulary": { "type": "array", "items": { "type": "string" } },
+        "freshness_classes": { "type": "object" }
+      }
+    },
+    "effort_budget": {
+      "type": "object",
+      "required": ["max_tokens", "max_sub_questions", "max_passages_total"],
+      "properties": {
+        "max_tokens": { "type": "integer" },
+        "max_sub_questions": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "max_passages_total": { "type": "integer" }
+      }
+    }
+  }
+}

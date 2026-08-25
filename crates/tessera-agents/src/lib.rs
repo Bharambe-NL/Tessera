@@ -7,12 +7,14 @@
 //! No doctrine lives in this crate. A rule about advice language or source
 //! hierarchy is a pack field the agent reads (doc 12 operating principle 4).
 
+pub mod planner;
 pub mod prompts;
 pub mod router;
 pub mod synthesizer;
 pub mod verifier;
 pub mod visualizer;
 
+pub use planner::Planner;
 pub use router::Router;
 pub use synthesizer::Synthesizer;
 pub use verifier::Verifier;
