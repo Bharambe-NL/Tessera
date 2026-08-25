@@ -84,6 +84,10 @@ pub struct RecordedCall {
     pub model: String,
     pub prompt_hash: String,
     pub had_schema: bool,
+    /// The whole prompt, user turns and system, so a test can assert what a
+    /// stage actually told the model. The hash proves two prompts are the same;
+    /// only the text can prove a prompt contains what it must.
+    pub prompt: String,
 }
 
 /// Records every call and answers from a per stage script.
@@ -189,6 +193,18 @@ impl ModelProvider for MockProvider {
                 model: request.model.clone(),
                 prompt_hash: request.prompt_hash(),
                 had_schema: request.output_schema.is_some(),
+                prompt: {
+                    let mut text = request.system.clone().unwrap_or_default();
+                    for message in &request.messages {
+                        for block in &message.content {
+                            if let crate::ContentBlock::Text { text: t } = block {
+                                text.push('\n');
+                                text.push_str(t);
+                            }
+                        }
+                    }
+                    text
+                },
             });
         }
 

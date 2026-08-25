@@ -525,6 +525,48 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-035 The first live Router gate: two of three targets pass, and why the third failed
+
+**Spec** 03 section 12 and doc 12 phase 4: route accuracy 0.85, domain accuracy 0.90, override
+compliance 1.00.
+
+**Measured** 2026-08-25, 400 questions, `finance-eu-synthetic`, corpus 0.1.0-42 at T1. Bulk on
+Moonshot (kimi-k2.6 small and medium, kimi-k3 frontier), a 9 question reference sample on
+Anthropic, 3 per depth. Results kept at `eval/results/42/kimi-bulk/run-1787660259`.
+
+| Target | Measured | Verdict |
+|---|---|---|
+| route_accuracy 0.85 | 0.869 | pass |
+| override_compliance 1.00 | 1.000 | pass |
+| domain_accuracy 0.90 | 0.585 | fail |
+
+**Diagnosis** The failure decomposed cleanly into three facts.
+
+1. The deterministic keyword pass was right 129 times out of 129, and it fired on 32 percent of
+   questions. Every failure came from the questions it left to the model.
+2. On those, the bulk model was right 38 percent of the time, and 118 of its 165 misses were the
+   same answer: `capital`, the first name in the domain list. The reference sample went 9 for 9,
+   which is too small to prove anything except that the prompt was answerable.
+3. The prompt gave the model the four domain names and nothing else. The pack's
+   `domain_vocabulary`, the very list that made the keyword pass perfect, never reached it.
+
+So the gap was not model quality first. It was an information asymmetry the Router built: its
+deterministic half had the vocabulary and its model half did not.
+
+**Change** The classify prompt now lists each domain with its vocabulary, tells the model the
+terms characterise rather than gate ("a question can be about a domain without using any of
+these words"), and passes a multi-domain keyword tie on as a narrowed field instead of
+discarding it. `keyword_match` became `keyword_candidates`; a single hit still decides outright,
+per 03 section 8.1. The mock provider now records prompt text, and an end to end test pins the
+vocabulary's presence in the route prompt.
+
+**Rule applied** Doc 12's regression rule: any change to a classification prompt reruns the 400
+question set. The rerun is the measurement of this change; the numbers above are the baseline it
+is judged against. Note for that comparison: the question set regenerated between the runs
+(BN-033 pins the held out fact into the root pool, which reshuffles downstream draws), so the
+comparison is aggregate against aggregate, not question by question.
+
+
 ### BN-014 M0 canvas gate passes at 200 cards, ceiling between 400 and 800
 
 **Spec** 12 phase 0 ("60 fps pan at 200 cards on a mid range laptop; if not, record the finding and

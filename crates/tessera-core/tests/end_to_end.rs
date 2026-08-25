@@ -403,3 +403,40 @@ fn asking_with_no_model_key_says_where_to_fix_it() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_router_prompt_carries_the_packs_domain_vocabulary() {
+    // Measured on the 400 question sweep: the deterministic keyword pass was
+    // right 129 times out of 129 and fired on a third of the questions. The
+    // other two thirds reached the model as four bare domain names, and the
+    // bulk model answered `capital` for most of them, the first name in the
+    // list. This pins the fix: the terms the pack holds for each domain reach
+    // the classify prompt, so the model has what the keyword pass has.
+    let provider = mock();
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("the shipped pack loads");
+
+    let board_id = core.create_board("Board", "fast").expect("board");
+    // No safeguarding vocabulary appears in the question, so the keyword pass
+    // stays silent and the model is the only thing deciding.
+    core.ask(&board_id, "what applies when a customer initiates a transfer?", None)
+        .expect("the card runs");
+
+    let route = provider
+        .calls()
+        .into_iter()
+        .find(|c| c.stage == "route")
+        .expect("the route call happened");
+    assert!(
+        route.prompt.contains("strong customer authentication"),
+        "the payments vocabulary is missing from the classify prompt"
+    );
+    assert!(
+        route.prompt.contains("risk weighted"),
+        "the capital vocabulary is missing from the classify prompt"
+    );
+    assert!(
+        route.prompt.contains("Classify by what the question is about"),
+        "the instruction that vocabulary is evidence rather than a checklist is missing"
+    );
+}

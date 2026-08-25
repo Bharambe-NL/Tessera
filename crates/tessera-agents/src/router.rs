@@ -86,10 +86,24 @@ impl Agent for Router {
         // Two deterministic pre passes, inserted into the prompt as hints. Doc
         // 03 section 8.1.
         let domains = string_list(&doctrine["domains"]);
-        let keyword_domain = keyword_match(text, &doctrine["domain_vocabulary"]);
+        let vocabulary = doctrine["domain_vocabulary"].clone();
+        let candidates = keyword_candidates(text, &vocabulary);
+        let keyword_domain = match candidates.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        };
         let detected_language = detect_language(text);
 
-        let mut classification = match classify(ctx, packet, &domains, keyword_domain.as_deref()).await {
+        let mut classification = match classify(
+            ctx,
+            packet,
+            &domains,
+            &vocabulary,
+            keyword_domain.as_deref(),
+            &candidates,
+        )
+        .await
+        {
             Ok(c) => c,
             // Doc 03 section 10: a timeout or a schema violation falls back to a
             // deterministic default and the run continues. A wrong route is
@@ -170,7 +184,9 @@ async fn classify(
     ctx: &mut AgentContext<'_>,
     packet: &Value,
     domains: &[String],
+    vocabulary: &Value,
     keyword_domain: Option<&str>,
+    candidates: &[String],
 ) -> Result<Value, Failure> {
     let request = &packet["request"];
     let text = request["text"].as_str().unwrap_or_default();
@@ -193,9 +209,38 @@ async fn classify(
     if let Some(seed) = packet["board"]["seed_label"].as_str() {
         prompt.push_str(&format!("This board was spun off from: {seed}\n"));
     }
-    prompt.push_str(&format!("Available domains: {}\n", domains.join(", ")));
+    // Each domain with the vocabulary the pack gives it.
+    //
+    // Measured, not guessed. On the 400 question sweep the deterministic
+    // keyword pass was right 129 times out of 129 and fired on a third of
+    // the questions. The other two thirds reached the model as four bare
+    // domain names, and a bulk model answered `capital` for most of them,
+    // which is the first name in the list. The terms that tell the domains
+    // apart were in the pack the whole time.
+    prompt.push_str("Available domains, with the terms that characterise each:\n");
+    for domain in domains {
+        let terms = string_list(&vocabulary[domain]);
+        if terms.is_empty() {
+            prompt.push_str(&format!("- {domain}\n"));
+        } else {
+            prompt.push_str(&format!("- {domain}: {}\n", terms.join(", ")));
+        }
+    }
+    prompt.push_str(
+        "A question can be about a domain without using any of these words. \
+Classify by what the question is about, rather than by which words it happens to \
+contain. Answer `unknown` when it is about none of them.\n",
+    );
     if let Some(d) = keyword_domain {
         prompt.push_str(&format!("A keyword pass already matched the domain `{d}`.\n"));
+    } else if candidates.len() > 1 {
+        // Previously discarded. A tie decides nothing on its own, and it
+        // still narrows the field, so it is passed on as what it is.
+        prompt.push_str(&format!(
+            "A keyword pass matched more than one domain, so it decided nothing: {}. \
+The answer is most likely one of them.\n",
+            candidates.join(", ")
+        ));
     }
     if let Some(notice) = ctx.violation_notice() {
         prompt.push('\n');
@@ -535,24 +580,32 @@ fn string_list(v: &Value) -> Vec<String> {
 
 /// Doc 03 section 8.1: a strong single match sets the domain without asking the
 /// model. Two domains matching is not a strong match, so it defers.
-fn keyword_match(text: &str, vocabulary: &Value) -> Option<String> {
+/// Every domain whose vocabulary appears verbatim in the question.
+///
+/// One hit decides the domain outright, per doc 03 section 8.1. More than one
+/// decides nothing, and it still narrows the field, so the candidates go to the
+/// model rather than being thrown away.
+fn keyword_candidates(text: &str, vocabulary: &Value) -> Vec<String> {
     let lower = text.to_lowercase();
-    let map = vocabulary.as_object()?;
-    let mut hits: Vec<&String> = Vec::new();
+    let Some(map) = vocabulary.as_object() else {
+        return Vec::new();
+    };
+    let mut hits: Vec<String> = Vec::new();
     for (domain, terms) in map {
         let matched = terms
-            .as_array()?
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|t| lower.contains(&t.to_lowercase()));
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .any(|t| lower.contains(&t.to_lowercase()))
+            })
+            .unwrap_or(false);
         if matched {
-            hits.push(domain);
+            hits.push(domain.clone());
         }
     }
-    match hits.as_slice() {
-        [one] => Some((*one).clone()),
-        _ => None,
-    }
+    hits.sort();
+    hits
 }
 
 /// A small deterministic pass. Doc 03 section 8.1 asks for language detection
@@ -772,12 +825,16 @@ mod tests {
     fn a_strong_single_keyword_match_sets_the_domain() {
         let vocab = json!({ "capital": ["buffer", "risk weighted"], "payments": ["settlement"] });
         assert_eq!(
-            keyword_match("what is the buffer", &vocab).as_deref(),
-            Some("capital")
+            keyword_candidates("what is the buffer", &vocab),
+            vec!["capital".to_string()]
         );
-        // Two domains matching is not a strong match.
-        assert_eq!(keyword_match("buffer and settlement", &vocab), None);
-        assert_eq!(keyword_match("something else entirely", &vocab), None);
+        // Two domains matching decides nothing on its own, and both names
+        // survive so the model can be told the field was narrowed.
+        assert_eq!(
+            keyword_candidates("buffer and settlement", &vocab),
+            vec!["capital".to_string(), "payments".to_string()]
+        );
+        assert!(keyword_candidates("something else entirely", &vocab).is_empty());
     }
 
     #[test]
