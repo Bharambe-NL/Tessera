@@ -43,3 +43,4 @@ desktop.ini
 
 # the generator's venv
 /gen/.venv/
+*.egg-info/
