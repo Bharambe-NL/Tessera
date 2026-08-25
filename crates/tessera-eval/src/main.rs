@@ -77,14 +77,17 @@ struct Args {
     #[arg(long, default_value = "moonshot-default")]
     bulk_key_ref: String,
 
-    /// Model ids for the bulk provider's three tiers. `tessera-keys check`
-    /// lists what the account actually offers, which beats guessing at names
-    /// that move.
-    #[arg(long, default_value = "kimi-k2-turbo-preview")]
+    /// Model ids for the bulk provider's three tiers.
+    ///
+    /// These defaults came from `tessera-keys check moonshot-default` against a
+    /// real account, not from a guess. Run it again if the provider's catalogue
+    /// changes; a model id that no longer exists returns a 404 that reads like
+    /// an outage.
+    #[arg(long, default_value = "kimi-k2.6")]
     bulk_small: String,
-    #[arg(long, default_value = "kimi-k2-turbo-preview")]
+    #[arg(long, default_value = "kimi-k2.6")]
     bulk_medium: String,
-    #[arg(long, default_value = "kimi-k2-0905-preview")]
+    #[arg(long, default_value = "kimi-k3")]
     bulk_frontier: String,
 
     /// How many questions of each depth also go to the reference provider.

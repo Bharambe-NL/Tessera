@@ -44,3 +44,9 @@ desktop.ini
 # the generator's venv
 /gen/.venv/
 *.egg-info/
+
+# Never commit a key file. Keys belong in the OS keychain; see tessera-keys.
+Keys.txt
+keys.txt
+*.key
+*secret*

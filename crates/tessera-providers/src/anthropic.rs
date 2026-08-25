@@ -20,6 +20,32 @@ use crate::model::{Completion, CompletionRequest, ContentBlock, ModelProvider, R
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
+/// Model families that accept adaptive thinking and `output_config.effort`.
+///
+/// Both parameters arrived with the 4.6 generation. Sending either to an older
+/// model is a 400, not a silently ignored field, so this cannot be left to
+/// optimism: the `small` alias resolves to Haiku 4.5, which means the Router
+/// would have failed on every real call while passing every mock test.
+///
+/// The list is an allowlist rather than a denylist. A model nobody here has
+/// heard of gets the conservative request, which works everywhere, instead of
+/// the modern one, which works only on what was current when this was written.
+const ADAPTIVE_FAMILIES: &[&str] = &[
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-fable-5",
+    "claude-mythos-5",
+];
+
+/// Whether this model takes `thinking: {type: "adaptive"}` and an effort level.
+pub fn supports_adaptive(model: &str) -> bool {
+    ADAPTIVE_FAMILIES.iter().any(|family| model.starts_with(family))
+}
+
 pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
@@ -69,20 +95,37 @@ impl AnthropicProvider {
             })
             .collect();
 
-        let mut output_config = json!({ "effort": req.effort.as_str() });
+        let adaptive = supports_adaptive(&req.model);
+
+        let mut output_config = serde_json::Map::new();
+        if adaptive {
+            // Effort is how depth reaches the call (BN-007), and it arrived with
+            // the same generation as adaptive thinking.
+            output_config.insert("effort".into(), json!(req.effort.as_str()));
+        }
         if let Some(schema) = &req.output_schema {
-            output_config["format"] = json!({ "type": "json_schema", "schema": schema });
+            output_config.insert(
+                "format".into(),
+                json!({ "type": "json_schema", "schema": schema }),
+            );
         }
 
         let mut body = json!({
             "model": req.model,
             "max_tokens": req.max_tokens,
             "messages": messages,
-            // Adaptive is the only on-mode on current models; a fixed thinking
-            // budget is rejected. Effort carries the depth signal instead.
-            "thinking": { "type": "adaptive" },
-            "output_config": output_config,
         });
+
+        if adaptive {
+            // Adaptive is the only on-mode on models that have it, and a fixed
+            // thinking budget is rejected there. On an older model the parameter
+            // is absent entirely: a classification call at low effort has no use
+            // for thinking anyway, so nothing is lost by leaving it off.
+            body["thinking"] = json!({ "type": "adaptive" });
+        }
+        if !output_config.is_empty() {
+            body["output_config"] = Value::Object(output_config);
+        }
 
         if let Some(system) = &req.system {
             body["system"] = json!(system);
@@ -269,10 +312,51 @@ mod tests {
     }
 
     #[test]
-    fn effort_rides_inside_output_config() {
+    fn an_older_model_gets_neither_thinking_nor_effort() {
+        // The `small` alias resolves to Haiku 4.5, which predates both. Sending
+        // either is a 400, so this is the difference between the Router working
+        // against the real provider and failing on every call.
+        let p = AnthropicProvider::new("k").expect("provider");
+        let body = p.body(&CompletionRequest::new("claude-haiku-4-5", "route").user("q"));
+        assert!(body.get("thinking").is_none());
+        assert!(
+            body.get("output_config").is_none(),
+            "effort is not accepted there either"
+        );
+    }
+
+    #[test]
+    fn an_older_model_still_gets_its_output_schema() {
+        // Structured output is not part of the same generation, so dropping it
+        // alongside thinking would break the schema guard's cheap path.
         let p = AnthropicProvider::new("k").expect("provider");
         let body = p.body(
             &CompletionRequest::new("claude-haiku-4-5", "route")
+                .user("q")
+                .expecting(json!({ "type": "object" })),
+        );
+        assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+        assert!(body["output_config"].get("effort").is_none());
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn an_unknown_model_gets_the_conservative_request() {
+        // An allowlist means a model released after this was written is treated
+        // as old, which works, rather than as new, which might not.
+        assert!(!supports_adaptive("claude-something-9"));
+        assert!(supports_adaptive("claude-opus-5"));
+        assert!(supports_adaptive("claude-sonnet-4-6"));
+        assert!(!supports_adaptive("claude-haiku-4-5"));
+    }
+
+    #[test]
+    fn effort_rides_inside_output_config() {
+        // On a model that takes effort at all. Haiku 4.5 does not, which is what
+        // an_older_model_gets_neither_thinking_nor_effort covers.
+        let p = AnthropicProvider::new("k").expect("provider");
+        let body = p.body(
+            &CompletionRequest::new("claude-sonnet-5", "route")
                 .effort(Effort::Low)
                 .user("q"),
         );

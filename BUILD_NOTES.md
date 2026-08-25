@@ -291,6 +291,30 @@ clean it up. `check` exists because model names move: guessing one produces a 40
 reads like an outage, and confirming the key before a 400 question sweep is cheaper than
 discovering it halfway through.
 
+### BN-022 The Anthropic adapter checks what a model accepts
+
+**Spec** 01 section 5's policy resolves `small` to a cheap model; BN-005 makes that
+`claude-haiku-4-5`. BN-007 carries depth through adaptive thinking and
+`output_config.effort`.
+
+**Decision** The adapter holds an allowlist of model families that accept adaptive
+thinking and effort, and sends neither to anything outside it. A model nobody has heard
+of gets the conservative request.
+
+**Reason** A bug, and one no test could have caught. Adaptive thinking and effort both
+arrived with the 4.6 generation; sending either to Haiku 4.5 is a 400, not a silently
+ignored field. The adapter sent them unconditionally, so every Router call, on every
+card, would have failed against the real provider while passing every mock test in the
+suite. It surfaced on the first live call `tessera-keys check` made.
+
+The allowlist direction matters. A denylist of known-old models would treat a model
+released after this was written as modern, and fail on it; an allowlist treats it as old
+and merely leaves some capability unused, which is the failure worth having.
+
+Structured output is deliberately not gated the same way: it is not part of that
+generation, and dropping it alongside thinking would push every call onto the schema
+prompting path for no reason.
+
 ---
 
 ## Measured findings

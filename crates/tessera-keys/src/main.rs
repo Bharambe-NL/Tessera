@@ -200,6 +200,9 @@ fn check(store: &OsKeychain, key_ref: &str, provider_override: Option<&str>) -> 
             eprintln!("Could not build the Anthropic client.");
             return std::process::ExitCode::from(2);
         };
+        // Deliberately the model the `small` alias resolves to, because that is
+        // the one the Router calls on every card and the one whose parameter
+        // support differs from the rest.
         let request = tessera_providers::CompletionRequest::new("claude-haiku-4-5", "healthcheck")
             .user("Reply with the single word: ok")
             .max_tokens(16);
