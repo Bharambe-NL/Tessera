@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Doc 10 section 12: the webview gets the core's commands and nothing else.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

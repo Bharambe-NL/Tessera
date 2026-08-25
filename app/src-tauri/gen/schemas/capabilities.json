@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Doc 10 section 12: the webview gets the core's commands and nothing else.","local":true,"windows":["main"],"permissions":["core:default"]}}

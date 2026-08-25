@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tessera-ui",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "app/ui", "dev"],
+      "port": 5183
+    }
+  ]
+}

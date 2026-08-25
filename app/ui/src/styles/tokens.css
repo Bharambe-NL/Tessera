@@ -1,0 +1,130 @@
+/* Design tokens. Doc 11 section 3.
+   Light theme is the base. Dark inverts lightness on bg, surface, line and ink,
+   keeps accent and the node hues, and moves node ink values to 0.80 lightness. */
+
+:root {
+  /* surfaces */
+  --bg: oklch(0.985 0.004 80);
+  --grid: oklch(0.88 0.006 80);
+  --surface: oklch(1 0 0);
+  --line: oklch(0.86 0.006 80);
+  --line-strong: oklch(0.72 0.008 80);
+
+  /* text. --ink-3 meets 4.5:1 on --surface at 12px and above only;
+     below 12px use --ink-2. Doc 11 section 3. */
+  --ink: oklch(0.22 0.01 80);
+  --ink-2: oklch(0.42 0.012 80);
+  --ink-3: oklch(0.58 0.012 80);
+
+  /* one working accent, under 10 percent of the surface. Doc 11 section 2. */
+  --accent: oklch(0.45 0.12 250);
+  --accent-soft: oklch(0.94 0.03 250);
+  --user: oklch(0.24 0.01 80);
+
+  /* node hues, reserved for generated visuals so they read as content */
+  --olive: oklch(0.86 0.06 120);
+  --olive-ink: oklch(0.36 0.07 125);
+  --slate: oklch(0.86 0.04 250);
+  --slate-ink: oklch(0.36 0.06 255);
+  --rust: oklch(0.82 0.08 40);
+  --rust-ink: oklch(0.40 0.11 38);
+  --amber: oklch(0.86 0.10 85);
+  --amber-ink: oklch(0.38 0.09 75);
+
+  /* spacing scale */
+  --s1: 4px;
+  --s2: 6px;
+  --s3: 8px;
+  --s4: 10px;
+  --s5: 12px;
+  --s6: 14px;
+  --s7: 18px;
+  --s8: 24px;
+  --s9: 40px;
+
+  /* radii */
+  --r-node: 6px;
+  --r-button: 8px;
+  --r-visual: 10px;
+  --r-card: 12px;
+  --r-composer: 14px;
+  --r-pill: 999px;
+
+  /* elevation. One shadow only. Doc 11 section 3. */
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.04);
+  --shadow-popover: 0 3px 8px oklch(0 0 0 / 0.1);
+
+  /* layout constants, from the prototype's tested layout. Doc 11 section 3. */
+  --card-w: 440px;
+  --gap-x: 60px;
+  --gap-y: 90px;
+  --branch-x: 120px;
+
+  /* motion. Doc 11 section 7. */
+  --ease: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --t-rise: 360ms;
+  --t-layout: 380ms;
+  --t-view: 420ms;
+
+  /* stacking */
+  --z-sticky: 20;
+  --z-popover: 30;
+  --z-tooltip: 40;
+
+  color-scheme: light;
+}
+
+:root:not([data-theme='light']) {
+  @media (prefers-color-scheme: dark) {
+    --bg: oklch(0.19 0.004 80);
+    --grid: oklch(0.30 0.006 80);
+    --surface: oklch(0.235 0.005 80);
+    --line: oklch(0.32 0.006 80);
+    --line-strong: oklch(0.46 0.008 80);
+    --ink: oklch(0.94 0.006 80);
+    --ink-2: oklch(0.74 0.010 80);
+    --ink-3: oklch(0.60 0.010 80);
+    --accent: oklch(0.72 0.12 250);
+    --accent-soft: oklch(0.32 0.05 250);
+    --user: oklch(0.90 0.006 80);
+    --olive-ink: oklch(0.80 0.07 125);
+    --slate-ink: oklch(0.80 0.06 255);
+    --rust-ink: oklch(0.80 0.11 38);
+    --amber-ink: oklch(0.80 0.09 75);
+    --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3);
+    --shadow-popover: 0 3px 8px oklch(0 0 0 / 0.45);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: oklch(0.19 0.004 80);
+  --grid: oklch(0.30 0.006 80);
+  --surface: oklch(0.235 0.005 80);
+  --line: oklch(0.32 0.006 80);
+  --line-strong: oklch(0.46 0.008 80);
+  --ink: oklch(0.94 0.006 80);
+  --ink-2: oklch(0.74 0.010 80);
+  --ink-3: oklch(0.60 0.010 80);
+  --accent: oklch(0.72 0.12 250);
+  --accent-soft: oklch(0.32 0.05 250);
+  --user: oklch(0.90 0.006 80);
+  --olive-ink: oklch(0.80 0.07 125);
+  --slate-ink: oklch(0.80 0.06 255);
+  --rust-ink: oklch(0.80 0.11 38);
+  --amber-ink: oklch(0.80 0.09 75);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-popover: 0 3px 8px oklch(0 0 0 / 0.45);
+
+  color-scheme: dark;
+}
+
+/* Doc 11 section 7: reduced motion means instant states, no movement. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-rise: 0ms;
+    --t-layout: 0ms;
+    --t-view: 0ms;
+  }
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The webview loads no remote resource. Fonts are bundled from node_modules
+         at M9; until then the stack falls back to the system sans. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <title>Tessera</title>
+  </head>
+  <body>
+    <main id="main" aria-label="Board">
+      <div id="grid" aria-hidden="true"></div>
+      <div id="world">
+        <svg id="edges" aria-hidden="true"></svg>
+        <svg id="ink" aria-hidden="true"></svg>
+        <div id="cards"></div>
+      </div>
+      <pre id="gate" hidden></pre>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

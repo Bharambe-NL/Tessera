@@ -1,0 +1,536 @@
+/* Board surface. Doc 11 sections 3 and 5. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#main {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+#main:active {
+  cursor: grabbing;
+}
+
+/* Dot grid. Painted on the static parent, not on the transformed layer, so a
+   pan never repaints it. */
+#grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+}
+
+#world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+#edges,
+#ink {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.edge.branch {
+  stroke-dasharray: 3 4;
+}
+
+/* ---- card ---- */
+
+.card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--card-w);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  will-change: transform;
+  contain: layout style paint;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card.new {
+    animation: rise var(--t-rise) var(--ease) both;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--rise-x, 0), calc(var(--rise-y, 0px) + 12px), 0);
+  }
+}
+
+.card .head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--line);
+}
+
+.card .head .title {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-wrap: balance;
+}
+
+.card .head .close {
+  margin-left: auto;
+}
+
+.badge,
+.chip,
+.alias {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px var(--s2);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  background: transparent;
+  flex: none;
+}
+
+.badge.deep {
+  background: var(--slate);
+  color: var(--slate-ink);
+  border-color: transparent;
+}
+
+.badge.research {
+  background: var(--rust);
+  color: var(--rust-ink);
+  border-color: transparent;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot.unchecked {
+  background: var(--ink-3);
+}
+
+.dot.low {
+  background: var(--amber-ink);
+}
+
+.dot.good {
+  background: var(--olive-ink);
+}
+
+.chip.flag.warn {
+  background: var(--amber);
+  color: var(--amber-ink);
+  border-color: transparent;
+}
+
+.chip.flag.block {
+  background: var(--rust);
+  color: var(--rust-ink);
+  border-color: transparent;
+}
+
+.card .body {
+  padding: var(--s5);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.msg {
+  display: inline-block;
+  background: var(--user);
+  color: var(--surface);
+  padding: var(--s2) var(--s4);
+  border-radius: var(--r-button);
+  margin-bottom: var(--s5);
+  max-width: 100%;
+}
+
+.answer {
+  text-wrap: pretty;
+}
+
+sup.cite {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 1px;
+}
+
+.findings {
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line);
+}
+
+.findings b {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  margin-bottom: var(--s2);
+}
+
+.findings div {
+  margin-bottom: var(--s2);
+}
+
+.status.dots {
+  height: 14px;
+}
+
+.status.dots::after {
+  content: '···';
+  letter-spacing: 2px;
+  color: var(--ink-3);
+}
+
+.stages {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.stages .done {
+  color: var(--ink-2);
+}
+
+.stages .live {
+  color: var(--ink);
+}
+
+.failed {
+  color: var(--rust-ink);
+  font-size: 12px;
+}
+
+/* ---- visuals ---- */
+
+.vis {
+  margin-top: var(--s5);
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-visual);
+}
+
+.vis h4 {
+  margin: 0 0 var(--s4);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.vis.tree {
+  text-align: center;
+}
+
+.vis .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  justify-content: center;
+}
+
+.vis .arrow {
+  color: var(--ink-3);
+  font-size: 11px;
+  margin: var(--s1) 0;
+}
+
+.node {
+  display: inline-block;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-node);
+  font-size: 12px;
+  background: var(--slate);
+  color: var(--slate-ink);
+}
+
+.node.h0 {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.node.h1 {
+  background: var(--olive);
+  color: var(--olive-ink);
+}
+
+.node.h2 {
+  background: var(--slate);
+  color: var(--slate-ink);
+}
+
+.node.h3 {
+  background: var(--rust);
+  color: var(--rust-ink);
+}
+
+.node.h4 {
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+.clk {
+  cursor: pointer;
+}
+
+.clk:focus-visible,
+.card :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Wide content scrolls inside its own container; the card never scrolls sideways. */
+.scroll-x {
+  overflow-x: auto;
+}
+
+table.cmp {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.cmp th,
+table.cmp td {
+  border: 1px solid var(--line);
+  padding: var(--s2) var(--s3);
+  text-align: left;
+}
+
+.vis .bottom {
+  margin-top: var(--s4);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.vis .bottom b {
+  margin-right: var(--s2);
+  color: var(--ink);
+}
+
+.vis.list .g {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  margin: var(--s4) 0 var(--s2);
+}
+
+.vis.list .it {
+  display: flex;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-node);
+  font-size: 12px;
+}
+
+.vis.list .it:hover {
+  background: var(--accent-soft);
+}
+
+.vis .steps {
+  display: grid;
+  gap: var(--s2);
+}
+
+.vis .steps .s {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+}
+
+.vis .steps i {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ink-3);
+  padding-top: var(--s2);
+  flex: none;
+}
+
+.vis .steps .clk {
+  flex: 1;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-node);
+}
+
+.vis .steps .clk b {
+  display: block;
+  font-size: 12px;
+}
+
+.vis .steps .clk span {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.vis.figure {
+  margin: var(--s5) 0 0;
+  text-align: center;
+}
+
+.vis.figure svg,
+.vis.figure img {
+  max-width: 100%;
+  height: auto;
+  color: var(--ink);
+}
+
+.vis.figure figcaption {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: var(--s2);
+}
+
+/* A block the Verifier hid. Doc 07 section B8.3. */
+.block-hidden {
+  padding: var(--s2) var(--s3);
+  border: 1px dashed var(--amber-ink);
+  border-radius: var(--r-node);
+  font-size: 11px;
+  color: var(--amber-ink);
+}
+
+/* ---- sources and disclosure ---- */
+
+.sources,
+.built {
+  margin-top: var(--s5);
+  font-size: 12px;
+}
+
+.sources summary,
+.built summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+
+.sources ol {
+  margin: var(--s3) 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.sources li {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.sources .ord {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-3);
+  min-width: 14px;
+}
+
+.sources a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.sources .cls,
+.sources .stale-tag {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.sources li.verdict-unsupported .ord {
+  color: var(--rust-ink);
+}
+
+.sources li.verdict-weak .ord {
+  color: var(--amber-ink);
+}
+
+.sources li.stale .stale-tag {
+  color: var(--amber-ink);
+}
+
+/* ---- footer ---- */
+
+.card .foot {
+  display: flex;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5) var(--s4);
+  border-top: 1px solid var(--line);
+}
+
+.card .foot input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  padding: var(--s2) var(--s3);
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.card .foot input:disabled {
+  opacity: 0.45;
+}
+
+button {
+  font: inherit;
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--r-button);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

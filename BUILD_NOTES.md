@@ -172,6 +172,41 @@ Sample text presented as an answer is exactly that.
 
 ---
 
+## Measured findings
+
+### BN-014 M0 canvas gate passes at 200 cards, ceiling between 400 and 800
+
+**Spec** 12 phase 0 ("60 fps pan at 200 cards on a mid range laptop; if not, record the finding and
+switch the layer to canvas rendering for edges and ink before continuing") and 10 open question 1.
+
+**Decision** Keep DOM rendering for cards, edges and ink. No canvas layer.
+
+**Measured** Windows 11, WebView2 151.0.4129.101, release build, 165 Hz display. Fixture cards carry
+prose, findings, a visual with a populated block index, citations and a sources disclosure, so they
+weigh what real cards weigh.
+
+| Cards | Pan fps | p50 | p95 | p99 | Dropped | First render | Verdict |
+|---|---|---|---|---|---|---|---|
+| 200 | 124.2 | 6.10 ms | 6.20 ms | 66.6 ms | 3/240 | 272 ms | pass |
+| 400 | 101.5 | 6.10 ms | 18.10 ms | 30.4 ms | 3/240 | 472 ms | pass |
+| 800 | 52.4 | 18.10 ms | 30.30 ms | 90.9 ms | 12/240 | 845 ms | fail |
+| 1600 | 25.5 | 36.40 ms | 42.50 ms | 121.2 ms | 240/240 | 1731 ms | fail |
+
+**Reason** At 200 cards p50 equals the display refresh interval, so the pan is refresh locked rather
+than work locked: the board is not the bottleneck at the gate's card count, which is the strongest
+form of a pass. The ceiling sits between 400 and 800 cards, where p50 crosses one 60 Hz budget.
+
+Two things follow. First, doc 10 open question 1 is closed for Tauri: no Electron fallback and no
+canvas layer. Second, if a board is ever expected past roughly 500 cards, the cheap fix is viewport
+culling (skip the transform write for cards outside the visible rectangle), not canvas rendering.
+Culling is a change inside `renderCards`; canvas rendering would cost the accessibility tree, text
+selection and the highlight to branch affordance, so it is the second resort, not the first.
+
+**Not yet measured** macOS. Doc 12 phase 0 asks for both platforms and no Mac was available. The
+gate runs from `TESSERA_GATE=200 TESSERA_GATE_OUT=<path> tessera-app`, so it reruns unchanged there.
+
+---
+
 ## Open questions resolved as proposed
 
 Doc 12's rule is to decide and continue. Every spec open question carrying a "Proposal:" line is
