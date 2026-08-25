@@ -33,6 +33,8 @@ from .entities import manifest, synthetic_source_hierarchy
 from .facts import Fact
 from .facts import summarise as summarise_facts
 from .matchers import MATCHERS_VERSION
+from .memory import MemoryTruth
+from .memory import summarise as summarise_memory
 from .mess import Transformation
 from .questions import Question, audiences_manifest
 from .questions import summarise as summarise_questions
@@ -287,6 +289,7 @@ def write_corpus(
     questions: list[Question],
     boards: list[Board],
     snapshots: list[Snapshot],
+    memory_truth: MemoryTruth,
     transformations: list[Transformation],
     dropped_questions: list[dict],
     verification_problems: list[str],
@@ -307,6 +310,12 @@ def write_corpus(
 
     for board in boards:
         write_json(root / "boards" / board.board_id / "board.json", board.to_json())
+
+    # Doc 15 section 5. What the boards retriever should find, what it must not,
+    # and the two planted cases the Verifier is scored on. At the root rather
+    # than under boards/, because it is not a board and everything that walks
+    # that directory expects to find only boards there.
+    write_json(root / "memory.json", memory_truth.to_json())
 
     # The synthetic sibling of the finance pack: the same rules with the
     # synthetic issuers substituted into the source hierarchy (doc 02 section 4).
@@ -337,6 +346,7 @@ def write_corpus(
             "languages": _count(d.language for d in documents),
         },
         "boards": summarise_boards(boards),
+        "memory": summarise_memory(memory_truth),
         "snapshots": [s.label for s in snapshots],
         "transformations": _count(t.kind for t in transformations),
         "dropped_questions": len(dropped_questions),

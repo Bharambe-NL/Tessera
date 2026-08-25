@@ -14,6 +14,7 @@ from pathlib import Path
 from . import boards as boards_mod
 from . import corpus as corpus_mod
 from . import edge_cases, harness, mess, writer
+from . import memory as memory_mod
 from . import questions as questions_mod
 from . import snapshots as snapshots_mod
 from .facts import generate_facts
@@ -41,6 +42,9 @@ def build(seed: int, out: Path) -> dict:
 
     question_set, dropped = questions_mod.generate(seed, facts, documents)
     board_set = boards_mod.generate(seed, facts, documents, question_set)
+
+    # Memory runs after boards because it plants cards on them.
+    memory_truth = memory_mod.build(seed, facts, documents, question_set, board_set)
     snaps = snapshots_mod.build(seed, documents, facts)
 
     return writer.write_corpus(
@@ -51,6 +55,7 @@ def build(seed: int, out: Path) -> dict:
         questions=question_set,
         boards=board_set,
         snapshots=snaps,
+        memory_truth=memory_truth,
         transformations=transformations,
         dropped_questions=dropped,
         verification_problems=problems,

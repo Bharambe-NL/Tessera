@@ -546,3 +546,174 @@ def test_rng_derive_is_stable_and_independent() -> None:
     parent = Rng(SEED, "a")
     assert parent.derive("x").random() == Rng(SEED, "a", "x").random()
     assert Rng(SEED, "a", "x").random() != Rng(SEED, "a", "y").random()
+
+
+# ----------------------------------------------------------------- memory --
+# Doc 15 section 5, joining phase 3 per HANDOFF.md section 6.
+
+
+@pytest.fixture(scope="module")
+def memory_truth(corpus: Path) -> dict:
+    return json.loads((corpus / "memory.json").read_text(encoding="utf-8"))
+
+
+def test_only_verified_cards_are_eligible_to_be_recalled(corpus: Path) -> None:
+    """Doc 15 section 3: done, deep or research, no open block flags, board not
+    trashed."""
+    for board_dir in sorted((corpus / "boards").iterdir()):
+        board = json.loads((board_dir / "board.json").read_text(encoding="utf-8"))
+        blocked = {
+            f["card_id"]
+            for f in board["flags"]
+            if f["status"] == "open" and f["severity"] == "block"
+        }
+        for card in board["cards"]:
+            if not card["memory_eligible"]:
+                continue
+            assert card["status"] == "done", card["card_id"]
+            assert card["depth"] in ("deep", "research"), card["card_id"]
+            assert card["card_id"] not in blocked
+            assert not board["trashed"], board["board_id"]
+
+
+def test_the_exclusions_have_something_to_exclude(memory_truth: dict) -> None:
+    """A rule with no counterexample in the corpus is untested, not satisfied."""
+    reasons = {row["reason"] for row in memory_truth["ineligible"]}
+    assert "board trashed" in reasons
+    assert "depth fast" in reasons
+    assert "status flagged" in reasons
+    assert memory_truth["eligible"], "nothing is recallable, so recall cannot be measured"
+
+
+def test_prior_card_relevance_comes_from_the_fact_ledger(corpus: Path, memory_truth: dict) -> None:
+    """Every recorded link is a card that states a fact the question requires.
+
+    The threshold in doc 15 section 5 is only worth anything if the generator
+    cannot widen its own ground truth, so this checks the link against the
+    ledger rather than against how it was produced.
+    """
+    cards: dict[str, dict] = {}
+    for board_dir in sorted((corpus / "boards").iterdir()):
+        board = json.loads((board_dir / "board.json").read_text(encoding="utf-8"))
+        for card in board["cards"]:
+            cards[f"{board['board_id']}/{card['card_id']}"] = card
+
+    questions = {
+        q["q_id"]: q
+        for q in (
+            json.loads(line)
+            for line in (corpus / "questions.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    }
+
+    assert memory_truth["prior_cards"], "no question has a prior card to recall"
+    for q_id, refs in memory_truth["prior_cards"].items():
+        required = set(questions[q_id]["required_facts"])
+        for card_ref in refs:
+            card = cards[card_ref]
+            assert set(card["fact_ids"]) & required, f"{card_ref} states nothing {q_id} needs"
+            assert card["memory_eligible"], f"{card_ref} is not recallable"
+            assert card["question"].strip().lower() != questions[q_id]["text"].strip().lower()
+
+
+def test_the_sole_support_trap_leaves_only_a_prior_card(corpus: Path, memory_truth: dict) -> None:
+    """Doc 15 section 2, made testable: after T2 nothing but the card says it."""
+    trap = memory_truth["sole_support_trap"]
+    assert trap, "the own_card case was not planted"
+
+    documents = [
+        json.loads(line)
+        for line in (corpus / "corpus" / "documents.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    carriers = {
+        d["doc_id"]
+        for d in documents
+        for p in d["passages"]
+        for plant in p["plants"]
+        if plant["fact_id"] == trap["fact_id"]
+    }
+    assert carriers == {trap["removed_document"]}, f"{trap['fact_id']} is stated elsewhere too"
+
+    t2 = json.loads((corpus / "snapshots" / "T2.json").read_text(encoding="utf-8"))
+    assert trap["removed_document"] not in {f["doc_id"] for f in t2["files"]}
+    t1 = json.loads((corpus / "snapshots" / "T1.json").read_text(encoding="utf-8"))
+    assert trap["removed_document"] in {f["doc_id"] for f in t1["files"]}
+
+    # And the question that walks into it exists.
+    q_ids = {
+        json.loads(line)["q_id"]
+        for line in (corpus / "questions.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    assert trap["q_id"] in q_ids
+
+
+def test_the_stale_chain_has_both_ends_on_different_boards(
+    corpus: Path, memory_truth: dict
+) -> None:
+    """Doc 05 section 8.5: verify_only also flags the cards that build on it."""
+    chain = memory_truth["stale_chain"]
+    assert chain, "the stale propagation case was not planted"
+
+    origin_board, origin_card = chain["origin"].split("/")
+    dep_board, dep_card = chain["dependent"].split("/")
+    assert origin_board != dep_board, "the retriever excludes the board it is asked from"
+
+    dep = json.loads((corpus / "boards" / dep_board / "board.json").read_text(encoding="utf-8"))
+    card = next(c for c in dep["cards"] if c["card_id"] == dep_card)
+    assert card["builds_on"] == [
+        {"board_id": origin_board, "card_id": origin_card, "verified_at": "T1"}
+    ]
+
+    # The origin cites a v1 value, which is what goes stale at T3.
+    origin = json.loads(
+        (corpus / "boards" / origin_board / "board.json").read_text(encoding="utf-8")
+    )
+    origin_row = next(c for c in origin["cards"] if c["card_id"] == origin_card)
+    assert chain["fact_id"] in origin_row["fact_ids"]
+    assert origin_row["citations"][0]["locator"].endswith(("v1.md", "v1.html", "v1.txt", "v1.pdf"))
+
+
+def test_the_v1_regulation_states_its_own_superseded_values(corpus: Path) -> None:
+    """Doc 02 section 5.4 says a card citing a v1 value is stale at T3.
+
+    Nothing in the corpus stated a v1 value, so the staleness metric in section
+    10.2 had an empty set to score. This is the check that it does not go back
+    to empty.
+    """
+    facts = {
+        f["fact_id"]: f
+        for f in (
+            json.loads(line)
+            for line in (corpus / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    }
+    superseded = {fid for fid, f in facts.items() if f["truth"] == "superseded"}
+    assert superseded
+
+    documents = [
+        json.loads(line)
+        for line in (corpus / "corpus" / "documents.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    v1 = next(d for d in documents if d["doc_id"] == "reg-car3-v1")
+    planted = {plant["fact_id"] for p in v1["passages"] for plant in p["plants"]}
+    assert superseded <= planted, "the v1 text does not state the values it is the v1 of"
+
+
+def test_every_memory_metric_reports_n_a_until_the_retriever_exists() -> None:
+    """BN-019. A target of zero met by never being tested is a false pass."""
+    metrics = harness._memory_metrics([], [], {}, {"memory_enabled": False})
+    names = {m.name for m in metrics}
+    assert names == {
+        "prior_card_recall",
+        "own_card_sole_support_rate",
+        "stale_propagation",
+        "answer_length_with_prior_context",
+    }
+    for metric in metrics:
+        assert metric.value is None, metric.name
+        assert metric.verdict() == "n/a", metric.name

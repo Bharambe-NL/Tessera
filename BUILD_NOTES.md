@@ -458,6 +458,69 @@ is only known once the Synthesizer has finished, and `card.answered.v1` is the e
 that moment. A projection field that no event carries cannot survive a replay, so it had to ride
 on something.
 
+### BN-032 The v1 regulation never stated its own v1 values
+
+**Spec** 02 section 5.4: "A card written before this that cites CAR3 v1 for a changed value is
+stale." Doc 02 section 10.2 scores staleness detection at 0.95.
+
+**Found** while building doc 15 section 5's stale propagation case, which needs exactly the
+card doc 02 section 5.4 describes. There was none, and there could not be one.
+
+`corpus.build_layer_one` gave each regulation the facts matching `truth == "true" and
+supersedes is None`. A superseded fact carries `truth == "superseded"`, so the v1 text got the
+values that never changed and none of the thirty that did. `edge_cases.superseded_regulation`
+then built the v2 text from the unchanged facts plus the v2 values. So the v2 values were in
+the corpus, the v1 values were in no document at all, and nothing anywhere ever stated the old
+number.
+
+The consequence is quiet. Nothing failed, no test broke, and `staleness_detection` reported a
+number. It reported it over an empty set, because a card can only be scored stale for citing a
+value that some document stated.
+
+**Decision** `reg-car3-v1` carries the superseded facts. It is the v1 text, and the v1 values
+are what a v1 text says.
+
+`test_the_v1_regulation_states_its_own_superseded_values` is the check that it stays that way.
+
+### BN-033 One fact is held out of its regulation so the own_card case can exist
+
+**Spec** 15 section 5: `own_card` as sole support after verification, target 0.
+
+**Problem** The target is only meaningful if a case exists where a prior card is the only
+support available. Regulations carry every true fact of their domains, so every fact a prior
+card could state is also in a consolidated text that nothing removes. Removing a regulation to
+make room was not an option: doc 02 section 5.4 deletes internal documents specifically so that
+"a regulation never quietly disappears".
+
+**Decision** One fact is held out of both the v1 and v2 texts and given to a single internal
+memo, `int-memory-sole`, which the timeline removes at T2. After T2 the value appears nowhere
+except a prior card, which is exactly the moment doc 15 section 2's rule has to hold.
+
+Two further consequences, both deliberate:
+
+The question set pins it. Two hundred root questions are drawn from six hundred facts, so
+leaving the trap fact to the shuffle would have put the case in the corpus and left it out of
+the question set about two times in three.
+
+The prior cards are planted, not found. Board cards are seeded from root questions, and no
+question requires a superseded fact or the held out one, so no board card stated either.
+Searching for a card that cannot exist is what the first version of this module did, and it
+returned nothing twice while reporting success.
+
+### BN-034 A memory metric reports n/a until a card has been tempted
+
+**Spec** 15 section 5's four measurements, and BN-019.
+
+**Decision** The denominator of `own_card_sole_support_rate` is the number of cards that cited
+a prior card at all, not the number of cards.
+
+**Why** The target is zero, and a rate of zero over zero cards would report `pass` from the day
+it was written until long after it stopped being true. What would actually have happened is
+that no card has ever been offered a prior card to lean on. With this denominator the metric
+says n/a while the temptation does not exist and becomes real the moment it does. The other
+three report n/a on `memory_enabled` in the run manifest, the same way fact recall reports n/a
+on `retrievers_enabled`.
+
 ---
 
 ## Measured findings

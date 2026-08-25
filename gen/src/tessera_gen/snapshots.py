@@ -19,6 +19,7 @@ import hashlib
 from dataclasses import asdict, dataclass, field
 
 from .corpus import Document
+from .edge_cases import SOLE_SOURCE_DOC_ID
 from .rng import Rng
 
 #: Doc 02 section 5.4: three month steps.
@@ -75,6 +76,12 @@ def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
     internal = [d.doc_id for d in documents if d.kind == "internal" and "broken" not in d.doc_id]
     web = [d.doc_id for d in documents if d.kind == "web"]
 
+    # Doc 15 section 5's own_card sole support case. This memo is the only
+    # statement of its fact, and it is removed at T2, so after that only a prior
+    # card still carries the value. Excluded from every other set below, so no
+    # other change to the timeline can quietly move it.
+    internal = [d for d in internal if d != SOLE_SOURCE_DOC_ID]
+
     added_at_t1 = set(rng.derive("added_t1").sample(internal, 3))
     added_at_t2 = set(
         rng.derive("added_t2").sample([d for d in internal if d not in added_at_t1], 3)
@@ -116,6 +123,8 @@ def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
                 continue
             if doc.doc_id in deleted_at_t3 and not _before(label, "T3"):
                 continue
+            if doc.doc_id == SOLE_SOURCE_DOC_ID and not _before(label, "T2"):
+                continue
             if doc.doc_id in taken_down_at_t3 and not _before(label, "T3"):
                 continue
 
@@ -147,6 +156,11 @@ def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
         else:
             snap.facts_in_force = sorted(stable_ids | v2_ids)
 
+        if label == "T2":
+            snap.notes.append(
+                f"{SOLE_SOURCE_DOC_ID} is removed. The fact it alone carried is now only in a "
+                "prior card, which is context and never evidence."
+            )
         if label == CAR3_V2_PUBLISHED:
             snap.notes.append(f"{car3_v2} is published but does not apply until {CAR3_V2_APPLIES}.")
         if label == CAR3_V2_APPLIES:

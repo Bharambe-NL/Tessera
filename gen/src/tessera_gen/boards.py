@@ -33,6 +33,10 @@ IMAGE_SHARE = 0.25
 FLAGGED_BOARDS = 2
 REVIEWED_BOARDS = 1
 BUNDLE_BOARDS = 3
+#: Doc 15 section 3 excludes a trashed board from memory. One board is trashed so
+#: the exclusion has something to exclude, which is the difference between the
+#: rule being implemented and the rule being tested.
+TRASHED_BOARDS = 1
 
 
 @dataclass
@@ -48,6 +52,13 @@ class Card:
     citations: list[dict] = field(default_factory=list)
     anchor_text: str | None = None
     status: str = "done"
+    #: Doc 01 section 4.4. Prior verified cards this one was built from, as
+    #: {board_id, card_id, verified_at}. Doc 15 section 2: context, never
+    #: evidence, so a card that builds on another still cites the original.
+    builds_on: list[dict] = field(default_factory=list)
+    #: Doc 15 section 3, computed once the flags and the trashed board are known.
+    #: The boards retriever may recall this card.
+    memory_eligible: bool = False
     confidence: float = 0.0
     #: The facts this card's answer states, so an Exercise item can be checked
     #: against ground truth rather than against the prose.
@@ -85,6 +96,8 @@ class Board:
     reviews: list[dict] = field(default_factory=list)
     sketch_truth: SketchTruth | None = None
     export_as_bundle: bool = False
+    #: Doc 15 section 3: a trashed board is never recalled from.
+    trashed: bool = False
     #: Doc 02 section 7: one bundle collides on a Concept term with the
     #: importing profile, so doc 01 section 7's merge rule gets exercised.
     concept_collision: str | None = None
@@ -446,12 +459,31 @@ def generate(
             }
         )
 
+    trashed_from = FLAGGED_BOARDS + REVIEWED_BOARDS
+    for board in boards[trashed_from : trashed_from + TRASHED_BOARDS]:
+        board.trashed = True
+
     for i, board in enumerate(boards[-BUNDLE_BOARDS:]):
         board.export_as_bundle = True
         if i == 0 and board.concepts:
             # Doc 01 section 7: on a term collision the importer keeps both,
             # marks the incoming one proposed, and links them related_to.
             board.concept_collision = board.concepts[0]["term"]
+
+    # Doc 15 section 3: "Only verified cards remember: done, deep or research,
+    # no open block flags, board not trashed." Computed last, because it reads
+    # the flags and the trashed board that the loops above have just set.
+    for board in boards:
+        blocked = {
+            f["card_id"] for f in board.flags if f["status"] == "open" and f["severity"] == "block"
+        }
+        for card in board.cards:
+            card.memory_eligible = (
+                card.status == "done"
+                and card.depth in ("deep", "research")
+                and card.card_id not in blocked
+                and not board.trashed
+            )
 
     return boards
 
@@ -467,4 +499,6 @@ def summarise(boards: list[Board]) -> dict:
         "with_reviews": sum(1 for b in boards if b.reviews),
         "bundles": sum(1 for b in boards if b.export_as_bundle),
         "concept_collisions": sum(1 for b in boards if b.concept_collision),
+        "trashed": sum(1 for b in boards if b.trashed),
+        "memory_eligible_cards": sum(1 for b in boards for c in b.cards if c.memory_eligible),
     }

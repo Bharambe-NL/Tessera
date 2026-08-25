@@ -26,7 +26,7 @@ from .entities import (
     sites_for,
     web_domain,
 )
-from .facts import Fact, Planting
+from .facts import Fact, Planting, sole_source_fact
 from .rng import Rng
 
 
@@ -456,6 +456,13 @@ def build_layer_one(seed: int, facts: list[Fact]) -> list[Document]:
         if f.truth == "true":
             by_domain[f.domain].append(f)
 
+    # Doc 15 section 5's own_card case. One fact is held out of its regulation
+    # so a single internal memo becomes its only source; the memo is removed at
+    # T2, and after that only a prior card still states the value. A Verifier
+    # that answers from the prior card is the failure the case exists to catch.
+    held_out = sole_source_fact(seed, facts)
+    held_out_id = held_out.fact_id if held_out else None
+
     # Regulatory: one consolidated text per regulation, carrying the true facts
     # of every domain it governs.
     for reg in REGULATIONS:
@@ -465,14 +472,28 @@ def build_layer_one(seed: int, facts: list[Fact]) -> list[Document]:
             if REGULATION_FOR_DOMAIN[f.domain] == reg.id
             and f.truth == "true"
             and f.supersedes is None
+            and f.fact_id != held_out_id
         ]
         version = "v1" if reg.id == "car3" else None
-        documents.append(build_regulation(seed, reg.id, reg_facts, version_ref=version))
+
+        # The v1 text states the v1 values, which are exactly the facts the v2
+        # text supersedes. Without them nothing in the corpus ever stated the old
+        # number, so doc 02 section 5.4's "a card written at T1 that cites a v1
+        # value should show source.stale at T3" had no material to work with, and
+        # the staleness metric in section 10.2 was measuring an empty set.
+        superseded = [
+            f
+            for f in facts
+            if f.truth == "superseded" and REGULATION_FOR_DOMAIN[f.domain] == reg.id
+        ]
+        documents.append(
+            build_regulation(seed, reg.id, reg_facts + superseded, version_ref=version)
+        )
 
     # Internal: twelve per domain. Every twelfth lands in Sensitive, and one in
     # ten is Dutch (doc 02 section 5.3).
     for domain in DOMAINS:
-        pool = by_domain[domain]
+        pool = [f for f in by_domain[domain] if f.fact_id != held_out_id]
         rng = Rng(seed, "corpus", "internal-plan", domain)
         for index in range(12):
             count = rng.randint(2, 6)
@@ -486,7 +507,7 @@ def build_layer_one(seed: int, facts: list[Fact]) -> list[Document]:
 
     # Web: eight per domain.
     for domain in DOMAINS:
-        pool = by_domain[domain]
+        pool = [f for f in by_domain[domain] if f.fact_id != held_out_id]
         rng = Rng(seed, "corpus", "web-plan", domain)
         for index in range(8):
             count = rng.randint(1, 4)

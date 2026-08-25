@@ -167,6 +167,10 @@ struct RunRecord {
     block_index: Vec<Value>,
     citations: Vec<Value>,
     flags: Vec<Value>,
+    /// Doc 05 section 8.5. The prior cards the boards retriever recalled, as
+    /// "board_id/card_id". Empty until M6 builds it, and the manifest's
+    /// `memory_enabled` is what tells the scorer which of those it is.
+    prior_cards: Vec<String>,
     status: Option<String>,
     confidence: Option<f64>,
     /// Every event the run emitted, so the scorer can check what happened rather
@@ -383,6 +387,7 @@ fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
                     .and_then(|v| v["block_index"].as_array().cloned())
                     .unwrap_or_default(),
                 citations: card.map(|c| c.citations.clone()).unwrap_or_default(),
+                prior_cards: Vec::new(),
                 flags: card.map(|c| c.flags.clone()).unwrap_or_default(),
                 status: Some(o.status),
                 confidence: Some(o.confidence),
@@ -430,6 +435,7 @@ fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> R
         visual_labels: Vec::new(),
         block_index: Vec::new(),
         citations: Vec::new(),
+        prior_cards: Vec::new(),
         flags: Vec::new(),
         status: None,
         confidence: None,
@@ -638,6 +644,11 @@ fn write_records(
         // product has not earned.
         "support_check_enabled": false,
         "retrievers_enabled": false,
+        // Doc 15 section 5's four metrics report n/a until this is true.
+        // Reporting a clean zero for own_card sole support while no card has
+        // ever been offered a prior card would say the rule holds when nothing
+        // has tested it.
+        "memory_enabled": false,
     });
     std::fs::write(
         dir.join("manifest.json"),

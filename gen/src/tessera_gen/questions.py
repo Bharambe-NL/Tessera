@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field
 
 from .corpus import Document
 from .edge_cases import EMPTY_DOMAIN
-from .facts import Fact
+from .facts import Fact, sole_source_fact
 from .rng import Rng
 
 ROOT_COUNT = 200
@@ -202,6 +202,15 @@ def generate(
     plain_count = ROOT_COUNT - empty_count - advice_count
 
     pool = rng.shuffled(answerable)
+
+    # Doc 15 section 5's own_card case needs a question about the one fact whose
+    # only document is removed at T2. Two hundred root questions are drawn from
+    # six hundred facts, so leaving it to the shuffle means the case is present
+    # in the corpus and absent from the question set about two times in three.
+    held_out = sole_source_fact(seed, facts)
+    if held_out is not None and held_out in pool:
+        pool = [held_out] + [f for f in pool if f is not held_out]
+
     for i in range(plain_count):
         fact = pool[i % len(pool)]
         q_rng = rng.derive("root", str(i))

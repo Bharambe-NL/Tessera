@@ -18,9 +18,14 @@ from .corpus import (
     state_exact,
     state_partial,
 )
-from .entities import REGULATION_FOR_DOMAIN, by_id, web_domain
-from .facts import Fact
+from .entities import REGULATION_FOR_DOMAIN, by_id, firms_for, web_domain
+from .facts import Fact, sole_source_fact
 from .rng import Rng
+
+#: Doc 15 section 5. The only document that states its fact, and the only one
+#: the timeline removes at T2. Named as a constant because `snapshots` has to
+#: remove it and `memory` has to know what the removal traps.
+SOLE_SOURCE_DOC_ID = "int-memory-sole"
 
 #: The ids the harness groups results by.
 CASES = (
@@ -34,6 +39,7 @@ CASES = (
     "ambiguous_term",
     "empty_corpus",
     "hostile_document",
+    "memory_sole_source",
 )
 
 #: Doc 02 section 5.2's empty corpus case: a domain the corpus deliberately says
@@ -53,12 +59,19 @@ def superseded_regulation(seed: int, facts: list[Fact]) -> list[Document]:
         for f in facts
         if f.supersedes and f.truth == "true" and REGULATION_FOR_DOMAIN[f.domain] == "car3"
     ]
+    # The held out fact is absent from v2 for the same reason it is absent from
+    # v1: doc 15 section 5's case needs exactly one document to state it, and a
+    # consolidated text that restates it would keep the value answerable after
+    # the memo is gone.
+    held_out = sole_source_fact(seed, facts)
+    held_out_id = held_out.fact_id if held_out else None
     unchanged = [
         f
         for f in facts
         if REGULATION_FOR_DOMAIN[f.domain] == "car3"
         and f.truth == "true"
         and f.supersedes is None
+        and f.fact_id != held_out_id
         and not any(v.supersedes == f.fact_id for v in v2_facts)
     ]
     doc = build_regulation(
@@ -433,6 +446,43 @@ def silent_edit_pages(seed: int, facts: list[Fact]) -> list[Document]:
     return out
 
 
+def memory_sole_source(seed: int, facts: list[Fact]) -> list[Document]:
+    """The only statement of one fact, removed at T2.
+
+    Doc 15 section 2: a prior card is context, never evidence. This is the
+    document whose absence puts that to the test. `corpus.build_layer_one` holds
+    the same fact out of its regulation, so once this memo is gone at T2 nothing
+    in the corpus states the value and a prior card is all that is left.
+    """
+    fact = sole_source_fact(seed, facts)
+    if fact is None:
+        return []
+
+    firm = Rng(seed, "edge", "memory_sole").choice(firms_for(fact.domain) or firms_for("capital"))
+    doc = Document(
+        doc_id=SOLE_SOURCE_DOC_ID,
+        kind="internal",
+        title="Internal note: a figure held only here",
+        path=f"internal/Capital/{SOLE_SOURCE_DOC_ID}.md",
+        format="md",
+        issuer=firm.name,
+        published_at="2025-11-03",
+        edge_case_id="memory_sole_source",
+    )
+    doc.passages.append(
+        Passage(
+            passage_id=f"{SOLE_SOURCE_DOC_ID}-p1",
+            text=(
+                "This note records a figure that is not restated in the consolidated text. "
+                + state_exact(fact)
+            ),
+            location={"section": "1"},
+            plants=[(fact.fact_id, "exact")],
+        )
+    )
+    return [doc]
+
+
 def build_layer_two(seed: int, facts: list[Fact]) -> list[Document]:
     """Every edge case document, in a stable order."""
     documents: list[Document] = []
@@ -446,6 +496,7 @@ def build_layer_two(seed: int, facts: list[Fact]) -> list[Document]:
         ambiguous_term,
         hostile_document,
         silent_edit_pages,
+        memory_sole_source,
     ):
         documents.extend(builder(seed, facts))
     return documents

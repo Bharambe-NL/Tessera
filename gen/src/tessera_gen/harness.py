@@ -41,14 +41,30 @@ THRESHOLDS: dict[str, float] = {
     "route_accuracy": 0.85,
     "domain_accuracy": 0.90,
     "override_compliance": 1.0,
+    # Doc 15 section 5's memory targets.
+    "prior_card_recall": 0.85,
+    "own_card_sole_support_rate": 0.0,  # at most
+    "stale_propagation": 0.95,
 }
 
 #: Metrics where a lower number is better.
-LOWER_IS_BETTER = {"forbidden_fact_rate", "flag_false_positive_rate"}
+LOWER_IS_BETTER = {
+    "forbidden_fact_rate",
+    "flag_false_positive_rate",
+    "own_card_sole_support_rate",
+}
 
 #: Doc 02 section 10.3: fast is reported with no threshold, because fast mode is
 #: unverified by design.
-NO_THRESHOLD = {"fact_recall_fast", "reader_structure_recovery_mess_f1"}
+NO_THRESHOLD = {
+    "fact_recall_fast",
+    "reader_structure_recovery_mess_f1",
+    # Doc 15 section 5: "answer length reduction when prior context exists
+    # (should shorten, reported)". Reported, because a shorter answer is the
+    # expectation and not a promise: a question that genuinely needs more said
+    # should say more, and a threshold here would reward terseness over sense.
+    "answer_length_with_prior_context",
+}
 
 
 @dataclass
@@ -146,6 +162,14 @@ def load_facts(corpus: Path) -> dict[str, dict]:
             if line.strip()
         )
     }
+
+
+def load_memory(corpus: Path) -> dict:
+    """Doc 15 section 5's ground truth, or an empty one on an older corpus."""
+    path = corpus / "memory.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 #: The opening of the answer doc 06 section A10 requires when retrieval found
@@ -488,11 +512,131 @@ def score(results: Path, corpus: Path) -> Report:
         )
     )
 
+    # ----------------------------------------------------------- memory ----
+    report.metrics.extend(_memory_metrics(runs, answered, load_memory(corpus), manifest))
+
     # ------------------------------------------------------ breakdowns -----
     report.per_edge_case = _by_edge_case(answered, facts)
     report.per_provider = _by_provider(runs, facts)
     report.per_question = [_question_row(r, facts) for r in runs]
     return report
+
+
+def _memory_metrics(
+    runs: list[dict],
+    answered: list[dict],
+    truth: dict,
+    manifest: dict,
+) -> list[Metric]:
+    """Doc 15 section 5's four measurements.
+
+    Every one of them has a denominator that is zero until the boards retriever
+    exists, and BN-019 says a metric with nothing to measure reports n/a rather
+    than zero. That matters most for `own_card_sole_support_rate`, whose target
+    is zero: reporting a clean zero today would say the rule holds, when what
+    actually happened is that no card has ever been offered a prior card to lean
+    on. The denominator is cards that had own_card context, so the number stays
+    n/a until the temptation exists and becomes real the moment it does.
+    """
+    enabled = bool(manifest.get("memory_enabled", False))
+    pending = "the boards retriever arrives at M6; memory was not in this run"
+    metrics: list[Metric] = []
+
+    # ---- recall of relevant prior cards -----------------------------------
+    expected: dict[str, list[str]] = truth.get("prior_cards", {})
+    hits = total = 0
+    for run in runs:
+        want = expected.get(run.get("q_id", ""), [])
+        if not want:
+            continue
+        got = set(run.get("prior_cards") or [])
+        total += len(want)
+        hits += sum(1 for ref in want if ref in got)
+    metrics.append(
+        _ratio("prior_card_recall", hits, total)
+        if enabled
+        else Metric("prior_card_recall", None, hits, total, pending)
+    )
+
+    # ---- own_card as sole support -----------------------------------------
+    # Doc 15 section 2. A numeric or regulatory claim standing on a prior card
+    # alone is the failure the whole design exists to prevent.
+    violations = tempted = 0
+    for run in answered:
+        classes = [
+            (c or {}).get("source_class") for c in run.get("citations", []) if isinstance(c, dict)
+        ]
+        if "own_card" not in classes:
+            continue
+        tempted += 1
+        if all(c == "own_card" for c in classes):
+            violations += 1
+    metrics.append(
+        _ratio(
+            "own_card_sole_support_rate",
+            violations,
+            tempted,
+            "cards that cited a prior card at all",
+        )
+        if enabled
+        else Metric("own_card_sole_support_rate", None, violations, tempted, pending)
+    )
+
+    # ---- stale propagation -------------------------------------------------
+    # Doc 05 section 8.5: when a source cited by the prior card goes stale,
+    # verify_only also flags the cards that build on it. Both ends of the
+    # planted chain have to be reached.
+    chain = truth.get("stale_chain") or {}
+    reached = expected_ends = 0
+    if chain:
+        flagged_cards = {
+            run.get("card_id")
+            for run in runs
+            for flag in run.get("flags", [])
+            if isinstance(flag, dict) and flag.get("rule_id") == "stale_source"
+        }
+        for end in ("origin", "dependent"):
+            ref = chain.get(end)
+            if not ref:
+                continue
+            expected_ends += 1
+            if ref.split("/")[-1] in flagged_cards:
+                reached += 1
+    metrics.append(
+        _ratio("stale_propagation", reached, expected_ends)
+        if enabled
+        else Metric("stale_propagation", None, reached, expected_ends, pending)
+    )
+
+    # ---- answer length with prior context ----------------------------------
+    with_prior = [len(_answer_text(r)) for r in answered if r.get("prior_cards")]
+    without = [len(_answer_text(r)) for r in answered if not r.get("prior_cards")]
+    if enabled and with_prior and without:
+        mean_with = sum(with_prior) / len(with_prior)
+        mean_without = sum(without) / len(without)
+        change = (mean_without - mean_with) / mean_without if mean_without else 0.0
+        metrics.append(
+            Metric(
+                "answer_length_with_prior_context",
+                change,
+                len(with_prior),
+                len(without),
+                f"{mean_with:.0f} characters with prior context, {mean_without:.0f} without; "
+                "a positive number means shorter",
+            )
+        )
+    else:
+        metrics.append(
+            Metric(
+                "answer_length_with_prior_context",
+                None,
+                len(with_prior),
+                len(without),
+                pending,
+            )
+        )
+
+    return metrics
 
 
 def _by_provider(runs: list[dict], facts: dict[str, dict]) -> dict[str, dict]:

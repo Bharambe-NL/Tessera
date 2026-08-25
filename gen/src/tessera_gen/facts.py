@@ -540,3 +540,29 @@ def summarise(facts: list[Fact]) -> dict:
         "by_truth": dict(sorted(truths.items())),
         "numeric_share": round(numeric / max(len(facts), 1), 3),
     }
+
+
+def sole_source_fact(seed: int, facts: list[Fact]) -> Fact | None:
+    """The one fact stated in an internal memo and nowhere else.
+
+    Doc 15 section 5 needs a question whose only surviving support is a prior
+    card, and that cannot happen while a regulation still states the value.
+    Regulations carry every true fact of their domains, so one fact is held out
+    of its regulation and given to a single internal memo, which the timeline
+    removes at T2.
+
+    It lives here because two modules need the same answer and neither may
+    import the other: `corpus` has to leave it out of the regulation, and
+    `edge_cases` has to put it in the memo. Both derive it from the seed.
+    """
+    candidates = [
+        f
+        for f in facts
+        if f.truth == "true"
+        and f.supersedes is None
+        and f.kind == "number"
+        and f.domain == "capital"
+    ]
+    if not candidates:
+        return None
+    return Rng(seed, "memory", "sole-source").choice(candidates)
