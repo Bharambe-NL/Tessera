@@ -1,0 +1,37 @@
+[project]
+name = "tessera-gen"
+version = "0.1.0"
+description = "Synthetic corpus generator and eval harness for Tessera. Doc 02."
+requires-python = ">=3.11"
+dependencies = [
+  "reportlab>=4.0",
+  "python-docx>=1.1",
+  "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0", "pypdf>=4.0"]
+
+[project.scripts]
+gen = "tessera_gen.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

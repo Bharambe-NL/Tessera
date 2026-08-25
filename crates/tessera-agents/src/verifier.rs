@@ -101,6 +101,8 @@ impl Agent for Verifier {
                 "scope_exclusion" => scope_exclusion(answer, &visual, constraints),
                 "numeric_without_citation" => numeric_without_citation(answer, &citations),
                 "computed_value" => computed_value(packet, &citations, &passages),
+                "advice_language" => advice_language(answer, &packet["early_flags"]),
+                "forbidden_reference" => forbidden_reference(&citations, &passages, packet),
                 "unsupported_claim" => unsupported_claim(&unsupported, mode),
                 "visual_block_unbound" => visual_block_unbound(&visual),
                 "length_and_format" => length_and_format(answer, packet),
@@ -365,6 +367,78 @@ fn computed_value(packet: &Value, citations: &[Value], passages: &[Value]) -> Op
         }
     }
     Some(out)
+}
+
+/// Recommendation phrasing. Doc 07 section B8.1.
+///
+/// "warn; block if the early flag was present." The Router already told the
+/// Synthesizer to answer descriptively (doc 03 section 8.4); this checks that it
+/// did, which is the half of advice containment the prompt cannot guarantee.
+fn advice_language(answer: &str, early_flags: &Value) -> Option<Vec<Value>> {
+    let lower = answer.to_lowercase();
+    const PHRASES: &[&str] = &[
+        "we recommend",
+        "you should",
+        "i would recommend",
+        "the best option is",
+        "my advice",
+        "you ought to",
+        "it is advisable",
+        "the right course",
+        "we suggest you",
+    ];
+
+    let asked_for_advice = early_flags
+        .as_array()
+        .is_some_and(|f| f.iter().any(|x| x["rule_id"] == "advice_request"));
+
+    Some(
+        PHRASES
+            .iter()
+            .filter(|p| lower.contains(**p))
+            .map(|p| {
+                hit(
+                    "answer_span",
+                    None,
+                    if asked_for_advice {
+                        "The question asked for a recommendation and the answer gave one."
+                    } else {
+                        "The answer recommends a course of action rather than describing the options."
+                    },
+                    json!({ "matched": p, "requested": asked_for_advice }),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// A citation to a source class the doctrine forbids for this question type.
+/// Doc 07 section B8.1's example: a web page as the sole support for a
+/// regulatory value.
+fn forbidden_reference(citations: &[Value], passages: &[Value], packet: &Value) -> Option<Vec<Value>> {
+    if packet["kind"].as_str() == Some("verify_only") || citations.is_empty() {
+        return Some(vec![]);
+    }
+    let class_of: std::collections::BTreeMap<&str, &str> = passages
+        .iter()
+        .filter_map(|p| Some((p["passage_id"].as_str()?, p["source"]["class"].as_str()?)))
+        .collect();
+
+    let classes: Vec<&str> = citations
+        .iter()
+        .filter_map(|c| c["passage_id"].as_str())
+        .filter_map(|id| class_of.get(id).copied())
+        .collect();
+
+    if classes.is_empty() || classes.iter().any(|c| *c != "web") {
+        return Some(vec![]);
+    }
+    Some(vec![hit(
+        "whole_card",
+        None,
+        "Every source behind this answer is a web page.",
+        json!({ "classes": classes }),
+    )])
 }
 
 /// A sentence the Synthesizer marked as drawn from model knowledge.

@@ -133,6 +133,15 @@ pub trait Agent: Send + Sync {
         None
     }
 
+    /// The payload for that event. Each agent spec declares its own fields
+    /// (doc 03 section 7 and the equivalent in the others), so an agent that
+    /// emits an event says what goes in it rather than leaving the harness to
+    /// guess from the shape of its output.
+    fn completion_payload(&self, output: &Value) -> Value {
+        let _ = output;
+        Value::Null
+    }
+
     async fn execute(&self, ctx: &mut AgentContext<'_>, packet: &Value) -> Result<Value, Failure>;
 }
 
@@ -331,22 +340,17 @@ fn with_ids(mut ev: NewEvent, cfg: &RunAgent<'_>) -> NewEvent {
 }
 
 fn completion_payload(agent: &dyn Agent, cfg: &RunAgent<'_>, output: &Value) -> Value {
-    let mut payload = json!({
-        "agent_id": agent.id(),
-        "run_id": cfg.run_id,
-    });
+    let mut payload = match agent.completion_payload(output) {
+        Value::Object(map) => Value::Object(map),
+        // An agent that declared an event but no payload gets the identifying
+        // fields only. The Step already holds the full output, so the event does
+        // not need to repeat it.
+        _ => json!({}),
+    };
+    payload["agent_id"] = json!(agent.id());
+    payload["run_id"] = json!(cfg.run_id);
     if let Some(card) = &cfg.card_id {
         payload["card_id"] = json!(card);
-    }
-    // Agents put the fields their event declares at the top level of the output;
-    // copying the scalar ones keeps the event readable without duplicating the
-    // whole output into the log, which the Step already holds.
-    if let Some(obj) = output.as_object() {
-        for (k, v) in obj {
-            if v.is_string() || v.is_number() || v.is_boolean() {
-                payload[k] = v.clone();
-            }
-        }
     }
     payload
 }

@@ -56,6 +56,22 @@ impl Agent for Router {
         Some("card.routed.v1")
     }
 
+    /// Doc 03 section 7's payload, field for field.
+    fn completion_payload(&self, output: &Value) -> Value {
+        json!({
+            "question_type": output["classification"]["question_type"].clone(),
+            "domain": output["classification"]["domain"].clone(),
+            "audience_id": output["classification"]["audience_id"].clone(),
+            "depth_chosen": output["depth"]["chosen"].clone(),
+            "depth_recommended": output["depth"]["recommended"].clone(),
+            "depth_reason": output["depth"]["reason"].clone(),
+            "overridden_by_user": output["depth"]["overridden_by_user"].clone(),
+            "plan_required": output["plan_required"].clone(),
+            "visual_hint": output["visual_hint"].clone(),
+            "model_resolution": output["model_resolution"].clone(),
+        })
+    }
+
     async fn execute(&self, ctx: &mut AgentContext<'_>, packet: &Value) -> Result<Value, Failure> {
         step(ctx, "validating_packet")?;
 

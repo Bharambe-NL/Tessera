@@ -29,6 +29,10 @@ pub struct Core {
     pub policy: ModelPolicy,
     pub profile_id: String,
     pub source: Source,
+    /// Which doctrine pack this profile's boards pin. Doc 01 section 4.1: a
+    /// board pins a pack version, and doc 02 section 10.1 runs evaluation on
+    /// `finance-eu-synthetic` rather than on whatever ships as the default.
+    pub pack_code: String,
     /// Agent work is async; the RPC surface is not. The core owns the runtime so
     /// a handler can block on a card run without the shell needing to know.
     runtime: tokio::runtime::Runtime,
@@ -95,6 +99,7 @@ impl Core {
             policy,
             profile_id,
             source: Source::Live,
+            pack_code: "general".to_string(),
             runtime,
         })
     }
@@ -114,9 +119,22 @@ impl Core {
         Ok(resolve(&self.policy, self.keys.as_ref(), CARD_STAGES)?)
     }
 
-    /// Create a board on the general pack.
+    /// Use a different doctrine pack for boards created from here on.
+    ///
+    /// Existing boards keep the pack version they pinned, which is what doc 10
+    /// section 9 requires: "a pack update never rewrites a board's pinned
+    /// version".
+    pub fn use_pack(&mut self, code: &str) -> Result<(), CoreError> {
+        // Fail here rather than at the first card, so a typo in a pack code is
+        // a startup error and not a run that quietly used the wrong rules.
+        self.packs.get(code)?;
+        self.pack_code = code.to_string();
+        Ok(())
+    }
+
+    /// Create a board on the active pack.
     pub fn create_board(&mut self, title: &str, depth: &str) -> Result<String, CoreError> {
-        let general = self.packs.get("general")?;
+        let general = self.packs.get(&self.pack_code)?;
         let pack_id = repo::ensure_pack(&self.store, &serde_json::to_value(general).unwrap_or(Value::Null))?;
         let profile_id = self.profile_id.clone();
         Ok(repo::create_board(
@@ -180,7 +198,7 @@ impl Core {
             )
             .ok();
 
-        let pack = self.packs.get("general")?.clone();
+        let pack = self.packs.get(&self.pack_code)?.clone();
         let ctx = RunContext {
             registry: &self.registry,
             provider: self.provider.as_ref(),
@@ -320,6 +338,7 @@ pub fn build_router() -> Router<Core> {
         Ok(json!({
             "profile_id": core.profile_id,
             "packs": core.packs.codes().collect::<Vec<_>>(),
+            "active_pack": core.pack_code,
             "provider": core.provider.id(),
             "policy": serde_json::to_value(&core.policy).unwrap_or(Value::Null),
         }))

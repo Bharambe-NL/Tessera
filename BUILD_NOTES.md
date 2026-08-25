@@ -198,6 +198,54 @@ A deep card that retrieved nothing would otherwise score 0.5 and, per doc 09 sec
 dot, present as no worse than a card with sources. Doc 06 section A10 already fixes the Synthesizer's
 confidence at 0 for that case; this keeps the Verifier from raising it back.
 
+### BN-017 The generator writes prose from templates, not from a model
+
+**Spec** 02 section 5.1 has a model write the paragraph prose from the fact
+statements, then a deterministic pass confirm every planted value appears verbatim.
+02 section 9 caches model prose by (seed, prompt hash) and states that with a cold
+cache the prose may differ but the facts, plantings and labels do not.
+
+**Decision** Templates by default. A model backend can be added behind a flag without
+moving a fact.
+
+**Reason** Doc 02 section 9's guarantee is about the ledger, and the deterministic
+verification pass is what actually makes the corpus usable. Templates make
+`gen build --seed 42` free, offline and byte identical, which is what CI needs and
+what doc 02 section 10.4's run to run diff depends on. Prose fluency buys realism in
+the passages a model reads; it does not buy a single point of any metric in doc 02
+section 10.2. If it turns out to matter, the flag is a small change and the corpus
+name already carries the generator version.
+
+### BN-018 Every early flag is written, not only the blocking ones
+
+**Spec** 03 section 7 emits `flag.raised.v1` per early flag. 03 section 10
+`override_conflict` stops the run only when a `block` flag is present.
+
+**Decision** The pipeline writes a Flag row for every early flag the Router raises;
+only a `block` one cancels the run.
+
+**Reason** A bug, found by the eval harness rather than by reading. The pipeline wrote
+early flags only on the blocking path, so `advice_request` at severity warn reached
+the Synthesizer and the Verifier, changed how the answer was written, and never
+appeared in the Flags queue. Doc 02 section 10.2's flag recall read 0 on twenty advice
+bait questions that had in fact been handled correctly, which is how it surfaced.
+
+### BN-019 A metric with nothing to measure reports n/a, never zero
+
+**Spec** 12 phase 3's acceptance: "the harness runs end to end on the mock provider
+and reports every metric as 0 or n/a." Doc 02 section 10.2 defines the metrics but not
+what an empty denominator means.
+
+**Decision** `n/a` when the denominator is zero, and `n/a` for fact recall while the
+retrievers do not exist, with the reason on the row.
+
+**Reason** 0 means the pipeline tried and got none right; `n/a` means it was never
+asked. Reporting the second as the first would make an unbuilt stage look like a
+broken one, and would leave fact recall failing its threshold from now until M6, which
+trains everyone to ignore a red line that will one day mean something. The deep path
+in this build correctly reports that it found no sources, so it recalled nothing
+because it asserted nothing.
+
 ---
 
 ## Measured findings

@@ -15,7 +15,16 @@ use serde_json::Value;
 use tessera_schema::{Registry, ids};
 
 /// The packs that ship in the app bundle. Doc 10 section 9.
-pub static BUILT_IN: &[(&str, &str)] = &[("general", include_str!("../../../packs/general.json"))];
+pub static BUILT_IN: &[(&str, &str)] = &[
+    ("general", include_str!("../../../packs/general.json")),
+    // Doc 02 section 4: the sibling of finance-eu with the synthetic issuers
+    // substituted in, so evaluation output can be quoted without a real
+    // regulator appearing in it. Doc 02 section 10.1 loads it for every run.
+    (
+        "finance-eu-synthetic",
+        include_str!("../../../packs/finance-eu-synthetic.json"),
+    ),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum DoctrineError {

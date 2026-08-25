@@ -105,25 +105,32 @@ pub async fn run_card(
     let mode = routed["depth"]["chosen"].as_str().unwrap_or("fast").to_string();
     let early_flags = routed["early_flags"].clone();
 
+    // Doc 03 section 7 emits flag.raised.v1 for every early flag, whatever its
+    // severity. A warn flag travels on to the Synthesizer and the Verifier and
+    // still belongs in the queue, so it is written here rather than only when
+    // the run is about to stop.
+    for flag in early_flags.as_array().into_iter().flatten() {
+        repo::write_flag(
+            store,
+            at,
+            repo::NewFlag {
+                rule_id: flag["rule_id"].as_str().unwrap_or("unknown"),
+                severity: flag["severity"].as_str().unwrap_or("info"),
+                target: json!({ "kind": "whole_card" }),
+                reason: flag["reason"]
+                    .as_str()
+                    .unwrap_or("A doctrine rule matched the request."),
+                evidence: Some(flag["evidence"].clone()),
+            },
+        )?;
+    }
+
     // Doc 03 section 10 `override_conflict`: a block severity early flag wins
     // over the depth override, and the run stops before any spend.
     if early_flags
         .as_array()
         .is_some_and(|f| f.iter().any(|x| x["severity"] == "block"))
     {
-        for flag in early_flags.as_array().into_iter().flatten() {
-            repo::write_flag(
-                store,
-                at,
-                repo::NewFlag {
-                    rule_id: flag["rule_id"].as_str().unwrap_or("unknown"),
-                    severity: "block",
-                    target: json!({ "kind": "whole_card" }),
-                    reason: flag["reason"].as_str().unwrap_or("The request was held back."),
-                    evidence: Some(flag["evidence"].clone()),
-                },
-            )?;
-        }
         repo::end_run(store, &run_id, "cancelled")?;
         return Ok(CardOutcome {
             card_id: card_id.to_string(),
