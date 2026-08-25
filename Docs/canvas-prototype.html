@@ -1,0 +1,960 @@
+<!--
+  Scene: a researcher at a desk in daylight, mapping a topic they half understand,
+  moving between reading and asking; light theme, quiet surface, dense but calm.
+  Color strategy: restrained. Tinted off-white base, one working accent (ink blue)
+  under 10% of the surface, four muted node hues reserved for generated visuals.
+  Register: product.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Canvas prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: oklch(0.985 0.004 80); --grid: oklch(0.88 0.006 80); --surface: oklch(1 0 0);
+    --line: oklch(0.86 0.006 80); --line-strong: oklch(0.72 0.008 80);
+    --ink: oklch(0.22 0.01 80); --ink-2: oklch(0.42 0.012 80); --ink-3: oklch(0.58 0.012 80);
+    --accent: oklch(0.45 0.12 250); --accent-soft: oklch(0.94 0.03 250); --user: oklch(0.24 0.01 80);
+    --olive: oklch(0.86 0.06 120); --olive-ink: oklch(0.36 0.07 125);
+    --rust: oklch(0.82 0.08 40); --rust-ink: oklch(0.40 0.11 38);
+    --amber: oklch(0.86 0.10 85); --amber-ink: oklch(0.38 0.09 75);
+    --slate: oklch(0.86 0.04 250); --slate-ink: oklch(0.36 0.06 255);
+    --radius: 12px; --z-popover: 30; --z-sticky: 20; --z-tooltip: 40; --card-w: 440px;
+    font-family: "IBM Plex Sans", system-ui, sans-serif; color: var(--ink);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--bg); }
+  button, input, textarea { font: inherit; color: inherit; }
+
+  #app { display: grid; grid-template-columns: 56px 1fr; height: 100vh; transition: grid-template-columns 240ms cubic-bezier(.22,1,.36,1); }
+  #app.open { grid-template-columns: 240px 1fr; }
+  aside { border-right: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; padding: 14px 10px; gap: 4px; overflow: hidden; white-space: nowrap; }
+  aside .top { display: flex; align-items: center; justify-content: space-between; height: 32px; margin-bottom: 8px; }
+  aside .brand { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; opacity: 0; transition: opacity 200ms; }
+  #app.open aside .brand { opacity: 1; }
+  .nav { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-radius: 8px; border: 0; background: none; cursor: pointer; color: var(--ink-2); width: 100%; text-align: left; }
+  .nav:hover { background: var(--bg); color: var(--ink); }
+  .nav.on { color: var(--accent); }
+  .nav svg { flex: none; width: 18px; height: 18px; }
+  .fade { opacity: 0; transition: opacity 200ms; }
+  #app.open .fade { opacity: 1; }
+  .section { margin-top: 18px; font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3); padding: 0 8px; display: flex; justify-content: space-between; align-items: center; }
+  .section button { border: 0; background: none; cursor: pointer; color: var(--ink-3); font-size: 16px; line-height: 1; padding: 0 4px; }
+  .section button:hover { color: var(--ink); }
+  .board { display: flex; align-items: center; font-size: 13px; padding: 6px 8px; border-radius: 6px; color: var(--ink-2); cursor: pointer; }
+  .board span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .board i { font-style: normal; color: var(--ink-3); font-size: 11px; visibility: hidden; padding: 0 4px; }
+  .board:hover i { visibility: visible; }
+  .board:hover { background: var(--bg); }
+  .board.active { background: var(--accent-soft); color: var(--accent); }
+  aside .foot { margin-top: auto; display: flex; gap: 8px; font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3); padding: 0 8px; }
+  aside .foot b { color: var(--amber-ink); font-weight: 500; }
+
+  main { position: relative; overflow: hidden; cursor: grab; touch-action: none; user-select: none; }
+  main.panning { cursor: grabbing; }
+  #grid { position: absolute; inset: 0; background-image: radial-gradient(var(--grid) 1px, transparent 1.2px); background-size: 24px 24px; pointer-events: none; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  #edges path { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+  #edges path.branch { stroke-dasharray: 5 5; }
+  .empty { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; transition: opacity 300ms; }
+  .empty h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .empty p { margin: 0; color: var(--ink-2); font-size: 14px; }
+  .empty.hidden { opacity: 0; }
+
+  .card { position: absolute; width: var(--card-w); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.04); display: flex; flex-direction: column; cursor: default; user-select: text;
+    transition: left 380ms cubic-bezier(.22,1,.36,1), top 380ms cubic-bezier(.22,1,.36,1); }
+  .card.new { animation: rise 360ms cubic-bezier(.22,1,.36,1); }
+  .card.dragging { transition: none; }
+  @keyframes rise { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .card, .card.new { animation: none; transition: none; } }
+  .card.selected { border-color: var(--accent); }
+  .card .head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 0; cursor: grab; user-select: none; }
+  .card .head:active { cursor: grabbing; }
+  .card .title { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 85%; }
+  .card .close { border: 0; background: none; color: var(--ink-3); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+  .card .close:hover { color: var(--ink); background: var(--bg); }
+  .card .body { padding: 8px 14px 6px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { align-self: flex-end; background: var(--user); color: oklch(0.97 0 0); font-size: 13px; padding: 6px 11px; border-radius: 999px; max-width: 92%; }
+  .status { font-size: 13px; color: var(--ink-3); font-style: italic; }
+  .status.dots::after { content: "···"; letter-spacing: 2px; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .answer { font-size: 13.5px; line-height: 1.55; color: var(--ink); text-wrap: pretty; cursor: text; }
+  .answer::selection, .answer *::selection { background: var(--amber); }
+  .answer mark { background: var(--amber); color: inherit; padding: 0 1px; border-radius: 2px; }
+  .card .foot { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; gap: 8px; align-items: center; }
+  .card .foot input { flex: 1; border: 0; background: none; outline: none; font-size: 13px; padding: 4px 2px; }
+  .card .foot input::placeholder { color: var(--ink-3); }
+  .send { width: 28px; height: 28px; border-radius: 8px; border: 0; background: var(--accent-soft); color: var(--accent); cursor: pointer; display: grid; place-items: center; flex: none; }
+  .send:hover { background: var(--accent); color: white; }
+  .send:disabled { opacity: .4; cursor: default; }
+
+  .vis { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .vis h4 { margin: 0 0 10px; font-size: 12.5px; font-weight: 600; text-align: center; letter-spacing: -0.01em; }
+  .node { display: inline-block; font-size: 12px; padding: 4px 10px; border-radius: 6px; font-weight: 500; cursor: default; }
+  .h0 { background: var(--user); color: white; } .h1 { background: var(--olive); color: var(--olive-ink); }
+  .h2 { background: var(--slate); color: var(--slate-ink); } .h3 { background: var(--rust); color: var(--rust-ink); } .h4 { background: var(--amber); color: var(--amber-ink); }
+  .tree { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .tree .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .tree .arrow { color: var(--ink-3); font-size: 11px; line-height: 1; }
+  .tip { position: fixed; z-index: var(--z-tooltip); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; max-width: 260px; font-size: 12px; color: var(--ink-2); box-shadow: 0 2px 6px oklch(0 0 0 / .08); pointer-events: none; }
+  .tip b { display: block; color: var(--ink); margin-bottom: 2px; }
+  table.cmp { width: 100%; border-collapse: separate; border-spacing: 4px; font-size: 12px; }
+  table.cmp th { padding: 5px 8px; border-radius: 6px; font-weight: 600; }
+  table.cmp td { padding: 5px 8px; border-radius: 6px; background: var(--bg); color: var(--ink-2); vertical-align: top; }
+  .bottom { margin-top: 6px; background: var(--amber); color: var(--amber-ink); border-radius: 6px; padding: 7px 10px; font-size: 12px; text-align: center; }
+  .bottom b { display: block; font-weight: 600; }
+  .list .g { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-3); text-transform: uppercase; margin: 8px 0 4px; }
+  .list .it { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); margin-bottom: 4px; font-size: 12px; }
+  .list .it b { font-weight: 600; white-space: nowrap; } .list .it span { color: var(--ink-2); }
+  .steps { display: flex; flex-direction: column; gap: 4px; }
+  .steps .s { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; }
+  .steps .s i { font-style: normal; font-family: "IBM Plex Mono", monospace; color: var(--ink-3); width: 18px; flex: none; padding-top: 4px; }
+  .steps .s div { flex: 1; padding: 5px 10px; border-radius: 6px; }
+  .steps .s div span { display: block; color: var(--ink-2); font-weight: 400; margin-top: 2px; }
+  .clk { cursor: pointer; transition: box-shadow 160ms, transform 160ms; }
+  .clk:hover { box-shadow: 0 0 0 2px var(--accent); transform: translateY(-1px); }
+  table.cmp td.clk:hover, .list .it.clk:hover { background: var(--accent-soft); }
+  .msg.clk:hover { box-shadow: 0 0 0 2px var(--accent-soft); }
+  #pop2 { position: fixed; z-index: var(--z-popover); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: 0 3px 8px oklch(0 0 0 / .1); display: none; flex-direction: column; width: 260px; padding: 10px; gap: 8px; }
+  #pop2 .q { font-size: 12.5px; color: var(--ink); text-wrap: balance; }
+  #pop2 .q b { font-weight: 600; }
+  #pop2 .acts { display: flex; gap: 6px; }
+  #pop2 .acts button { flex: 1; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 8px; font-size: 12px; cursor: pointer; }
+  #pop2 .acts button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  #pop2 .acts button:hover { border-color: var(--accent); }
+  #titlebar { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: var(--z-sticky); display: flex; align-items: center; gap: 8px; }
+  #title { border: 1px solid transparent; background: none; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; text-align: center; min-width: 120px; max-width: 420px; padding: 5px 10px; border-radius: 8px; outline: none; }
+  #title:hover, #title:focus { border-color: var(--line); background: var(--surface); }
+  #crumb { font-size: 12px; color: var(--ink-3); cursor: pointer; }
+  #crumb:hover { color: var(--accent); }
+  #crumb:empty { display: none; }
+  /* authored layer */
+  #ink { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  #ink path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  main.tool-pen { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M3 21l3.5-1 12-12-2.5-2.5-12 12z' fill='white' stroke='black' stroke-width='1.3' stroke-linejoin='round'/><circle cx='3' cy='21' r='1.6' fill='black'/></svg>") 3 21, crosshair; }
+  main.tool-erase { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'><circle cx='13' cy='13' r='9' fill='rgba(255,255,255,0.7)' stroke='black' stroke-width='1.3' stroke-dasharray='3 2'/><path d='M9 13h8' stroke='black' stroke-width='1.5'/></svg>") 13 13, cell; }
+  main.tool-note { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><rect x='3' y='3' width='16' height='16' rx='2' fill='%23f2dc8a' stroke='black' stroke-width='1.2'/><path d='M13 19v-6h6' fill='none' stroke='black' stroke-width='1.2'/></svg>") 3 3, copy; }
+  .item { position: absolute; user-select: text; }
+  .item .grip { position: absolute; left: 0; right: 0; top: 0; height: 14px; cursor: grab; }
+  .item .x { position: absolute; right: 4px; top: 2px; border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 4px; border-radius: 4px; }
+  .item .x:hover { color: var(--ink); background: oklch(0 0 0 / .06); }
+  .note { width: 220px; min-height: 120px; border-radius: 8px; padding: 18px 12px 12px; box-shadow: 0 1px 3px oklch(0 0 0 / .08); }
+  .note textarea { width: 100%; height: 100%; min-height: 90px; border: 0; background: none; outline: none; resize: vertical; font-size: 12.5px; line-height: 1.45; color: var(--ink); }
+  .note.y { background: var(--amber); } .note.g { background: var(--olive); } .note.b { background: var(--slate); } .note.r { background: var(--rust); }
+  .img { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 18px 6px 6px; box-shadow: 0 1px 3px oklch(0 0 0 / .06); }
+  .img img { display: block; max-width: 420px; max-height: 320px; border-radius: 6px; user-select: none; }
+  .item .read { margin-top: 6px; width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 6px; font-size: 12px; cursor: pointer; color: var(--ink-2); }
+  .item .read:hover { border-color: var(--accent); color: var(--accent); }
+  .item .read:disabled { opacity: .5; cursor: default; }
+  #tools { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: var(--z-sticky); display: flex; gap: 2px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px 6px 4px 4px; box-shadow: 0 2px 6px oklch(0 0 0 / .06); user-select: none; }
+  #tools.moved { transform: none; }
+  #tools .handle { width: 12px; height: 26px; margin-right: 2px; cursor: grab; background: radial-gradient(var(--line-strong) 1px, transparent 1.2px) 0 0 / 4px 4px; border-radius: 4px; opacity: .8; }
+  #tools .handle:active { cursor: grabbing; }
+  #tools button { height: 30px; min-width: 30px; padding: 0 7px; border: 0; background: none; border-radius: 8px; font-size: 11px; cursor: pointer; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+  #tools button svg { width: 15px; height: 15px; flex: none; }
+  #tools button:hover { background: var(--bg); color: var(--ink); }
+  #tools button.on { background: var(--accent-soft); color: var(--accent); }
+  #tools .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+  #tools .sw { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--surface); outline: 1px solid transparent; cursor: pointer; margin: 0 1px; transition: transform 120ms; }
+  #tools .sw:hover { transform: scale(1.15); }
+  #tools .sw.on { outline-color: var(--ink); }
+  #hint { position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%); font-size: 11.5px; color: var(--ink-3); z-index: var(--z-sticky); pointer-events: none; }
+  /* learn mode */
+  #composer .learn { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--ink-2); }
+  #composer .learn.on { background: var(--olive); color: var(--olive-ink); border-color: transparent; }
+  #tutor { position: absolute; right: 16px; top: 60px; bottom: 100px; width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; z-index: var(--z-sticky); display: none; flex-direction: column; box-shadow: 0 2px 8px oklch(0 0 0 / .05); cursor: default; user-select: text; }
+  #tutor.on { display: flex; }
+  #tutor .th { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  #tutor .th b { font-size: 12.5px; font-weight: 600; } #tutor .th span { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-3); }
+  #tutor .th button { border: 0; background: none; color: var(--ink-3); cursor: pointer; }
+  #tlog { flex: 1; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .tmsg { font-size: 13px; line-height: 1.5; }
+  .tmsg.t { color: var(--ink); } .tmsg.u { align-self: flex-end; background: var(--user); color: white; padding: 6px 11px; border-radius: 999px; font-size: 12.5px; max-width: 90%; }
+  .tmsg.s { color: var(--ink-3); font-style: italic; font-size: 12px; }
+  .topts { display: flex; flex-direction: column; gap: 5px; }
+  .topts button { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 10px; font-size: 12.5px; cursor: pointer; }
+  .topts button:hover { border-color: var(--accent); color: var(--accent); }
+  .topts button:disabled { opacity: .5; cursor: default; }
+  .topts button.picked { background: var(--accent-soft); border-color: var(--accent); }
+  .tfb { border-radius: 8px; padding: 7px 10px; font-size: 12.5px; } .tfb.ok { background: var(--olive); color: var(--olive-ink); } .tfb.no { background: var(--amber); color: var(--amber-ink); }
+  #tutor .tf { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; gap: 8px; }
+  #tutor .tf input { flex: 1; border: 0; outline: none; font-size: 12.5px; background: none; }
+  #tutor .tf input::placeholder { color: var(--ink-3); }
+  /* pages */
+  .page { position: absolute; inset: 0; background: var(--bg); z-index: var(--z-sticky); overflow: auto; padding: 40px 48px 60px; display: none; cursor: default; user-select: text; }
+  .page.on { display: block; }
+  .page h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 4px; }
+  .page .lead { color: var(--ink-2); font-size: 13px; margin: 0 0 24px; }
+  .page .wrap { max-width: 880px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .tile { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 14px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; min-height: 110px; }
+  .tile:hover { border-color: var(--accent); }
+  .tile.newt { border-style: dashed; align-items: center; justify-content: center; color: var(--ink-2); }
+  .tile b { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
+  .tile .meta { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-3); margin-top: auto; display: flex; justify-content: space-between; }
+  .tile .acts { display: flex; gap: 6px; }
+  .tile .acts button, .btn { border: 1px solid var(--line); background: var(--surface); border-radius: 7px; padding: 4px 9px; font-size: 11.5px; cursor: pointer; color: var(--ink-2); }
+  .tile .acts button:hover, .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .btn.primary:hover { color: white; opacity: .9; }
+  .form { display: grid; grid-template-columns: 180px 1fr; gap: 14px 18px; align-items: start; }
+  .form label { font-size: 12.5px; color: var(--ink-2); padding-top: 8px; }
+  .form label small { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; line-height: 1.4; }
+  .form input, .form textarea, .form select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--surface); outline: none; }
+  .form input:focus, .form textarea:focus { border-color: var(--accent); }
+  .form textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
+  .hr { border: 0; border-top: 1px solid var(--line); margin: 26px 0; }
+  .keys { display: flex; flex-direction: column; gap: 8px; }
+  .key { display: grid; grid-template-columns: 150px 1fr 1fr auto; gap: 8px; align-items: center; }
+  .key input, .key select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12.5px; background: var(--surface); }
+  .key .del { border: 0; background: none; color: var(--ink-3); cursor: pointer; }
+  .notice { font-size: 11.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 10px; line-height: 1.5; }
+  .lib .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; align-items: center; }
+  .lib .row small { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+  .lib .row a { color: var(--accent); text-decoration: none; }
+  .figure svg { width: 100%; height: auto; max-height: 260px; display: block; margin: 0 auto; }
+  .figure figcaption { font-size: 12px; color: var(--ink-2); text-align: center; margin-top: 8px; }
+
+  #composer { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); width: min(620px, calc(100% - 40px)); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 8px; z-index: var(--z-sticky); cursor: default; box-shadow: 0 2px 8px oklch(0 0 0 / .05); user-select: text; }
+  #composer textarea { width: 100%; border: 0; outline: none; resize: none; font-size: 14px; height: 24px; line-height: 24px; background: none; }
+  #composer .row { display: flex; align-items: center; gap: 14px; margin-top: 6px; font-size: 12px; color: var(--ink-2); }
+  #composer .toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  #composer .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--olive-ink); }
+  #composer .toggle.off .dot { background: var(--line-strong); }
+  #composer .row .send { margin-left: auto; }
+  #composer .modes { display: flex; gap: 2px; background: var(--bg); border-radius: 8px; padding: 2px; }
+  #composer .modes button { border: 0; background: none; border-radius: 6px; padding: 3px 9px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; }
+  #composer .modes button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px oklch(0 0 0 / .08); }
+  #composer .modes button:hover { color: var(--ink); }
+  .badge { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 999px; margin-left: 6px; flex: none; }
+  .badge.deep { background: var(--slate); color: var(--slate-ink); } .badge.research { background: var(--olive); color: var(--olive-ink); }
+  .stages { font-size: 12px; color: var(--ink-3); display: flex; flex-direction: column; gap: 3px; }
+  .stages div::before { content: "·"; margin-right: 6px; } .stages div.done { color: var(--ink-2); } .stages div.done::before { content: "✓"; color: var(--olive-ink); }
+  .stages div.live::before { animation: pulse 1.2s infinite; }
+  .answer sup { font-size: 9.5px; color: var(--accent); font-weight: 500; margin-left: 1px; cursor: pointer; }
+  .answer sup:hover { text-decoration: underline; }
+  .sources { border-top: 1px solid var(--line); margin-top: 2px; padding-top: 6px; }
+  .sources summary { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-3); cursor: pointer; list-style: none; }
+  .sources summary::before { content: "▸ "; } .sources[open] summary::before { content: "▾ "; }
+  .sources ol { margin: 6px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
+  .sources a { color: var(--accent); text-decoration: none; } .sources a:hover { text-decoration: underline; }
+  .sources li span { color: var(--ink-3); }
+  .findings { font-size: 12px; color: var(--ink-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .findings b { display: block; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-3); margin-bottom: 4px; text-transform: uppercase; }
+  .findings div { padding: 2px 0; } .findings div::before { content: "→ "; color: var(--ink-3); }
+  #toolbar { position: absolute; right: 16px; top: 16px; display: flex; gap: 6px; z-index: var(--z-sticky); }
+  #toolbar button { height: 30px; min-width: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; cursor: pointer; color: var(--ink-2); }
+  #toolbar button:hover { color: var(--ink); }
+  #mode { position: absolute; left: 16px; top: 16px; font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3); z-index: var(--z-sticky); }
+  #pop { position: fixed; z-index: var(--z-popover); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 3px 8px oklch(0 0 0 / .1); display: none; flex-direction: column; min-width: 160px; padding: 4px; }
+  #pop button { border: 0; background: none; text-align: left; font-size: 13px; padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  #pop button:hover { background: var(--bg); }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <div class="top">
+      <span class="brand">Wondering</span>
+      <button class="nav" id="toggleSide" style="width:32px;padding:0;justify-content:center" aria-label="Toggle sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+      </button>
+    </div>
+    <button class="nav" data-page="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span class="fade">Home</span></button>
+    <button class="nav" id="newBoardNav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M3 12h18"/></svg><span class="fade">Create</span></button>
+    <button class="nav" data-page="library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h4v14H4zM10 5h4v14h-4zM16 6l4-1v14l-4 1z"/></svg><span class="fade">Library</span></button>
+    <button class="nav" data-page="profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span class="fade">Profile</span></button>
+    <button class="nav" data-page="trash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg><span class="fade">Trash</span></button>
+    <div class="section fade"><span>Canvas</span><button id="newBoard" title="New board">+</button></div>
+    <div id="boards" class="fade"></div>
+    <div class="foot fade"><span><b id="credits">30</b> credits</span><span id="store">memory</span></div>
+  </aside>
+  <main id="main">
+    <div id="grid"></div>
+    <div id="mode">connecting…</div>
+    <div id="titlebar"><span id="crumb"></span><input id="title" value="" spellcheck="false" aria-label="Board title"/></div>
+    <div id="toolbar"><button id="zoomOut">−</button><button id="zoomIn">+</button><button id="tidy">Tidy</button><button id="fit">Fit view</button><button id="reset">Clear board</button></div>
+    <div class="empty" id="empty"><h1>Canvas</h1><p>A visual way to understand things in parallel</p></div>
+    <div id="tools">
+      <span class="handle" title="Drag to move"></span>
+      <button data-tool="select" class="on" title="Select (v)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 3l14 9-6 1.5L10 20z"/></svg></button>
+      <button data-tool="pen" title="Pen (p)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20l4-1L19 8l-3-3L5 16z"/></svg></button>
+      <button data-tool="erase" title="Eraser (e)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 15l8-8 6 6-6 6H8z M12 7l4 4"/><path d="M4 20h16"/></svg></button>
+      <button data-tool="note" title="Note (n)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M14 20v-6h6"/></svg></button>
+      <span class="sep"></span>
+      <span class="sw on" data-c="oklch(0.24 0.01 80)" style="background:oklch(0.24 0.01 80)"></span>
+      <span class="sw" data-c="oklch(0.55 0.16 250)" style="background:oklch(0.55 0.16 250)"></span>
+      <span class="sw" data-c="oklch(0.55 0.15 40)" style="background:oklch(0.55 0.15 40)"></span>
+      <span class="sw" data-c="oklch(0.55 0.12 130)" style="background:oklch(0.55 0.12 130)"></span>
+      <span class="sw" data-c="oklch(0.75 0.16 85)" style="background:oklch(0.75 0.16 85)"></span>
+      <span class="sep"></span>
+      <button id="readSketch" title="Send the drawing and notes to the model"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Read sketch</button>
+      <button id="clearInk" title="Remove all strokes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></svg></button>
+    </div>
+    <div id="hint"></div>
+    <aside id="tutor"><div class="th"><b>Tutor</b><span id="tstage"></span><button id="tclose" title="End session">✕</button></div><div id="tlog"></div><div class="tf"><input id="tin" placeholder="Answer or ask the tutor…"/><button class="send" id="tsend"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div></aside>
+    <section class="page" id="page-home"><div class="wrap"><h2>Home</h2><p class="lead">All your canvases.</p><div class="grid" id="homeGrid"></div></div></section>
+    <section class="page" id="page-library"><div class="wrap lib"><h2>Library</h2><p class="lead">Highlights you saved and sources cited across every canvas.</p><div id="libList"></div></div></section>
+    <section class="page" id="page-trash"><div class="wrap"><h2>Trash</h2><p class="lead">Deleted canvases stay here for 30 days. Restore them or remove them for good.</p><div class="grid" id="trashGrid"></div></div></section>
+    <section class="page" id="page-profile"><div class="wrap">
+      <h2>Profile</h2><p class="lead">Context the agents read on every request, and the model keys they use.</p>
+      <div class="form">
+        <label>Name</label><input id="pfName" placeholder="Your name"/>
+        <label>Role and organisation<small>Sets the register of answers.</small></label><input id="pfRole" placeholder="e.g. Head of Model Risk, Dutch retail bank"/>
+        <label>Domain context<small>Definitions, regulators, products, internal terms. Injected into every prompt.</small></label><textarea id="pfContext" placeholder="We operate under DNB and ECB supervision. Basel III/CRR3 applies. 'Book' means the trading book unless stated. Prefer EU sources over US ones."></textarea>
+        <label>Standing instructions<small>How answers should be written.</small></label><textarea id="pfStyle" placeholder="Cite primary sources. Flag anything that would count as advice. Numbers in EUR. Short sentences."></textarea>
+        <label>Default depth</label><select id="pfDepth"><option value="fast">Fast</option><option value="deep">Deep</option><option value="research">Research</option></select>
+      </div>
+      <hr class="hr"/>
+      <h2 style="font-size:15px">Model keys</h2><p class="lead">Add one per provider. The active one is used for new cards.</p>
+      <div class="keys" id="keys"></div>
+      <div style="margin-top:10px;display:flex;gap:8px"><button class="btn" id="addKey">Add key</button><button class="btn primary" id="saveProfile">Save profile</button></div>
+      <div class="notice">Keys are stored in this browser's local storage only and never leave this device except to the provider you chose. In this preview, only the built in Anthropic route is live; other providers are recorded and become active in the desktop build, which keeps keys in the OS keychain.</div>
+    </div></section>
+    <div id="world"><svg id="edges"></svg><svg id="ink"></svg><div id="cards"></div></div>
+    <div id="composer">
+      <textarea id="ask" placeholder="What do you want to understand?" rows="1"></textarea>
+      <div class="row">
+        <span class="toggle" id="web"><span class="dot"></span>Web search on</span>
+        <button class="learn" id="learnBtn" title="Guided learning: the tutor interviews you, builds a board, and keeps asking">Learn</button>
+        <span class="modes" id="modes"><button data-m="fast" class="on" title="One call, no browsing">Fast</button><button data-m="deep" title="Searches the web and cites sources">Deep</button><button data-m="research" title="Plans sub-questions, searches each, synthesizes">Research</button></span>
+        <button class="send" id="askBtn" aria-label="Ask"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      </div>
+    </div>
+  </main>
+</div>
+<div id="pop">
+  <button id="popAsk"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Ask about this</button>
+  <button id="popSave"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4z"/></svg>Save highlight</button>
+</div>
+
+<div id="pop2"><div class="q"></div><div class="acts"><button id="p2cancel">Not now</button><button id="p2branch">Branch here</button><button id="p2board" class="primary">New board</button></div></div>
+
+<script>
+/* ---------------- state ---------------- */
+const W = 440, GAP_Y = 90, GAP_X = 60, BRANCH_X = 120, BRANCH_GAP = 40;
+const $ = s => document.querySelector(s);
+const main = $('#main'), world = $('#world'), cardsEl = $('#cards'), edges = $('#edges'), empty = $('#empty'), ink = $('#ink');
+const tool = { mode: 'select', color: 'oklch(0.24 0.01 80)', w: 3, depth: 'fast' };
+const db = { boards: [], trash: [], activeId: null, nextId: 1, profile: { name: '', role: '', context: '', style: '', depth: 'fast', keys: [], activeKey: null } };   // persisted
+let board = null;                                       // active board {id, title, cards, view}
+const ui = { online: null, selectedId: null };
+
+/* ---------------- persistence ---------------- */
+const store = {
+  async get() {
+    try { if (window.storage) { const r = await window.storage.get('canvas-db', false); $('#store').textContent = 'saved'; return r ? JSON.parse(r.value) : null; } } catch (e) { if (window.storage) { $('#store').textContent = 'saved'; return null; } }
+    try { const r = localStorage.getItem('canvas-db'); $('#store').textContent = 'local'; return r ? JSON.parse(r) : null; } catch (e) { return null; }
+  },
+  async set(v) {
+    const s = JSON.stringify(v);
+    try { if (window.storage) return await window.storage.set('canvas-db', s, false); } catch (e) {}
+    try { localStorage.setItem('canvas-db', s); } catch (e) {}
+  }
+};
+let saveT; function save() { if (board) board.updatedAt = Date.now(); clearTimeout(saveT); saveT = setTimeout(() => store.set(db), 300); }
+
+/* ---------------- samples (offline) ---------------- */
+const SAMPLES = {
+  'world model': { answer: 'World models are internal representations of an environment that an agent, whether biological or artificial, uses to simulate, predict, and understand how the world works. Instead of reacting purely on instinct or raw sensory data, a system with a world model can mentally play out scenarios, anticipate the consequences of actions, and plan long term strategies without needing to test everything in physical reality.',
+    visual: { type: 'tree', title: 'Components of a World Model', root: { label: 'World Model', children: [
+      { label: 'Perception', note: 'Encodes raw sensory inputs into a compact latent representation.' }, { label: 'Dynamics Predictor', note: 'Predicts the next latent state given the current state and an action.' },
+      { label: 'Reward Estimator', note: 'Evaluates the desirability of predicted future states.' }, { label: 'Action Policy', note: 'Chooses actions by planning inside the learned model.' } ] } } },
+  'sensory': { answer: 'Raw sensory data is the unprocessed stream an agent receives: pixels from a camera, joint angles, audio samples, force readings. It is high dimensional and noisy, so a world model first compresses it into a latent state that keeps only what matters for prediction and control.',
+    visual: { type: 'steps', title: 'From sensors to latent state', steps: [ { label: 'Raw observation', note: 'Pixels, audio, proprioception' }, { label: 'Encoder', note: 'Convolutional or transformer network' }, { label: 'Latent state', note: 'Compact vector, a few hundred dimensions' }, { label: 'Prediction', note: 'Dynamics run in latent space, never in pixel space' } ] } },
+  'llm': { answer: 'Large language models predict the next token in text and learn world structure only as a side effect of that objective. World models are trained to predict how state evolves under actions, so they can be queried counterfactually and used for planning. The two are converging: video generation models and JEPA style architectures are attempts to give language scale models grounded dynamics.',
+    visual: { type: 'table', title: 'World Models vs LLMs', columns: ['World Model', 'Large Language Model'], rows: [ ['Predicts next state', 'Predicts next token'], ['Action conditioned', 'Text conditioned'], ['Latent or pixel space', 'Token space'], ['Used for planning and control', 'Used for reasoning in language'], ['Grounded in physics', 'Grounded in text corpora'] ], bottomLine: { head: 'Bottom line', text: 'LLMs model the world through language; world models model it through dynamics.' } } },
+  'key players': { answer: 'The world model landscape is divided between major tech labs scaling infrastructure and specialized startups pioneering new architectures. The approaches differ on whether to predict pixels, predict in a learned latent space, or ground models in physics simulation.',
+    visual: { type: 'list', title: 'Key players', groups: [ { heading: 'Labs', items: [ { name: 'AMI Labs', detail: 'JEPA and VL-JEPA' }, { name: 'NVIDIA', detail: 'Cosmos' } ] }, { heading: 'Approach', items: [ { name: 'Google DeepMind', detail: 'Generative video and environments' }, { name: 'World Labs', detail: 'Perceiving and reasoning in 3D' }, { name: 'AMI Labs', detail: 'Representation space prediction' }, { name: 'NVIDIA', detail: 'Physics grounded engines' } ] } ], bottomLine: { head: 'All have', text: 'Moving beyond text based LLMs. Focus on physics and causality.' } } },
+  'chair': { answer: 'The Wishbone Chair, designed by Hans Wegner in 1949, distills a Ming dynasty armchair into steam bent beech, a Y shaped back splat, and a hand woven paper cord seat. Its lightness comes from removing everything that does not carry load.',
+    visual: { type: 'figure', title: 'Wishbone Chair, 1949', caption: 'Steam bent top rail, Y splat, paper cord seat', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M40 70 Q100 30 160 70"/><path d="M100 52 V110 M100 78 L84 110 M100 78 L116 110"/><path d="M45 110 H155 M45 110 V180 M155 110 V180 M52 118 V165 M148 118 V165"/><path d="M45 70 V110 M155 70 V110" stroke-dasharray="1 5"/><path d="M60 118 h80 M60 126 h80 M60 134 h80" stroke-width="1.5"/></svg>' } }
+};
+function sampleFor(q) {
+  const s = q.toLowerCase();
+  for (const k of Object.keys(SAMPLES)) if (s.includes(k)) return SAMPLES[k];
+  const words = q.replace(/[?.]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 4);
+  return { answer: `Offline mode. "${q}" would be answered here with a short explanation and a generated visual. Open this file inside claude.ai for live answers, or ask about world models or danish chairs to see the built in samples.`,
+    visual: { type: 'steps', title: q, steps: words.map((w, i) => ({ label: w, note: `Aspect ${i + 1} of the topic` })) } };
+}
+
+/* ---------------- model ---------------- */
+const SYSTEM = `You answer questions for a visual learning canvas. Respond with JSON only, no markdown fences.
+Schema: {"answer": string (2 to 4 sentences of plain prose, no lists, no headings), "visual": one of
+ {"type":"tree","title":string,"root":{"label":string,"children":[{"label":string,"note":string,"children":[...]}]}} (max 2 levels below root, max 5 children per node)
+ {"type":"table","title":string,"columns":[string,string],"rows":[[string,string],...],"bottomLine":{"head":string,"text":string}} (3 to 6 rows)
+ {"type":"list","title":string,"groups":[{"heading":string,"items":[{"name":string,"detail":string}]}],"bottomLine":{"head":string,"text":string}}
+ {"type":"steps","title":string,"steps":[{"label":string,"note":string}]} (3 to 6 steps)
+ {"type":"figure","title":string,"caption":string,"svg":string} (a clean line drawing as inline SVG with viewBox 0 0 200 200, stroke="currentColor", no fill, no text, no script; use only for physical objects, shapes, or spatial layouts)
+}
+Choose the visual that best fits: tree for components or taxonomies, table for comparisons, list for entities or players, steps for processes, figure for physical objects. Keep labels under 5 words and notes under 15 words. Do not use dashes in prose.`;
+
+const CITE_RULES = `\nCitations: you have a web search tool. Search before answering. In "answer", mark each claim that comes from a source with a bracketed number like [1] placed right after the claim. Add a top level "sources" array: [{"n":1,"title":string,"url":string,"site":string}]. Every number used in the answer must exist in sources. Prefer primary sources (regulators, company filings, papers, official docs). Also add "findings": an array of 2 to 4 one-sentence key takeaways, each ending with its citation number.`;
+const WEB_TOOL = [{ type: 'web_search_20250305', name: 'web_search' }];
+async function callJSON(system, user, useWeb, maxTokens = 2000) {
+  const body = { model: 'claude-sonnet-4-6', max_tokens: maxTokens, system: system + profileBlock(), messages: [{ role: 'user', content: user }] };
+  if (useWeb) body.tools = WEB_TOOL;
+  const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(r.status);
+  const data = await r.json();
+  const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  const m = text.match(/\{[\s\S]*\}/); if (!m) throw new Error('no json');
+  return JSON.parse(m[0]);
+}
+function setStage(card, label, done) { card.stages = card.stages || []; const s = card.stages.find(x => x.label === label); if (s) s.done = done; else card.stages.push({ label, done }); card.status = 'stages'; render(); }
+function contextFor(card) {
+  const parent = board.cards.find(c => c.id === card.parentId);
+  let user = card.question;
+  if (!parent && board.context) user = `Background from an earlier board: "${board.context}"\nThe user chose the item "${board.seed}" from a visual and wants to understand it. Question: ${card.question}`;
+  if (parent) user = `Context from a previous answer: "${parent.answer}"\n` + (card.anchor ? `The user highlighted the phrase "${card.anchor}" in that answer and asked: ${card.question}` : `Follow-up question: ${card.question}`);
+  return user;
+}
+async function askDeep(card) {
+  setStage(card, 'Searching the web', false);
+  const out = await callJSON(SYSTEM + CITE_RULES, contextFor(card), true, 2500);
+  setStage(card, 'Searching the web', true); setStage(card, 'Building the visual', true);
+  return out;
+}
+async function askResearch(card) {
+  setStage(card, 'Planning sub-questions', false);
+  const plan = await callJSON('Break the question into 2 to 3 focused sub-questions that together answer it. Respond with JSON only: {"subs":[string]}', contextFor(card), false, 400);
+  const subs = (plan.subs || []).slice(0, 3);
+  setStage(card, 'Planning sub-questions', true);
+  const notes = [];
+  for (const s of subs) {
+    setStage(card, 'Researching: ' + s, false);
+    try { const f = await callJSON('Research this sub-question with the web search tool. Respond with JSON only: {"summary": string (3 to 5 sentences, each claim followed by [n]), "sources":[{"n":number,"title":string,"url":string,"site":string}]}', s, true, 1800); notes.push({ q: s, ...f }); } catch (e) { notes.push({ q: s, summary: 'No result.', sources: [] }); }
+    setStage(card, 'Researching: ' + s, true);
+  }
+  setStage(card, 'Synthesizing', false);
+  // renumber sources across sub-results
+  const sources = []; const notesTxt = notes.map(n => { const map = {}; (n.sources || []).forEach(s => { sources.push({ ...s, n: sources.length + 1 }); map[s.n] = sources.length; }); const txt = n.summary.replace(/\[(\d+)\]/g, (_, k) => map[k] ? `[${map[k]}]` : ''); return `Sub-question: ${n.q}\n${txt}`; }).join('\n\n');
+  const srcList = sources.map(s => `[${s.n}] ${s.title} (${s.site || ''}) ${s.url}`).join('\n');
+  const out = await callJSON(SYSTEM + `\nYou are synthesizing research notes. Keep the bracketed citation numbers exactly as given in the notes and use them after claims in "answer". Also return "findings": 3 to 5 one-sentence takeaways, each ending with citation numbers. Do not invent sources.`, `Original question: ${contextFor(card)}\n\nResearch notes:\n${notesTxt}\n\nSources:\n${srcList}`, false, 2500);
+  out.sources = sources;
+  setStage(card, 'Synthesizing', true);
+  return out;
+}
+async function askModel(card) {
+  if (card.depth === 'deep' || card.depth === 'research') {
+    try { const out = await (card.depth === 'deep' ? askDeep(card) : askResearch(card)); setOnline(true); return out; }
+    catch (e) { setOnline(false); await new Promise(r => setTimeout(r, 600)); const s = sampleFor(card.question); return { ...s, findings: ['Offline: a live run would return cited findings here.'], sources: [{ n: 1, title: 'Example source (offline placeholder)', url: 'https://example.com', site: 'example.com' }], answer: s.answer + ' [1]' }; }
+  }
+  try { const out = await callJSON(SYSTEM, contextFor(card), false, 1200); setOnline(true); return out; }
+  catch (e) { setOnline(false); await new Promise(r => setTimeout(r, 900)); return sampleFor(card.question); }
+}
+function setOnline(v) { ui.online = v; $('#mode').textContent = v ? 'live · claude-sonnet-4-6' : 'offline · sample data'; }
+
+/* ---------------- boards ---------------- */
+function newBoard(title = 'New board', extra = {}) {
+  const b = { id: db.nextId++, title, cards: [], strokes: [], notes: [], images: [], view: null, ...extra };
+  db.boards.unshift(b); db.activeId = b.id; board = b;
+  ui.selectedId = null; cardsEl.innerHTML = ''; edges.innerHTML = '';
+  resetView(); renderBoards(); renderTitle(); render(); save();
+}
+function renderTitle() {
+  $('#title').value = board.title; sizeTitle();
+  const from = board.fromBoard ? db.boards.find(b => b.id === board.fromBoard) : null;
+  $('#crumb').textContent = from ? '← ' + from.title : '';
+  $('#crumb').onclick = () => from && openBoard(from.id);
+}
+function sizeTitle() { const t = $('#title'); t.style.width = Math.min(420, Math.max(120, t.value.length * 8 + 30)) + 'px'; }
+$('#title').addEventListener('input', () => { board.title = $('#title').value.trim() || 'Untitled'; board.named = true; sizeTitle(); renderBoards(); save(); });
+$('#title').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+function openBoard(id) {
+  board = db.boards.find(b => b.id === id); db.activeId = id;
+  ui.selectedId = null; cardsEl.innerHTML = ''; edges.innerHTML = '';
+  if (board.view) applyView(); else resetView();
+  renderBoards(); renderTitle(); render(); requestAnimationFrame(() => { layout(); render(); }); save();
+}
+function deleteBoard(id) {
+  const b = db.boards.find(x => x.id === id); if (!b) return;
+  b.deletedAt = Date.now(); db.trash.unshift(b);
+  db.boards = db.boards.filter(x => x.id !== id);
+  if (db.activeId === id) { if (db.boards.length) openBoard(db.boards[0].id); else newBoard(); } else { renderBoards(); save(); }
+  renderPages();
+}
+function restoreBoard(id) { const b = db.trash.find(x => x.id === id); if (!b) return; delete b.deletedAt; db.trash = db.trash.filter(x => x.id !== id); db.boards.unshift(b); renderBoards(); renderPages(); save(); }
+function purgeBoard(id) { db.trash = db.trash.filter(x => x.id !== id); renderPages(); save(); }
+
+/* ---------------- pages ---------------- */
+let page = null;
+function showPage(name) {
+  page = page === name ? null : name;
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'page-' + page));
+  document.querySelectorAll('.nav[data-page]').forEach(n => n.classList.toggle('on', n.dataset.page === page));
+  if (page) renderPages();
+}
+document.querySelectorAll('.nav[data-page]').forEach(n => n.onclick = () => showPage(n.dataset.page));
+function ago(t) { if (!t) return ''; const m = (Date.now() - t) / 6e4; return m < 60 ? Math.round(m) + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago'; }
+function renderPages() {
+  $('#homeGrid').innerHTML = `<div class="tile newt" id="homeNew">+ New canvas</div>` + db.boards.map(b => `<div class="tile" data-id="${b.id}"><b>${esc(b.title)}</b><span style="font-size:12px;color:var(--ink-2)">${b.cards.length} card${b.cards.length === 1 ? '' : 's'}${b.notes.length ? ', ' + b.notes.length + ' notes' : ''}${b.strokes.length ? ', ink' : ''}</span><div class="meta"><span>${ago(b.updatedAt)}</span><span class="acts"><button data-del="${b.id}">Delete</button></span></div></div>`).join('');
+  $('#homeNew').onclick = () => { newBoard(); showPage(null); };
+  $('#homeGrid').querySelectorAll('.tile[data-id]').forEach(t => t.onclick = e => { if (e.target.dataset.del) { deleteBoard(+e.target.dataset.del); return; } openBoard(+t.dataset.id); showPage(null); });
+  $('#trashGrid').innerHTML = db.trash.length ? db.trash.map(b => `<div class="tile" style="cursor:default"><b>${esc(b.title)}</b><span style="font-size:12px;color:var(--ink-2)">${b.cards.length} cards</span><div class="meta"><span>deleted ${ago(b.deletedAt)}</span><span class="acts"><button data-restore="${b.id}">Restore</button><button data-purge="${b.id}">Delete forever</button></span></div></div>`).join('') : `<p style="color:var(--ink-3);font-size:13px">Nothing here.</p>`;
+  $('#trashGrid').querySelectorAll('button').forEach(b => b.onclick = () => b.dataset.restore ? restoreBoard(+b.dataset.restore) : purgeBoard(+b.dataset.purge));
+  const rows = [];
+  for (const b of db.boards) for (const c of b.cards) { for (const m of (c.marks || [])) rows.push(`<div class="row"><div><mark>${esc(m)}</mark><small>highlight in "${esc(b.title)}"</small></div><button class="btn" data-open="${b.id}">Open</button></div>`); for (const s of (c.sources || [])) rows.push(`<div class="row"><div><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a><small>${esc(s.site || '')} · cited in "${esc(b.title)}"</small></div><button class="btn" data-open="${b.id}">Open</button></div>`); }
+  $('#libList').innerHTML = rows.length ? rows.join('') : `<p style="color:var(--ink-3);font-size:13px">Save a highlight or run a Deep or Research card and it shows up here.</p>`;
+  $('#libList').querySelectorAll('[data-open]').forEach(b => b.onclick = () => { openBoard(+b.dataset.open); showPage(null); });
+  const pf = db.profile; $('#pfName').value = pf.name; $('#pfRole').value = pf.role; $('#pfContext').value = pf.context; $('#pfStyle').value = pf.style; $('#pfDepth').value = pf.depth || 'fast';
+  renderKeys();
+}
+function renderKeys() {
+  const pf = db.profile;
+  $('#keys').innerHTML = pf.keys.map((k, i) => `<div class="key"><select data-i="${i}" data-f="provider"><option ${k.provider === 'anthropic' ? 'selected' : ''} value="anthropic">Anthropic</option><option ${k.provider === 'openai' ? 'selected' : ''} value="openai">OpenAI</option><option ${k.provider === 'google' ? 'selected' : ''} value="google">Google</option><option ${k.provider === 'mistral' ? 'selected' : ''} value="mistral">Mistral</option><option ${k.provider === 'local' ? 'selected' : ''} value="local">Local (Ollama)</option></select><input data-i="${i}" data-f="label" value="${esc(k.label)}" placeholder="Label, e.g. team key"/><input data-i="${i}" data-f="key" type="password" value="${esc(k.key)}" placeholder="Key or endpoint"/><label style="font-size:11.5px;display:flex;gap:4px;align-items:center"><input type="radio" name="ak" ${pf.activeKey === i ? 'checked' : ''} data-active="${i}"/>active</label><button class="del" data-del="${i}">✕</button></div>`).join('') || `<p style="color:var(--ink-3);font-size:12.5px;margin:0">No keys yet. The built in Anthropic route is used.</p>`;
+  $('#keys').querySelectorAll('[data-f]').forEach(el => el.oninput = () => pf.keys[+el.dataset.i][el.dataset.f] = el.value);
+  $('#keys').querySelectorAll('[data-active]').forEach(el => el.onchange = () => pf.activeKey = +el.dataset.active);
+  $('#keys').querySelectorAll('[data-del]').forEach(el => el.onclick = () => { pf.keys.splice(+el.dataset.del, 1); if (pf.activeKey >= pf.keys.length) pf.activeKey = null; renderKeys(); });
+}
+$('#addKey').onclick = () => { db.profile.keys.push({ provider: 'anthropic', label: '', key: '' }); if (db.profile.activeKey === null) db.profile.activeKey = 0; renderKeys(); };
+$('#saveProfile').onclick = () => { const pf = db.profile; pf.name = $('#pfName').value.trim(); pf.role = $('#pfRole').value.trim(); pf.context = $('#pfContext').value.trim(); pf.style = $('#pfStyle').value.trim(); pf.depth = $('#pfDepth').value; tool.depth = pf.depth; document.querySelectorAll('#modes button').forEach(x => x.classList.toggle('on', x.dataset.m === tool.depth)); save(); $('#saveProfile').textContent = 'Saved'; setTimeout(() => $('#saveProfile').textContent = 'Save profile', 1500); };
+function profileBlock() { const pf = db.profile; const parts = []; if (pf.name || pf.role) parts.push(`The user is ${pf.name || 'someone'}${pf.role ? ', ' + pf.role : ''}.`); if (pf.context) parts.push('Domain context: ' + pf.context); if (pf.style) parts.push('Standing instructions: ' + pf.style); return parts.length ? '\n\nUser profile:\n' + parts.join('\n') : ''; }
+function renderBoards() {
+  $('#boards').innerHTML = db.boards.map(b => `<div class="board ${b.id === db.activeId ? 'active' : ''}" data-id="${b.id}"><span>${esc(b.title)}</span><i title="Delete board">✕</i></div>`).join('');
+  $('#boards').querySelectorAll('.board').forEach(el => {
+    el.onclick = e => { if (e.target.tagName === 'I') { deleteBoard(+el.dataset.id); } else openBoard(+el.dataset.id); };
+  });
+}
+
+/* ---------------- layout ---------------- */
+// Follow-ups go below a card in a row; highlight branches go to the right, stacked.
+// Returns the subtree box {w,h}. Cards the user dragged (pinned) keep their offset from the layout slot.
+function heightOf(c) { const el = document.getElementById('card-' + c.id); return el ? el.offsetHeight : 320; }
+function layoutSub(c, x, y) {
+  c.x = x + (c.dx || 0); c.y = y + (c.dy || 0);
+  const h = heightOf(c);
+  const branches = board.cards.filter(k => k.parentId === c.id && k.kind === 'branch');
+  const follows = board.cards.filter(k => k.parentId === c.id && k.kind === 'follow');
+  let bw = 0, by = y, bh = 0;
+  for (const b of branches) { const box = layoutSub(b, x + W + BRANCH_X, by); bw = Math.max(bw, box.w); by += box.h + BRANCH_GAP; bh = by - y - BRANCH_GAP; }
+  const rightW = branches.length ? BRANCH_X + bw : 0;
+  let fx = x, fh = 0, fw = 0;
+  const fy = y + Math.max(h, bh) + GAP_Y;
+  for (const f of follows) { const box = layoutSub(f, fx, fy); fx += box.w + GAP_X; fh = Math.max(fh, box.h); fw = fx - x - GAP_X; }
+  const w = Math.max(W + rightW, fw);
+  const totalH = follows.length ? (fy - y) + fh : Math.max(h, bh);
+  return { w, h: totalH };
+}
+function layout() {
+  let x = 0;
+  for (const r of board.cards.filter(c => c.kind === 'root' && !c.pinned)) { const box = layoutSub(r, x, 0); x += box.w + BRANCH_X; }
+  for (const r of board.cards.filter(c => c.pinned)) { const kids = board.cards.filter(k => k.parentId === r.id); if (kids.length) layoutSub(r, r.x - (r.dx || 0), r.y - (r.dy || 0)); }
+}
+
+/* ---------------- cards ---------------- */
+function viewCenter() { const r = main.getBoundingClientRect(), v = board.view; return { x: (r.width / 2 - v.x) / v.k, y: (r.height * 0.42 - v.y) / v.k }; }
+async function createCard({ question, parentId = null, kind = 'root', anchor = null }) {
+  const card = { id: db.nextId++, parentId, kind, question, anchor, answer: '', visual: null, status: 'thinking', x: 0, y: 0, dx: 0, dy: 0, depth: tool.depth };
+  if (!parentId) { const c = viewCenter(); card.x = c.x - W / 2; card.y = c.y - 60; card.pinned = true; }
+  board.cards.push(card);
+  if (board.title === 'New board' && !board.named) { board.title = question; renderBoards(); renderTitle(); }
+  empty.classList.add('hidden');
+  render(true); layout(); render();
+  if (parentId) panTo(card);
+  const creditsEl = $('#credits'); creditsEl.textContent = Math.max(0, +creditsEl.textContent - 1);
+  const p = askModel(card);
+  setTimeout(() => { if (card.status === 'thinking') { card.status = 'visual'; render(); } }, 700);
+  const out = await p;
+  card.answer = out.answer; card.visual = out.visual; card.sources = out.sources || null; card.findings = out.findings || null; card.status = 'done';
+  render(); layout(); render(); save();
+}
+function removeCard(id) {
+  const kill = new Set([id]); let grew = true;
+  while (grew) { grew = false; for (const c of board.cards) if (c.parentId && kill.has(c.parentId) && !kill.has(c.id)) { kill.add(c.id); grew = true; } }
+  board.cards = board.cards.filter(c => !kill.has(c.id));
+  if (!board.cards.length) empty.classList.remove('hidden');
+  render(); layout(); render(); save();
+}
+
+/* ---------------- render ---------------- */
+function render(fresh = false) {
+  const seen = new Set();
+  for (const c of board.cards) {
+    seen.add(c.id);
+    let el = document.getElementById('card-' + c.id);
+    if (!el) { el = document.createElement('div'); el.className = 'card' + (fresh ? ' new' : ''); el.id = 'card-' + c.id; cardsEl.appendChild(el); el.dataset.rendered = ''; }
+    el.style.left = c.x + 'px'; el.style.top = c.y + 'px';
+    el.classList.toggle('selected', ui.selectedId === c.id);
+    const sig = c.status + '|' + (c.answer || '').length + '|' + (c.marks || []).length + '|' + (c.stages || []).map(s => s.label + s.done).join();
+    if (el.dataset.rendered !== sig) { el.innerHTML = cardHTML(c); el.dataset.rendered = sig; wireCard(el, c); }
+  }
+  for (const el of [...cardsEl.children]) if (!seen.has(+el.id.replace('card-', ''))) el.remove();
+  empty.classList.toggle('hidden', board.cards.length + board.notes.length + board.images.length + board.strokes.length > 0);
+  drawEdges(); renderItems(); renderInk();
+}
+function renderInk() { ink.innerHTML = board.strokes.map((s, i) => `<path data-i="${i}" stroke="${s.color}" stroke-width="${s.w}" d="${s.d}"/>`).join(''); }
+function renderItems() {
+  const seen = new Set();
+  for (const n of board.notes) { seen.add('note-' + n.id); let el = document.getElementById('note-' + n.id);
+    if (!el) { el = document.createElement('div'); el.id = 'note-' + n.id; el.className = 'item note ' + n.color; el.innerHTML = `<div class="grip"></div><button class="x">✕</button><textarea placeholder="Write here…"></textarea>`; cardsEl.appendChild(el);
+      const ta = el.querySelector('textarea'); ta.value = n.text; ta.oninput = () => { n.text = ta.value; save(); }; ta.addEventListener('pointerdown', e => e.stopPropagation());
+      el.querySelector('.x').onclick = () => { board.notes = board.notes.filter(x => x !== n); render(); save(); };
+      makeDraggable(el, n); }
+    el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; }
+  for (const im of board.images) { seen.add('img-' + im.id); let el = document.getElementById('img-' + im.id);
+    if (!el) { el = document.createElement('div'); el.id = 'img-' + im.id; el.className = 'item img'; el.innerHTML = `<div class="grip"></div><button class="x">✕</button><img draggable="false"/><button class="read">Read this image</button>`; cardsEl.appendChild(el);
+      el.querySelector('img').src = im.src;
+      el.querySelector('.x').onclick = () => { board.images = board.images.filter(x => x !== im); render(); save(); };
+      el.querySelector('.read').onclick = e => readImage(im, e.currentTarget);
+      makeDraggable(el, im); }
+    el.style.left = im.x + 'px'; el.style.top = im.y + 'px'; }
+  for (const el of [...cardsEl.querySelectorAll('.item')]) if (!seen.has(el.id)) el.remove();
+}
+function makeDraggable(el, obj) {
+  const g = el.querySelector('.grip'); let d = null;
+  g.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); d = { sx: e.clientX, sy: e.clientY, ox: obj.x, oy: obj.y }; g.setPointerCapture(e.pointerId); });
+  g.addEventListener('pointermove', e => { if (!d) return; obj.x = d.ox + (e.clientX - d.sx) / board.view.k; obj.y = d.oy + (e.clientY - d.sy) / board.view.k; el.style.left = obj.x + 'px'; el.style.top = obj.y + 'px'; });
+  g.addEventListener('pointerup', () => { d = null; save(); });
+  el.addEventListener('pointerdown', e => e.stopPropagation());
+}
+function cardHTML(c) {
+  const title = c.anchor ? c.anchor : (c.kind === 'follow' ? 'Follow-up' : c.question);
+  let body = `<div class="msg">${esc(c.question)}</div>`;
+  if (c.status === 'thinking') body += `<div class="status dots"></div>`;
+  else if (c.status === 'visual') body += `<div class="status">Creating a visual…</div>`;
+  else if (c.status === 'stages') body += `<div class="stages">${(c.stages || []).map((s, i, a) => `<div class="${s.done ? 'done' : 'live'}">${esc(s.label)}${s.done ? '' : '…'}</div>`).join('')}</div>`;
+  else {
+    body += `<div class="answer">${markup(c)}</div>`;
+    if (c.findings && c.findings.length) body += `<div class="findings"><b>Key findings</b>${c.findings.map(f => `<div>${cite(esc(f))}</div>`).join('')}</div>`;
+    body += visualHTML(c.visual);
+    if (c.sources && c.sources.length) body += `<details class="sources"><summary>Sources (${c.sources.length})</summary><ol>${c.sources.map(s => `<li id="src-${c.id}-${s.n}"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a> <span>${esc(s.site || '')}</span></li>`).join('')}</ol></details>`;
+  }
+  const badge = c.depth && c.depth !== 'fast' ? `<span class="badge ${c.depth}">${c.depth}</span>` : '';
+  const off = c.status !== 'done' ? 'disabled' : '';
+  return `<div class="head"><span class="title">${esc(title)}</span>${badge}<button class="close" title="Remove" style="margin-left:auto">✕</button></div>
+    <div class="body">${body}</div>
+    <div class="foot"><input placeholder="Ask a follow-up…" ${off}/><button class="send" ${off}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>`;
+}
+function cite(s) { return s.replace(/\s?\[(\d+(?:,\s*\d+)*)\]/g, (_, n) => n.split(/,\s*/).map(k => `<sup data-n="${k}">${k}</sup>`).join('')); }
+function markup(c) { let h = esc(c.answer); for (const m of (c.marks || [])) { const e = esc(m); h = h.replace(e, `<mark>${e}</mark>`); } return cite(h); }
+const HUES = ['h1', 'h2', 'h3', 'h4'];
+function visualHTML(v) {
+  if (!v) return '';
+  const bottom = v.bottomLine ? `<div class="bottom"><b>${esc(v.bottomLine.head)}</b>${esc(v.bottomLine.text)}</div>` : '';
+  if (v.type === 'tree' && v.root) {
+    const level = (nodes, depth) => { if (!nodes || !nodes.length) return '';
+      const row = `<div class="row">${nodes.map((n, i) => `<span class="node clk ${HUES[(depth + i) % 4]}" data-note="${esc(n.note || '')}" data-label="${esc(n.label)}">${esc(n.label)}</span>`).join('')}</div>`;
+      const kids = nodes.flatMap(n => n.children || []); return row + (kids.length ? `<div class="arrow">↓</div>` + level(kids, depth + 1) : ''); };
+    return `<div class="vis tree"><h4>${esc(v.title)}</h4><span class="node clk h0" data-note="${esc(v.root.note || '')}" data-label="${esc(v.root.label)}">${esc(v.root.label)}</span><div class="arrow">↓</div>${level(v.root.children, 0)}</div>`;
+  }
+  if (v.type === 'table') return `<div class="vis"><h4>${esc(v.title)}</h4><table class="cmp"><tr>${(v.columns || []).map((c, i) => `<th class="clk ${i ? 'h1' : 'h2'}" data-label="${esc(c)}">${esc(c)}</th>`).join('')}</tr>${(v.rows || []).map(r => `<tr>${r.map(x => `<td class="clk" data-label="${esc(x)}">${esc(x)}</td>`).join('')}</tr>`).join('')}</table>${bottom}</div>`;
+  if (v.type === 'list') return `<div class="vis list"><h4>${esc(v.title)}</h4>${(v.groups || []).map(g => `<div class="g">${esc(g.heading)}</div>${(g.items || []).map(it => `<div class="it clk" data-label="${esc(it.name)}"><b>${esc(it.name)}</b><span>${esc(it.detail)}</span></div>`).join('')}`).join('')}${bottom}</div>`;
+  if (v.type === 'steps') return `<div class="vis"><h4>${esc(v.title)}</h4><div class="steps">${(v.steps || []).map((s, i) => `<div class="s"><i>${i + 1}</i><div class="clk ${HUES[i % 4]}" data-label="${esc(s.label)}"><b>${esc(s.label)}</b><span>${esc(s.note || '')}</span></div></div>`).join('')}</div>${bottom}</div>`;
+  if (v.type === 'figure') return `<figure class="vis figure" style="margin:0"><h4>${esc(v.title)}</h4>${safeSvg(v.svg)}<figcaption>${esc(v.caption || '')}</figcaption></figure>`;
+  return '';
+}
+function safeSvg(s) { if (!s || !/^<svg/i.test(s.trim())) return ''; return s.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+="[^"]*"/gi, '').replace(/<(foreignObject|image|a)[\s\S]*?<\/\1>/gi, ''); }
+function drawEdges() {
+  let d = '';
+  for (const c of board.cards) {
+    if (!c.parentId) continue;
+    const p = board.cards.find(x => x.id === c.parentId); if (!p) continue;
+    const ph = heightOf(p), ch = heightOf(c);
+    if (c.kind === 'follow') { const x1 = p.x + W / 2, y1 = p.y + ph, x2 = c.x + W / 2, y2 = c.y, my = (y1 + y2) / 2; d += `<path d="M${x1},${y1} V${my} H${x2} V${y2}"/>`; }
+    else { const x1 = p.x + W, y1 = p.y + Math.min(ph * 0.45, 160), x2 = c.x, y2 = c.y + Math.min(ch, 120) / 2; d += `<path class="branch" d="M${x1},${y1} C${x1 + 60},${y1} ${x2 - 60},${y2} ${x2},${y2}"/>`; }
+  }
+  edges.innerHTML = d;
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
+
+/* ---------------- card interactions ---------------- */
+let drag = null, tip;
+function wireCard(el, c) {
+  el.querySelector('.close').onclick = e => { e.stopPropagation(); removeCard(c.id); };
+  el.addEventListener('pointerdown', () => { ui.selectedId = c.id; render(); });
+  const head = el.querySelector('.head');
+  head.addEventListener('pointerdown', e => {
+    if (e.target.closest('.close')) return;
+    e.stopPropagation(); e.preventDefault();
+    drag = { id: c.id, sx: e.clientX, sy: e.clientY, ox: c.x, oy: c.y, el };
+    el.classList.add('dragging'); head.setPointerCapture(e.pointerId);
+  });
+  head.addEventListener('pointermove', e => { if (!drag || drag.id !== c.id) return; c.x = drag.ox + (e.clientX - drag.sx) / board.view.k; c.y = drag.oy + (e.clientY - drag.sy) / board.view.k; render(); });
+  head.addEventListener('pointerup', () => { if (!drag) return; el.classList.remove('dragging'); c.dx = (c.dx || 0) + (c.x - drag.ox); c.dy = (c.dy || 0) + (c.y - drag.oy); drag = null; layout(); render(); save(); });
+  const input = el.querySelector('.foot input'), btn = el.querySelector('.foot .send');
+  const submit = () => { const q = input.value.trim(); if (!q) return; input.value = ''; createCard({ question: q, parentId: c.id, kind: 'follow' }); };
+  btn.onclick = submit; input.onkeydown = e => { if (e.key === 'Enter') submit(); };
+  el.querySelectorAll('.node[data-note]').forEach(n => {
+    n.addEventListener('mouseenter', e => { if (n.dataset.note) showTip(n.dataset.label, n.dataset.note, e.clientX, e.clientY); });
+    n.addEventListener('mousemove', e => moveTip(e.clientX, e.clientY)); n.addEventListener('mouseleave', hideTip);
+  });
+  el.querySelectorAll('.answer sup, .findings sup').forEach(s => s.addEventListener('click', e => { e.stopPropagation(); const d = el.querySelector('.sources'); if (d) { d.open = true; const li = el.querySelector('#src-' + c.id + '-' + s.dataset.n); if (li) { li.style.background = 'var(--amber)'; setTimeout(() => li.style.background = '', 1200); } } }));
+  el.querySelectorAll('.clk[data-label]').forEach(n => n.addEventListener('click', e => { e.stopPropagation(); hideTip(); askInvestigate(c, n.dataset.label, n); }));
+  const ans = el.querySelector('.answer');
+  if (ans) ans.addEventListener('mouseup', () => setTimeout(() => onSelect(c, ans), 0));
+}
+function showTip(label, note, x, y) { hideTip(); tip = document.createElement('div'); tip.className = 'tip'; tip.innerHTML = `<b>${esc(label)}</b>${esc(note)}`; document.body.appendChild(tip); moveTip(x, y); }
+function moveTip(x, y) { if (tip) { tip.style.left = (x + 14) + 'px'; tip.style.top = (y + 14) + 'px'; } }
+function hideTip() { if (tip) { tip.remove(); tip = null; } }
+
+const pop = $('#pop'); let pending = null;
+function onSelect(card, ans) {
+  const sel = window.getSelection(); const text = sel && sel.toString().trim();
+  if (!text || text.length < 2 || !ans.contains(sel.anchorNode) || /^\d+$/.test(text)) { pop.style.display = 'none'; return; }
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  pending = { card, text }; pop.style.display = 'flex';
+  pop.style.left = Math.min(r.left, window.innerWidth - 180) + 'px'; pop.style.top = (r.bottom + 8) + 'px';
+}
+function commitMark() { const { card, text } = pending; card.marks = card.marks || []; if (!card.marks.includes(text)) card.marks.push(text); window.getSelection().removeAllRanges(); pop.style.display = 'none'; }
+$('#popAsk').onclick = () => { if (!pending) return; commitMark(); const p = pending; pending = null; createCard({ question: `Explain "${p.text}" in this context`, parentId: p.card.id, kind: 'branch', anchor: p.text }); };
+$('#popSave').onclick = () => { if (!pending) return; commitMark(); pending = null; render(); save(); };
+document.addEventListener('pointerdown', e => { if (!pop.contains(e.target)) pop.style.display = 'none'; if (!pop2.contains(e.target)) pop2.style.display = 'none'; });
+
+const pop2 = $('#pop2'); let inv = null;
+function askInvestigate(card, label, el) {
+  if (!label || card.status !== 'done') return;
+  inv = { card, label };
+  pop2.querySelector('.q').innerHTML = `Investigate <b>${esc(label)}</b> further?`;
+  const r = el.getBoundingClientRect();
+  pop2.style.display = 'flex';
+  pop2.style.left = Math.min(Math.max(8, r.left), window.innerWidth - 270) + 'px';
+  pop2.style.top = Math.min(r.bottom + 8, window.innerHeight - 110) + 'px';
+}
+$('#p2cancel').onclick = () => { pop2.style.display = 'none'; inv = null; };
+$('#p2branch').onclick = () => { if (!inv) return; const i = inv; inv = null; pop2.style.display = 'none'; createCard({ question: `Tell me more about ${i.label}`, parentId: i.card.id, kind: 'branch', anchor: i.label }); };
+$('#p2board').onclick = () => {
+  if (!inv) return; const i = inv; inv = null; pop2.style.display = 'none';
+  newBoard(i.label, { fromBoard: board.id, context: i.card.answer, seed: i.label, named: true });
+  createCard({ question: `What is ${i.label}?` });
+};
+
+/* ---------------- pan and zoom ---------------- */
+function applyView() { const v = board.view; world.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.k})`; $('#grid').style.backgroundPosition = `${v.x}px ${v.y}px`; $('#grid').style.backgroundSize = `${24 * v.k}px ${24 * v.k}px`; }
+function resetView() { const r = main.getBoundingClientRect(); board.view = { x: r.width / 2 - W / 2, y: 80, k: 1 }; applyView(); }
+let pan = null;
+let stroke = null, erasing = false;
+function eraseAt(p) {
+  const r = 10 / board.view.k; let hit = false;
+  board.strokes = board.strokes.filter(s => { const near = s.pts.some(([x, y]) => Math.hypot(x - p.x, y - p.y) < r + s.w); if (near) hit = true; return !near; });
+  if (hit) { renderInk(); save(); }
+}
+function worldPt(e) { const r = main.getBoundingClientRect(), v = board.view; return { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k }; }
+main.addEventListener('pointerdown', e => {
+  if (e.target.closest('.card, .item, #composer, #toolbar, #tools, #pop, #pop2, #mode, #titlebar')) return;
+  if (tool.mode === 'pen') { const p = worldPt(e); stroke = { color: tool.color, w: tool.w / 1, pts: [p] }; main.setPointerCapture(e.pointerId); return; }
+  if (tool.mode === 'erase') { erasing = true; main.setPointerCapture(e.pointerId); eraseAt(worldPt(e)); return; }
+  if (tool.mode === 'note') { const p = worldPt(e); board.notes.push({ id: db.nextId++, x: p.x - 110, y: p.y - 20, text: '', color: ['y', 'g', 'b', 'r'][board.notes.length % 4] }); render(); save(); setTool('select'); setTimeout(() => document.getElementById('note-' + board.notes.at(-1).id).querySelector('textarea').focus(), 50); return; }
+  pan = { sx: e.clientX, sy: e.clientY, ox: board.view.x, oy: board.view.y };
+  main.classList.add('panning'); main.setPointerCapture(e.pointerId);
+  ui.selectedId = null; render();
+});
+main.addEventListener('pointermove', e => {
+  if (erasing) { eraseAt(worldPt(e)); return; }
+  if (stroke) { const p = worldPt(e); const l = stroke.pts.at(-1); if (Math.hypot(p.x - l.x, p.y - l.y) > 1.5) { stroke.pts.push(p); ink.insertAdjacentHTML('beforeend', ''); drawLive(); } return; }
+  if (pan) { board.view.x = pan.ox + e.clientX - pan.sx; board.view.y = pan.oy + e.clientY - pan.sy; applyView(); } });
+function pathD(pts) { if (pts.length < 2) return `M${pts[0].x},${pts[0].y} l0.1,0`; let d = `M${pts[0].x},${pts[0].y}`; for (let i = 1; i < pts.length - 1; i++) { const m = { x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2 }; d += ` Q${pts[i].x},${pts[i].y} ${m.x},${m.y}`; } const l = pts.at(-1); d += ` L${l.x},${l.y}`; return d; }
+function drawLive() { let live = ink.querySelector('#live'); if (!live) { live = document.createElementNS('http://www.w3.org/2000/svg', 'path'); live.id = 'live'; ink.appendChild(live); } live.setAttribute('stroke', stroke.color); live.setAttribute('stroke-width', stroke.w); live.setAttribute('d', pathD(stroke.pts)); }
+main.addEventListener('pointerup', () => {
+  if (erasing) { erasing = false; return; }
+  if (stroke) { if (stroke.pts.length > 1) board.strokes.push({ color: stroke.color, w: stroke.w, d: pathD(stroke.pts), pts: stroke.pts.map(p => [Math.round(p.x), Math.round(p.y)]) }); stroke = null; renderInk(); empty.classList.add('hidden'); save(); return; }
+  if (pan) { pan = null; main.classList.remove('panning'); save(); } });
+main.addEventListener('wheel', e => {
+  e.preventDefault(); const v = board.view;
+  if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
+  else { v.x -= e.deltaX; v.y -= e.deltaY; applyView(); }
+}, { passive: false });
+function zoomAt(cx, cy, f) {
+  const rect = main.getBoundingClientRect(), mx = cx - rect.left, my = cy - rect.top, v = board.view;
+  const k = Math.min(2, Math.max(.2, v.k * f)); v.x = mx - (mx - v.x) * (k / v.k); v.y = my - (my - v.y) * (k / v.k); v.k = k; applyView(); save();
+}
+$('#zoomIn').onclick = () => { const r = main.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.25); };
+$('#zoomOut').onclick = () => { const r = main.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 0.8); };
+function panTo(card) { const rect = main.getBoundingClientRect(), v = board.view; animateView(rect.width / 2 - (card.x + W / 2) * v.k, 80 - card.y * v.k, v.k); }
+function fitView() {
+  if (!board.cards.length) return; const rect = main.getBoundingClientRect();
+  const minX = Math.min(...board.cards.map(c => c.x)), minY = Math.min(...board.cards.map(c => c.y));
+  const maxX = Math.max(...board.cards.map(c => c.x)) + W, maxY = Math.max(...board.cards.map(c => c.y + heightOf(c)));
+  const k = Math.min(1, (rect.width - 120) / (maxX - minX), (rect.height - 200) / (maxY - minY));
+  animateView(rect.width / 2 - (minX + maxX) / 2 * k, (rect.height - 120) / 2 - (minY + maxY) / 2 * k, k);
+}
+function animateView(tx, ty, tk) {
+  const from = { ...board.view }, t0 = performance.now(), D = 420, ease = t => 1 - Math.pow(1 - t, 4);
+  (function step(now) { const t = Math.min(1, (now - t0) / D), e = ease(t);
+    board.view.x = from.x + (tx - from.x) * e; board.view.y = from.y + (ty - from.y) * e; board.view.k = from.k + (tk - from.k) * e;
+    applyView(); if (t < 1) requestAnimationFrame(step); else save(); })(t0);
+}
+
+/* ---------------- chrome ---------------- */
+const ask = $('#ask');
+function submitRoot() { const q = ask.value.trim(); if (!q) return; ask.value = ''; if (learn.on && !learn.session) startLearn(q); else createCard({ question: q }); }
+$('#askBtn').onclick = submitRoot;
+ask.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitRoot(); } });
+$('#web').onclick = e => e.currentTarget.classList.toggle('off');
+document.querySelectorAll('#modes button').forEach(b => b.onclick = () => { tool.depth = b.dataset.m; document.querySelectorAll('#modes button').forEach(x => x.classList.toggle('on', x === b)); $('#hint').textContent = { fast: '', deep: 'Deep: searches the web and cites sources. About 10 to 20 seconds.', research: 'Research: plans sub-questions, searches each, synthesizes with citations. About a minute.' }[b.dataset.m]; setTimeout(() => $('#hint').textContent = HINTS[tool.mode], 3500); });
+$('#fit').onclick = fitView;
+$('#tidy').onclick = () => { board.cards.forEach(c => { c.dx = 0; c.dy = 0; }); layout(); render(); save(); };
+$('#reset').onclick = () => { board.cards = []; render(); resetView(); save(); };
+$('#toggleSide').onclick = () => $('#app').classList.toggle('open');
+$('#newBoard').onclick = $('#newBoardNav').onclick = () => newBoard();
+window.addEventListener('resize', () => render());
+
+/* ---------------- tools, paste, read ---------------- */
+const HINTS = { select: '', pen: 'Draw on the board. Switch back to Select to pan.', erase: 'Click a stroke to remove it.', note: 'Click anywhere to place a note.' };
+function setTool(m) { tool.mode = m; main.className = 'tool-' + m; document.querySelectorAll('#tools [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === m)); $('#hint').textContent = HINTS[m]; }
+document.querySelectorAll('#tools [data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+(() => { const t = $('#tools'), g = t.querySelector('.handle'); let d = null;
+  g.addEventListener('pointerdown', e => { const r = t.getBoundingClientRect(), m = main.getBoundingClientRect(); t.classList.add('moved'); t.style.left = (r.left - m.left) + 'px'; t.style.top = (r.top - m.top) + 'px'; d = { sx: e.clientX, sy: e.clientY, ox: r.left - m.left, oy: r.top - m.top }; g.setPointerCapture(e.pointerId); e.preventDefault(); });
+  g.addEventListener('pointermove', e => { if (!d) return; const m = main.getBoundingClientRect(); t.style.left = Math.max(0, Math.min(m.width - t.offsetWidth, d.ox + e.clientX - d.sx)) + 'px'; t.style.top = Math.max(0, Math.min(m.height - t.offsetHeight, d.oy + e.clientY - d.sy)) + 'px'; });
+  g.addEventListener('pointerup', () => d = null); })();
+document.querySelectorAll('#tools .sw').forEach(s => s.onclick = () => { tool.color = s.dataset.c; document.querySelectorAll('#tools .sw').forEach(x => x.classList.toggle('on', x === s)); if (tool.mode !== 'pen') setTool('pen'); });
+$('#clearInk').onclick = () => { board.strokes = []; renderInk(); save(); };
+document.addEventListener('keydown', e => { if (e.target.matches('input, textarea')) return; if (e.key === 'v') setTool('select'); if (e.key === 'p') setTool('pen'); if (e.key === 'e') setTool('erase'); if (e.key === 'n') setTool('note'); if (e.key === 'Escape') { setTool('select'); if (page) showPage(null); } });
+
+document.addEventListener('paste', async e => {
+  if (e.target.matches('input, textarea') && !e.clipboardData.files.length) return;
+  const f = [...e.clipboardData.files].find(f => f.type.startsWith('image/')); if (!f) return;
+  e.preventDefault();
+  const src = await shrink(f, 900);
+  const r = main.getBoundingClientRect(), v = board.view;
+  board.images.push({ id: db.nextId++, src, x: (r.width / 2 - v.x) / v.k - 200, y: (r.height / 2 - v.y) / v.k - 160 });
+  render(); save();
+});
+function shrink(file, max) { return new Promise(res => { const img = new Image(); img.onload = () => { const s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.85)); }; img.src = URL.createObjectURL(file); }); }
+
+// rasterize strokes and notes into one image for the model
+function rasterSketch() {
+  if (!board.strokes.length && !board.notes.length) return null;
+  const xs = [], ys = [];
+  board.strokes.forEach(s => s.pts.forEach(([x, y]) => { xs.push(x); ys.push(y); }));
+  board.notes.forEach(n => { xs.push(n.x, n.x + 220); ys.push(n.y, n.y + 120); });
+  const pad = 30, x0 = Math.min(...xs) - pad, y0 = Math.min(...ys) - pad, w = Math.max(...xs) - x0 + pad, hh = Math.max(...ys) - y0 + pad;
+  const c = document.createElement('canvas'); const sc = Math.min(1, 1400 / Math.max(w, hh)); c.width = w * sc; c.height = hh * sc; const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.scale(sc, sc); g.translate(-x0, -y0); g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const s of board.strokes) { g.strokeStyle = toRgb(s.color); g.lineWidth = s.w; g.beginPath(); s.pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); }
+  g.font = '14px sans-serif'; g.fillStyle = '#222';
+  for (const n of board.notes) { g.fillStyle = '#f3e7b5'; g.fillRect(n.x, n.y, 220, 120); g.fillStyle = '#222'; n.text.split('\n').slice(0, 6).forEach((line, i) => g.fillText(line.slice(0, 32), n.x + 10, n.y + 24 + i * 18)); }
+  return { src: c.toDataURL('image/jpeg', 0.85), x: x0, y: y0 + hh + 40 };
+}
+function toRgb(oklch) { const s = document.createElement('span'); s.style.color = oklch; document.body.appendChild(s); const v = getComputedStyle(s).color; s.remove(); return v; }
+
+const READ_SYSTEM = SYSTEM.replace('You answer questions for a visual learning canvas.', 'You read a user-drawn sketch or pasted image from a visual learning canvas and convert it into a clean card. The "answer" describes what the image shows in 2 to 4 sentences, calling out anything notable (numbers, relationships, risks, missing pieces). The "visual" is the properly formatted version of what the user drew or pasted: a hand-drawn table becomes a table, boxes with arrows become a tree or steps, a list becomes a list, a screenshot of data becomes a table of its key figures.');
+async function readVision(src, question) {
+  try {
+    const [meta, data] = src.split(','); const media = meta.match(/data:(.*?);/)[1];
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: READ_SYSTEM + profileBlock(), messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: media, data } }, { type: 'text', text: question }] }] }) });
+    if (!r.ok) throw new Error(r.status);
+    const out = await r.json(); const text = out.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    setOnline(true); return JSON.parse(text.replace(/```json|```/g, '').trim());
+  } catch (e) { setOnline(false); await new Promise(r => setTimeout(r, 900));
+    return { answer: 'Offline mode. Inside claude.ai the model would read this image and return a description plus a properly formatted version of its contents.', visual: { type: 'steps', title: 'What would happen', steps: [ { label: 'Image sent to model', note: 'With the read instruction' }, { label: 'Contents interpreted', note: 'Tables, boxes, arrows, figures' }, { label: 'Card created', note: 'Prose plus a clean visual' } ] } }; }
+}
+async function createReadCard(src, question, at) {
+  const card = { id: db.nextId++, parentId: null, kind: 'root', question, anchor: null, answer: '', visual: null, status: 'thinking', x: at.x, y: at.y, dx: 0, dy: 0, pinned: true };
+  board.cards.push(card); render(true); panTo(card);
+  setTimeout(() => { if (card.status === 'thinking') { card.status = 'visual'; render(); } }, 700);
+  const out = await readVision(src, question);
+  card.answer = out.answer; card.visual = out.visual; card.status = 'done'; render(); save();
+}
+$('#readSketch').onclick = () => { const r = rasterSketch(); if (!r) { $('#hint').textContent = 'Draw something or add a note first.'; setTimeout(() => $('#hint').textContent = HINTS[tool.mode], 2000); return; } createReadCard(r.src, 'Read my sketch and notes', { x: r.x, y: r.y }); };
+function readImage(im, btn) { btn.disabled = true; btn.textContent = 'Reading…'; const el = document.getElementById('img-' + im.id); createReadCard(im.src, 'Read this image', { x: im.x + (el ? el.offsetWidth : 300) + 60, y: im.y }).then(() => { btn.disabled = false; btn.textContent = 'Read this image'; }); }
+
+/* ---------------- learn mode: the Tutor ---------------- */
+const learn = { on: false, session: null };
+const T = { log: $('#tlog'), panel: $('#tutor'), stage: $('#tstage') };
+$('#learnBtn').onclick = () => { learn.on = !learn.on; $('#learnBtn').classList.toggle('on', learn.on); ask.placeholder = learn.on ? 'What do you want to learn?' : 'What do you want to understand?'; $('#hint').textContent = learn.on ? 'Learn: type a topic. The tutor asks a few questions, builds a board, then keeps checking your understanding.' : ''; setTimeout(() => $('#hint').textContent = HINTS[tool.mode], 4000); };
+$('#tclose').onclick = () => { T.panel.classList.remove('on'); learn.session = null; };
+function tsay(text, cls = 't') { const d = document.createElement('div'); d.className = 'tmsg ' + cls; d.textContent = text; T.log.appendChild(d); T.log.scrollTop = T.log.scrollHeight; return d; }
+function tstatus(text) { const d = tsay(text, 's'); return d; }
+function toptions(options, onPick) { const w = document.createElement('div'); w.className = 'topts'; options.forEach(o => { const b = document.createElement('button'); b.textContent = o; b.onclick = () => { [...w.children].forEach(x => { x.disabled = true; x.classList.toggle('picked', x === b); }); onPick(o); }; w.appendChild(b); }); T.log.appendChild(w); T.log.scrollTop = T.log.scrollHeight; return w; }
+
+const TUTOR_INTAKE = `You are a tutor preparing a learning board. Given a topic and what is known about the learner, ask 2 or 3 short intake questions that decide what to teach first. Respond with JSON only: {"questions":[{"q":string,"options":[string,string,string]}]}. Options are short, mutually exclusive, and cover background level, goal, and one topic specific fork. No dashes.`;
+const TUTOR_PLAN = `You are a tutor. From the topic and the learner's intake answers, design a first learning board of 3 to 4 cards. Each card is one question the learner should be able to answer after reading, ordered from foundation to detail. Vary what the cards will show. Respond with JSON only: {"title": string, "cards":[{"question": string, "why": string, "visual": "tree|table|list|steps|figure"}]}. No dashes.`;
+const TUTOR_CHECK = `You are a tutor checking understanding of a learning board. You receive the cards (question, answer, visual labels). Write one multiple choice check question grounded in exactly one card, with 3 options, and name what to open next depending on the answer. Respond with JSON only: {"card_index": number, "prompt": string, "options":[string,string,string], "answer_index": number, "explanation": string, "next_if_wrong": string (a follow-up question to open on that card), "next_if_right": string (a deeper question to open on that card)}. No dashes.`;
+
+async function tutorJSON(system, user) {
+  try { const out = await callJSON(system, user, false, 900); setOnline(true); return out; }
+  catch (e) { setOnline(false); return null; }
+}
+function boardDigest() { return board.cards.filter(c => c.status === 'done').map((c, i) => `Card ${i}: Q: ${c.question}\nA: ${c.answer}\nVisual: ${(c.visual && c.visual.title) || 'none'} ${(c.visual && JSON.stringify(c.visual).slice(0, 300)) || ''}`).join('\n\n'); }
+
+async function startLearn(topic) {
+  T.panel.classList.add('on'); T.log.innerHTML = ''; T.stage.textContent = 'intake';
+  learn.session = { topic, answers: [], checks: 0, score: 0 };
+  tsay(`Let's build a board on "${topic}". A few questions first.`);
+  const st = tstatus('Preparing questions…');
+  let intake = await tutorJSON(TUTOR_INTAKE, `Topic: ${topic}\nLearner: ${db.profile.role || 'unknown role'}. ${db.profile.context || ''}`);
+  if (!intake) intake = { questions: [ { q: 'How familiar are you with this topic?', options: ['New to it', 'Know the basics', 'Work with it regularly'] }, { q: 'What do you want to be able to do?', options: ['Explain it to a colleague', 'Make a decision about it', 'Pass a review or exam'] } ] };
+  st.remove();
+  for (const q of intake.questions) {
+    tsay(q.q);
+    const picked = await new Promise(res => toptions(q.options, res));
+    learn.session.answers.push({ q: q.q, a: picked }); tsay(picked, 'u');
+  }
+  T.stage.textContent = 'building';
+  const st2 = tstatus('Designing your board…');
+  let plan = await tutorJSON(TUTOR_PLAN, `Topic: ${topic}\nIntake:\n${learn.session.answers.map(a => a.q + ' ' + a.a).join('\n')}\nLearner: ${db.profile.role || ''}`);
+  if (!plan) plan = { title: topic, cards: [ { question: `What is ${topic}?`, why: 'Foundation', visual: 'tree' }, { question: `How does ${topic} work in practice?`, why: 'Mechanism', visual: 'steps' }, { question: `Who are the key players in ${topic}?`, why: 'Landscape', visual: 'list' } ] };
+  st2.remove();
+  if (!board.named) { board.title = plan.title; renderTitle(); renderBoards(); }
+  tsay(`Board: ${plan.title}. ${plan.cards.length} cards, from foundation to detail.`);
+  const c0 = viewCenter(); const cols = Math.min(plan.cards.length, 3);
+  plan.cards.forEach(pc => createCard({ question: pc.question }));
+  // position roots in a grid after creation
+  setTimeout(() => { const roots = board.cards.filter(c => c.kind === 'root' && c.pinned).slice(-plan.cards.length); roots.forEach((c, i) => { const col = i % cols, row = Math.floor(i / cols); c.x = c0.x - (cols * (W + GAP_X)) / 2 + col * (W + GAP_X); c.y = c0.y - 60 + row * 620; c.dx = 0; c.dy = 0; }); render(); fitView(); }, 100);
+  plan.cards.forEach(pc => tsay(`• ${pc.question} (${pc.why})`));
+  tstatus('Read the cards. I will check in once they are ready.');
+  T.stage.textContent = 'reading';
+  await waitForCards();
+  tutorLoop();
+}
+function waitForCards() { return new Promise(res => { const t = setInterval(() => { if (board.cards.every(c => c.status === 'done')) { clearInterval(t); res(); } }, 800); }); }
+
+async function tutorLoop() {
+  if (!learn.session) return;
+  T.stage.textContent = `check ${learn.session.checks + 1}`;
+  const st = tstatus('Thinking of a check…');
+  let chk = await tutorJSON(TUTOR_CHECK, boardDigest());
+  st.remove();
+  if (!chk) { const c = board.cards.find(x => x.status === 'done'); chk = { card_index: 0, prompt: `In "${c ? c.question : 'the first card'}", which statement matches the card?`, options: ['The first sentence of its answer', 'Something it did not say', 'An unrelated claim'], answer_index: 0, explanation: 'Offline sample check.', next_if_wrong: 'Explain the core idea again with an example', next_if_right: 'What are the limits or edge cases of this?' }; }
+  const doneCards = board.cards.filter(c => c.status === 'done'); const target = doneCards[Math.min(chk.card_index || 0, doneCards.length - 1)];
+  tsay(chk.prompt);
+  const picked = await new Promise(res => toptions(chk.options, res));
+  tsay(picked, 'u'); learn.session.checks++;
+  const right = chk.options.indexOf(picked) === chk.answer_index;
+  if (right) learn.session.score++;
+  const fb = document.createElement('div'); fb.className = 'tfb ' + (right ? 'ok' : 'no'); fb.textContent = (right ? 'Right. ' : 'Not quite. ') + chk.explanation; T.log.appendChild(fb);
+  const nextQ = right ? chk.next_if_right : chk.next_if_wrong;
+  tsay(right ? `Want to go deeper?` : `Let me open something that helps.`);
+  const opts = right ? [`Open: ${nextQ}`, 'Another check', 'Stop here'] : [`Open: ${nextQ}`, 'Ask me again', 'Stop here'];
+  const choice = await new Promise(res => toptions(opts, res));
+  tsay(choice, 'u');
+  if (choice.startsWith('Open:')) { if (target) { ui.selectedId = target.id; panTo(target); } await createCard({ question: nextQ, parentId: target ? target.id : null, kind: target ? 'follow' : 'root' }); tstatus('Card added. Read it, then we continue.'); await waitForCards(); tutorLoop(); }
+  else if (choice === 'Stop here') { tsay(`Session done. ${learn.session.score} of ${learn.session.checks} checks right. The board stays; ask anything from the composer or a card.`); T.stage.textContent = 'ended'; learn.session = null; }
+  else tutorLoop();
+}
+$('#tsend').onclick = tutorAsk; $('#tin').onkeydown = e => { if (e.key === 'Enter') tutorAsk(); };
+async function tutorAsk() {
+  const q = $('#tin').value.trim(); if (!q) return; $('#tin').value = ''; tsay(q, 'u');
+  const st = tstatus('…');
+  const out = await tutorJSON('You are a tutor beside a learning board. Answer the learner briefly (2 to 3 sentences) using the board content, and propose one card to open if it would help. Respond with JSON only: {"reply": string, "open": string | null}. No dashes.', `Board:\n${boardDigest()}\n\nLearner asks: ${q}`);
+  st.remove();
+  if (!out) { tsay('Offline. Inside claude.ai the tutor would answer from the board and offer a card to open.'); return; }
+  tsay(out.reply);
+  if (out.open) { const pick = await new Promise(res => toptions([`Open: ${out.open}`, 'No thanks'], res)); tsay(pick, 'u'); if (pick.startsWith('Open:')) createCard({ question: out.open }); }
+}
+
+/* ---------------- boot ---------------- */
+(async () => {
+  const saved = await store.get();
+  if (saved && saved.boards && saved.boards.length) {
+    Object.assign(db, saved);
+    db.trash = db.trash || []; db.profile = Object.assign({ name: '', role: '', context: '', style: '', depth: 'fast', keys: [], activeKey: null }, db.profile || {});
+    db.trash = db.trash.filter(b => Date.now() - (b.deletedAt || 0) < 30 * 864e5);
+    tool.depth = db.profile.depth || 'fast'; document.querySelectorAll('#modes button').forEach(x => x.classList.toggle('on', x.dataset.m === tool.depth));
+    db.boards.forEach(b => { b.strokes = b.strokes || []; b.notes = b.notes || []; b.images = b.images || []; });
+    db.boards.forEach(b => b.cards.forEach(c => { if (c.status !== 'done') { c.status = 'done'; c.stages = null; c.answer = c.answer || 'Answer was interrupted. Remove this card and ask again.'; } }));
+    openBoard(db.boards.find(b => b.id === db.activeId) ? db.activeId : db.boards[0].id);
+  } else newBoard();
+  setTool('select');
+  fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }) })
+    .then(r => setOnline(r.ok)).catch(() => setOnline(false));
+})();
+</script>
+</body>
+</html>

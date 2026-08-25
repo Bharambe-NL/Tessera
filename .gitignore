@@ -1,0 +1,38 @@
+# rust
+/target/
+**/target/
+Cargo.lock.bak
+
+# node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# generated corpora and eval output, reproducible from a seed
+/gen/synthetic/
+/eval/results/
+
+# local profile data, never committed
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+/blobs/
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# secrets never land in a file; this is a belt and braces guard
+.env
+.env.*
+!.env.example

@@ -1,0 +1,25 @@
+[package]
+name = "tessera-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tessera-agents = { version = "0.1.0", path = "../tessera-agents" }
+tessera-bundle = { version = "0.1.0", path = "../tessera-bundle" }
+tessera-doctrine = { version = "0.1.0", path = "../tessera-doctrine" }
+tessera-harness = { version = "0.1.0", path = "../tessera-harness" }
+tessera-providers = { version = "0.1.0", path = "../tessera-providers" }
+tessera-schema = { version = "0.1.0", path = "../tessera-schema" }
+tessera-store = { version = "0.1.0", path = "../tessera-store" }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "UNLICENSED"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Doc 12 operating principle 1: validate at every boundary. A silent unwrap in a
+# boundary crate is the failure mode that principle exists to prevent.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[workspace.dependencies]
+tessera-schema = { path = "crates/tessera-schema" }
+tessera-store = { path = "crates/tessera-store" }
+tessera-harness = { path = "crates/tessera-harness" }
+tessera-providers = { path = "crates/tessera-providers" }
+tessera-doctrine = { path = "crates/tessera-doctrine" }
+tessera-agents = { path = "crates/tessera-agents" }
+tessera-bundle = { path = "crates/tessera-bundle" }
+tessera-core = { path = "crates/tessera-core" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
