@@ -624,6 +624,7 @@ fn build_planner_packet(
             "needs_current_information": routed["classification"]["needs_current_information"].clone(),
             "needs_internal_documents": routed["classification"]["needs_internal_documents"].clone(),
             "needs_structured_data": routed["classification"]["needs_structured_data"].clone(),
+            "regulatory_stakes": routed["classification"]["regulatory_stakes"].clone(),
             "depth": depth,
             "router_confidence": routed["confidence"].clone(),
             "early_flags": routed["early_flags"].clone()

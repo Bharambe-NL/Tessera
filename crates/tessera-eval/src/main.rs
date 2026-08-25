@@ -59,14 +59,23 @@ struct Args {
     #[arg(long, default_value = "mock")]
     policy: String,
 
+    /// Run the breadth set (questions_breadth.jsonl) instead of the corpus
+    /// question set. BN-036: these are pack independent questions with stakes
+    /// ground truth, so this switches the default pack to `general` too, since
+    /// no doctrine governs paracetamol; an explicit --pack still wins.
+    #[arg(long)]
+    breadth: bool,
+
     /// Which snapshot's labels the questions are scored against.
     #[arg(long, default_value = "T1")]
     snapshot: String,
 
     /// Doc 02 section 10.1 loads `finance-eu-synthetic`: the same rules as the
-    /// shipped finance pack with the synthetic issuers substituted in.
-    #[arg(long, default_value = "finance-eu-synthetic")]
-    pack: String,
+    /// shipped finance pack with the synthetic issuers substituted in. Breadth
+    /// runs default to `general` instead, because nothing in that set is
+    /// governed by finance doctrine.
+    #[arg(long)]
+    pack: Option<String>,
 
     /// The provider carrying the bulk of the sweep. A 400 question set is a real
     /// cost against a frontier model, so the default is to send most of it
@@ -194,7 +203,12 @@ struct RunRecord {
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
 
-    let questions = match load_questions(&args.corpus.join("questions.jsonl")) {
+    let questions_file = if args.breadth { "questions_breadth.jsonl" } else { "questions.jsonl" };
+    let pack = args
+        .pack
+        .clone()
+        .unwrap_or_else(|| if args.breadth { "general" } else { "finance-eu-synthetic" }.to_string());
+    let questions = match load_questions(&args.corpus.join(questions_file)) {
         Ok(q) => q,
         Err(e) => {
             eprintln!("could not read the question set: {e}");
@@ -243,6 +257,7 @@ fn main() -> std::process::ExitCode {
             let collected = Arc::clone(&collected);
             let plan = Arc::clone(&plan);
             let args = &args;
+            let pack = &pack;
 
             scope.spawn(move || {
                 // Each worker gets its own profile. Doc 10 section 6's ledger is
@@ -270,8 +285,8 @@ fn main() -> std::process::ExitCode {
                 // Doc 02 section 10.1 and doc 10 section 5: test provenance, so
                 // nothing here trips a policy hook meant for live work.
                 core.source = Source::Test;
-                if let Err(e) = core.use_pack(&args.pack) {
-                    eprintln!("a worker could not load the `{}` pack: {e}", args.pack);
+                if let Err(e) = core.use_pack(pack) {
+                    eprintln!("a worker could not load the `{pack}` pack: {e}");
                     return;
                 }
 
@@ -316,7 +331,7 @@ fn main() -> std::process::ExitCode {
         .join(corpus_name(&args.corpus))
         .join(&args.policy)
         .join(stamp());
-    if let Err(e) = write_records(&dir, &records, &args, total, failures) {
+    if let Err(e) = write_records(&dir, &records, &args, &pack, total, failures) {
         eprintln!("could not write the results: {e}");
         return std::process::ExitCode::from(2);
     }
@@ -330,7 +345,12 @@ fn main() -> std::process::ExitCode {
 fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
     let started = std::time::Instant::now();
 
-    let board_id = match core.create_board(&q.text, &q.depth_expected) {
+    // Always `fast`, never the expected depth. Seeding the board default with
+    // the label hands the Router part of the answer, because the default is the
+    // baseline its recommendation starts from: every earlier sweep's route
+    // accuracy was measured with that leak (BN-036), so those numbers are not
+    // comparable with what this measures.
+    let board_id = match core.create_board(&q.text, "fast") {
         Ok(id) => id,
         Err(e) => {
             *failures += 1;
@@ -656,6 +676,7 @@ fn write_records(
     dir: &Path,
     records: &[RunRecord],
     args: &Args,
+    pack: &str,
     total: usize,
     failures: usize,
 ) -> std::io::Result<()> {
@@ -669,7 +690,7 @@ fn write_records(
     let manifest = json!({
         "corpus": corpus_name(&args.corpus),
         "policy": args.policy,
-        "pack": args.pack,
+        "pack": pack,
         "snapshot": args.snapshot,
         "provider": if args.mock { "mock" } else { args.bulk_provider.as_str() },
         "bulk_provider": args.bulk_provider,
@@ -696,7 +717,7 @@ fn write_records(
         // Doc 04 section 5: the plan's must_exclude may add to the doctrine's
         // list and never remove from it. The scorer needs the floor to check
         // compliance, and the pack is loaded here, not there.
-        "doctrine_must_exclude": doctrine_must_exclude(&args.pack),
+        "doctrine_must_exclude": doctrine_must_exclude(pack),
     });
     std::fs::write(
         dir.join("manifest.json"),

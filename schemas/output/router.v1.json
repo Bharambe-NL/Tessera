@@ -38,6 +38,7 @@
       "type": "object",
       "required": [
         "question_type",
+        "regulatory_stakes",
         "domain",
         "language"
       ],
@@ -55,7 +56,8 @@
           ]
         },
         "domain": {
-          "type": "string"
+          "type": "string",
+          "description": "BN-036. An observed label from the deterministic keyword pass, `unknown` when it did not fire. Never a judgment the model makes and never a gate on anything downstream."
         },
         "audience_id": {
           "oneOf": [
@@ -88,6 +90,10 @@
         },
         "is_follow_up_of_context": {
           "type": "boolean"
+        },
+        "regulatory_stakes": {
+          "type": "boolean",
+          "description": "BN-036. Whether the answer turns on a rule, threshold, date or obligation the reader might act on. Drives depth; retrieval is never gated on classification."
         }
       }
     },

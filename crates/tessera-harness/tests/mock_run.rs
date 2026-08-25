@@ -127,7 +127,8 @@ fn router_output(run_id: &str) -> Value {
         "agent_id": "router",
         "run_id": run_id,
         "classification": {
-            "question_type": "regulatory", "domain": "capital", "audience_id": null, "language": "en",
+            "question_type": "regulatory", "regulatory_stakes": true, "domain": "capital",
+            "audience_id": null, "language": "en",
             "needs_current_information": true, "needs_internal_documents": false,
             "needs_structured_data": false, "entities": ["CAR3"], "is_follow_up_of_context": false
         },

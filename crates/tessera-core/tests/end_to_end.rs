@@ -19,7 +19,10 @@ fn router_output(run_id_free: bool) -> Value {
     json!({
         "classification": {
             "question_type": "definitional",
-            "domain": "general",
+            // BN-036: the model no longer answers a domain; the label is
+            // observed by the keyword pass. Stakes is what it answers now, and
+            // a question of plain understanding carries none.
+            "regulatory_stakes": false,
             "audience_id": null,
             "language": "en",
             "needs_current_information": false,
@@ -142,8 +145,11 @@ fn a_fast_card_says_it_is_unverified_rather_than_claiming_confidence() {
 #[test]
 fn a_deep_card_with_no_retrievers_reports_no_sources_rather_than_guessing() {
     // Doc 06 section A10 no_passages. Retrievers arrive at M6; until then a deep
-    // card must say it found nothing, never fall back to model knowledge.
+    // card must say it found nothing, never fall back to model knowledge. The
+    // finance pack, because its retrievers are enabled: a pack with none is doc
+    // 04 section 10's failure, tested separately, not this honest thin card.
     let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
     let board_id = core.create_board("Board", "deep").expect("board");
     let outcome = core
         .ask(&board_id, "what changed in the capital rule?", Some("deep"))
@@ -405,20 +411,19 @@ fn asking_with_no_model_key_says_where_to_fix_it() {
 }
 
 #[test]
-fn the_router_prompt_carries_the_packs_domain_vocabulary() {
-    // Measured on the 400 question sweep: the deterministic keyword pass was
-    // right 129 times out of 129 and fired on a third of the questions. The
-    // other two thirds reached the model as four bare domain names, and the
-    // bulk model answered `capital` for most of them, the first name in the
-    // list. This pins the fix: the terms the pack holds for each domain reach
-    // the classify prompt, so the model has what the keyword pass has.
+fn the_router_asks_about_stakes_and_never_enumerates_domains() {
+    // BN-036, the owner's decision after two paid sweeps. A bare domain list
+    // made the bulk model guess the first name; a vocabulary list made it
+    // answer unknown for anything the list missed, and the list always misses,
+    // because nobody can enumerate what users will ask. The model is asked one
+    // question it can answer in any domain without being taught: does this
+    // carry regulatory stakes. The domain label survives only as an observed
+    // annotation from the free keyword pass.
     let provider = mock();
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("the shipped pack loads");
 
     let board_id = core.create_board("Board", "fast").expect("board");
-    // No safeguarding vocabulary appears in the question, so the keyword pass
-    // stays silent and the model is the only thing deciding.
     core.ask(&board_id, "what applies when a customer initiates a transfer?", None)
         .expect("the card runs");
 
@@ -428,17 +433,60 @@ fn the_router_prompt_carries_the_packs_domain_vocabulary() {
         .find(|c| c.stage == "route")
         .expect("the route call happened");
     assert!(
-        route.prompt.contains("strong customer authentication"),
-        "the payments vocabulary is missing from the classify prompt"
+        route.prompt.contains("regulatory_stakes"),
+        "the stakes question is missing from the route prompt"
     );
     assert!(
-        route.prompt.contains("risk weighted"),
-        "the capital vocabulary is missing from the classify prompt"
+        !route.prompt.contains("Available domains"),
+        "the prompt is enumerating domains again"
     );
     assert!(
-        route.prompt.contains("Classify by what the question is about"),
-        "the instruction that vocabulary is evidence rather than a checklist is missing"
+        !route.prompt.contains("strong customer authentication"),
+        "the prompt is teaching vocabulary again"
     );
+
+    // The label is observed, not judged: no vocabulary term appears in the
+    // question, so the keyword pass stayed silent and the label is unknown.
+    let events = core.store.events(Some(&board_id)).expect("events");
+    let routed = events
+        .iter()
+        .find(|e| e.event_type == "card.routed.v1")
+        .expect("routed");
+    assert_eq!(routed.payload["domain"], "unknown");
+}
+
+#[test]
+fn an_unknown_domain_costs_the_card_nothing() {
+    // The bug the taxonomy hid: `unknown` was silently removing the regulatory
+    // retriever from the plan, so the model's honest uncertainty stripped the
+    // card of its ranked source. Retrieval is ungated now: every enabled
+    // evidence retriever joins whatever the label says.
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output()))
+            .on("visualize", MockResponse::Json(visual_output())),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    let board_id = core.create_board("Board", "research").expect("board");
+    core.ask(&board_id, "how do the new rules treat this?", Some("research"))
+        .expect("runs");
+
+    let events = core.store.events(Some(&board_id)).expect("events");
+    let planned = events
+        .iter()
+        .find(|e| e.event_type == "card.planned.v1")
+        .expect("planned");
+    let ids = planned.payload["retriever_ids"].as_array().expect("ids");
+    for id in ["regulatory", "local", "web"] {
+        assert!(
+            ids.iter().any(|i| i == id),
+            "{id} was gated out of an unknown-domain plan: {ids:?}"
+        );
+    }
 }
 
 fn plan_output() -> Value {

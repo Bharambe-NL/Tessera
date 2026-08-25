@@ -3,49 +3,142 @@
   "version": "1.0.0",
   "name": "Finance EU, synthetic",
   "description": "A sibling of finance-eu with the same rules and the synthetic issuers substituted into the source hierarchy. Doc 02 section 4. It exists so evaluation output can be quoted without a real regulator or bank appearing in it, and so a score on the corpus is comparable with the shipped pack.",
-
-  "domains": ["capital", "payments", "outsourcing", "model-risk"],
-
+  "domains": [
+    "capital",
+    "payments",
+    "outsourcing",
+    "model-risk"
+  ],
   "domain_vocabulary": {
-    "capital": ["capital buffer", "risk weighted", "own funds", "trading book", "leverage ratio", "large exposure", "CAR3"],
-    "payments": ["safeguarding", "strong customer authentication", "payment institution", "incident report", "account information", "PSD-S"],
-    "outsourcing": ["outsourcing", "critical or important function", "exit plan", "sub outsourcing", "service provider", "OG-2025"],
-    "model-risk": ["model validation", "backtesting", "model inventory", "internal model", "model owner"]
+    "capital": [
+      "capital buffer",
+      "risk weighted",
+      "own funds",
+      "trading book",
+      "leverage ratio",
+      "large exposure",
+      "CAR3"
+    ],
+    "payments": [
+      "safeguarding",
+      "strong customer authentication",
+      "payment institution",
+      "incident report",
+      "account information",
+      "PSD-S"
+    ],
+    "outsourcing": [
+      "outsourcing",
+      "critical or important function",
+      "exit plan",
+      "sub outsourcing",
+      "service provider",
+      "OG-2025"
+    ],
+    "model-risk": [
+      "model validation",
+      "backtesting",
+      "model inventory",
+      "internal model",
+      "model owner"
+    ]
   },
-
   "depth_hints": {
-    "capital": "deep",
-    "payments": "deep",
-    "outsourcing": "deep",
-    "model-risk": "deep"
+    "regulatory_stakes": "deep"
   },
-
   "audiences": [
-    { "id": "risk", "name": "Risk", "vocabulary_notes": "Assumes the regulation, wants the exposure." },
-    { "id": "product", "name": "Product", "vocabulary_notes": "Wants what changes for a customer.", "avoid": ["RWA", "own funds"] },
-    { "id": "engineering", "name": "Engineering", "vocabulary_notes": "Wants the rule as a condition that can be implemented.", "avoid": ["prudential", "competent authority"] },
-    { "id": "board", "name": "Board", "vocabulary_notes": "Wants the decision and its consequence.", "avoid": ["article", "paragraph"] }
+    {
+      "id": "risk",
+      "name": "Risk",
+      "vocabulary_notes": "Assumes the regulation, wants the exposure."
+    },
+    {
+      "id": "product",
+      "name": "Product",
+      "vocabulary_notes": "Wants what changes for a customer.",
+      "avoid": [
+        "RWA",
+        "own funds"
+      ]
+    },
+    {
+      "id": "engineering",
+      "name": "Engineering",
+      "vocabulary_notes": "Wants the rule as a condition that can be implemented.",
+      "avoid": [
+        "prudential",
+        "competent authority"
+      ]
+    },
+    {
+      "id": "board",
+      "name": "Board",
+      "vocabulary_notes": "Wants the decision and its consequence.",
+      "avoid": [
+        "article",
+        "paragraph"
+      ]
+    }
   ],
-
   "source_hierarchy": [
-    { "class": "regulatory", "issuer_pattern": "Central Authority for Prudential Oversight", "trust_rank": 1 },
-    { "class": "regulatory", "issuer_pattern": "Payments Conduct Board", "trust_rank": 1 },
-    { "class": "regulatory", "trust_rank": 2 },
-    { "class": "structured_query", "trust_rank": 3 },
-    { "class": "local_document", "trust_rank": 4 },
-    { "class": "web", "issuer_pattern": "ledgerline.invalid", "trust_rank": 6 },
-    { "class": "web", "trust_rank": 7 },
-    { "class": "user_supplied", "trust_rank": 8 }
+    {
+      "class": "regulatory",
+      "issuer_pattern": "Central Authority for Prudential Oversight",
+      "trust_rank": 1
+    },
+    {
+      "class": "regulatory",
+      "issuer_pattern": "Payments Conduct Board",
+      "trust_rank": 1
+    },
+    {
+      "class": "regulatory",
+      "trust_rank": 2
+    },
+    {
+      "class": "structured_query",
+      "trust_rank": 3
+    },
+    {
+      "class": "local_document",
+      "trust_rank": 4
+    },
+    {
+      "class": "web",
+      "issuer_pattern": "ledgerline.invalid",
+      "trust_rank": 6
+    },
+    {
+      "class": "web",
+      "trust_rank": 7
+    },
+    {
+      "class": "user_supplied",
+      "trust_rank": 8
+    }
   ],
-
   "freshness_classes": {
-    "regulation": { "max_age_days": 365, "on_stale": "flag" },
-    "internal_policy": { "max_age_days": 540, "on_stale": "flag" },
-    "internal_memo": { "max_age_days": 270, "on_stale": "flag" },
-    "web_commentary": { "max_age_days": 120, "on_stale": "flag" },
-    "structured": { "max_age_days": 90, "on_stale": "rerun" }
+    "regulation": {
+      "max_age_days": 365,
+      "on_stale": "flag"
+    },
+    "internal_policy": {
+      "max_age_days": 540,
+      "on_stale": "flag"
+    },
+    "internal_memo": {
+      "max_age_days": 270,
+      "on_stale": "flag"
+    },
+    "web_commentary": {
+      "max_age_days": 120,
+      "on_stale": "flag"
+    },
+    "structured": {
+      "max_age_days": 90,
+      "on_stale": "rerun"
+    }
   },
-
   "flag_rules": [
     {
       "rule_id": "marker_integrity",
@@ -70,35 +163,50 @@
       "severity": "block",
       "description": "Any number with a unit in the answer, findings or a block, without a citation.",
       "detector": "deterministic:numeric_without_citation",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "computed_value",
       "severity": "block",
       "description": "A numeric claim whose cited passage does not contain the value. The model never stores a number it computed.",
       "detector": "deterministic:computed_value",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "forbidden_reference",
       "severity": "warn",
       "description": "A web page cited as the sole support for a regulatory value.",
       "detector": "deterministic:forbidden_reference",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "unsupported_claim",
       "severity": "warn",
       "description": "A sentence the Synthesizer marked as drawn from model knowledge rather than a passage.",
       "detector": "deterministic:unsupported_claim",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "visual_block_unbound",
       "severity": "warn",
       "description": "A visual block carries neither a citation nor a no_claim marking.",
       "detector": "deterministic:visual_block_unbound",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "stale_source",
@@ -123,7 +231,9 @@
       "severity": "info",
       "description": "The card ran at fast depth, so nothing in it was checked against a source.",
       "detector": "deterministic:fast_mode_notice",
-      "modes": ["fast"]
+      "modes": [
+        "fast"
+      ]
     },
     {
       "rule_id": "verifier_below_threshold",
@@ -136,30 +246,44 @@
       "severity": "warn",
       "description": "An audience card uses terms the audience definition says to avoid.",
       "detector": "model:audience_vocabulary",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "jurisdiction_drift",
       "severity": "warn",
       "description": "A rule from another jurisdiction is cited for a question about this one.",
       "detector": "model:jurisdiction_drift",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "scope_creep",
       "severity": "warn",
       "description": "The answer covers more than the plan's answer_scope.",
       "detector": "model:scope_creep",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     }
   ],
-
   "sensitivity_rules": [
     {
       "rule_id": "advice_request",
       "detector": "deterministic:advice_request",
       "severity": "warn",
-      "patterns": ["should we", "should i", "what would you recommend", "is it safe to", "what would you do"]
+      "patterns": [
+        "should we",
+        "should i",
+        "what would you recommend",
+        "is it safe to",
+        "what would you do"
+      ]
     },
     {
       "rule_id": "personal_data_in_request",
@@ -168,14 +292,30 @@
       "patterns": []
     }
   ],
-
   "retrievers": [
-    { "id": "regulatory", "enabled_by_default": true, "must_exclude": [] },
-    { "id": "local", "enabled_by_default": true, "must_exclude": ["Sensitive"] },
-    { "id": "web", "enabled_by_default": true, "must_exclude": [] },
-    { "id": "structured", "enabled_by_default": false, "must_exclude": [] }
+    {
+      "id": "regulatory",
+      "enabled_by_default": true,
+      "must_exclude": []
+    },
+    {
+      "id": "local",
+      "enabled_by_default": true,
+      "must_exclude": [
+        "Sensitive"
+      ]
+    },
+    {
+      "id": "web",
+      "enabled_by_default": true,
+      "must_exclude": []
+    },
+    {
+      "id": "structured",
+      "enabled_by_default": false,
+      "must_exclude": []
+    }
   ],
-
   "visual_preferences": {
     "type_preferences": {
       "comparative": "table",
@@ -190,27 +330,33 @@
     "max_rows": 8,
     "generated_images": false
   },
-
   "writing_rules": {
     "units": "EUR",
     "spelling": "en-GB",
     "sentence_max_words": 28,
     "dashes": false
   },
-
   "exercise_templates": [
     {
       "id": "finance_basic",
-      "item_kinds": ["recall", "apply", "contrast", "trace"],
+      "item_kinds": [
+        "recall",
+        "apply",
+        "contrast",
+        "trace"
+      ],
       "items_per_card_max": 2,
       "options": 4
     }
   ],
-
   "learning_templates": {
-    "curriculum_shapes": ["foundation", "mechanism", "landscape", "edge cases"],
+    "curriculum_shapes": [
+      "foundation",
+      "mechanism",
+      "landscape",
+      "edge cases"
+    ],
     "mastery_threshold": 2
   },
-
   "rulings": []
 }

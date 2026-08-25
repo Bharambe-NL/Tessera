@@ -38,8 +38,11 @@ THRESHOLDS: dict[str, float] = {
     "staleness_detection": 0.95,
     "reader_structure_recovery_f1": 0.80,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
+    # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
+    # taxonomy that fed it. stakes_accuracy replaces it as the classification
+    # gate, measured on the breadth set, where real negatives exist.
     "route_accuracy": 0.85,
-    "domain_accuracy": 0.90,
+    "stakes_accuracy": 0.90,
     "override_compliance": 1.0,
     # Doc 04 section 12's Planner targets.
     "sub_question_coverage": 0.90,
@@ -169,6 +172,22 @@ def load_facts(corpus: Path) -> dict[str, dict]:
     }
 
 
+def load_stakes_truth(corpus: Path) -> dict[str, bool]:
+    """q_id -> the labelled stakes bit, from the breadth set. BN-036."""
+    path = corpus / "questions_breadth.jsonl"
+    if not path.exists():
+        return {}
+    return {
+        row["q_id"]: bool(row["regulatory_stakes"])
+        for row in (
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if "regulatory_stakes" in row
+    }
+
+
 def load_memory(corpus: Path) -> dict:
     """Doc 15 section 5's ground truth, or an empty one on an older corpus."""
     path = corpus / "memory.json"
@@ -286,8 +305,11 @@ def score(results: Path, corpus: Path) -> Report:
     # Doc 02 section 10.2: the Router's depth choice against depth_expected.
     # The runner passes depth_expected as an override, so what is measured is the
     # Router's *recommendation*, which is what doc 03 section 12 scores.
+    # Over every run that was routed, not only answered ones: routing happens
+    # before the Planner can stop an unconfigured deep card, and a breadth run
+    # at M5 stops most of its consequential questions exactly there.
     hits = total = 0
-    for run in answered:
+    for run in runs:
         recommended = _recommended_depth(run)
         if recommended is None:
             continue
@@ -296,21 +318,48 @@ def score(results: Path, corpus: Path) -> Report:
             hits += 1
     report.metrics.append(_ratio("route_accuracy", hits, total))
 
-    # Doc 03 section 12's other two Router targets, which doc 12 phase 4 accepts
-    # on. Domain accuracy at 0.90, override compliance at 1.00.
+    # BN-036. The stakes judgment replaces the domain taxonomy as the thing
+    # classification is scored on. Ground truth exists only where a question
+    # was labelled, which is the breadth set; the finance corpus is
+    # consequential by construction, so scoring it here would reward a model
+    # that always answers true.
+    stakes_truth = load_stakes_truth(corpus)
+    hits = total = 0
+    for run in runs:
+        expected = stakes_truth.get(run.get("q_id", ""))
+        if expected is None:
+            continue
+        routed = _routed(run)
+        if routed is None:
+            continue
+        total += 1
+        if routed.get("regulatory_stakes") is expected:
+            hits += 1
+    report.metrics.append(
+        _ratio("stakes_accuracy", hits, total)
+        if total
+        else Metric("stakes_accuracy", None, 0, 0, "run the breadth set to measure this")
+    )
+
+    # The domain label survives as an observed annotation from the free keyword
+    # pass, so what is worth watching is its precision when it does speak, not
+    # its coverage. Reported, never gated: it gates nothing downstream either.
     hits = total = 0
     for run in answered:
         routed = _routed(run)
         if routed is None or not run.get("domain"):
             continue
-        # The empty corpus questions name a domain the pack does not have, so
-        # `unknown` is the right answer there rather than a miss.
-        expected = run["domain"]
-        total += 1
         got = routed.get("domain")
-        if got == expected or (expected not in _PACK_DOMAINS and got == "unknown"):
+        if got in (None, "unknown"):
+            continue
+        total += 1
+        if got == run["domain"]:
             hits += 1
-    report.metrics.append(_ratio("domain_accuracy", hits, total))
+    report.metrics.append(
+        _ratio("domain_label_precision", hits, total, "the keyword pass, when it spoke")
+        if total
+        else Metric("domain_label_precision", None, 0, 0, "the keyword pass never fired")
+    )
 
     # The runner passes depth_expected as an override on every question, so this
     # measures exactly what doc 03 section 1 promises: the user's choice wins,

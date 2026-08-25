@@ -525,6 +525,77 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-036 The domain taxonomy is retired as a load bearing judgment
+
+**Spec** 03 sections 7, 8.1 and 12; 02 section 10.2; 12 phase 4. The Router classified each
+request into a pack domain, a keyword pre pass could decide it outright, and domain accuracy
+0.90 was an acceptance gate.
+
+**This is a deviation from the spec set, decided by the owner on 2026-08-25.** Verbatim: "lets
+not limit this and restrict retrieval gates on domain. Keep it free. The purpose of this is to
+build quality responses not limit them this way." And on the eval: "The new questions must be
+varied and not just stupid finance related questions. we were restricting a bit too much."
+
+**What forced the question.** Two paid sweeps and one trace.
+
+The first sweep gave the model four bare domain names; the bulk model answered `capital`, the
+first name, for most of what the keyword pass left to it. Domain accuracy 0.585. The second
+sweep listed each domain's pack vocabulary in the prompt; the wrong-domain guessing collapsed
+(165 cross domain misses to 6) and the model instead answered `unknown` for everything the
+vocabulary missed. Domain accuracy 0.495. The vocabulary will always miss, because nobody can
+enumerate what users will ask, and on a synthetic corpus the invented terms are not in any
+model's world knowledge at all.
+
+The trace was worse than either number. Every consumer of the label was wired to the same
+outcome: the finance pack hinted `deep` for all four domains and the general pack has one
+domain and no hints, so the taxonomy's distinctions changed nothing. And the planner joined
+the regulatory retriever only when the domain was not `unknown`, so the model's honest
+uncertainty silently stripped a card of its ranked source. The gate measured a judgment with
+no consequences except a harmful one.
+
+**What replaces it.**
+
+1. **One binary judgment: `regulatory_stakes`.** Does the answer turn on a rule, threshold,
+   date or obligation the reader might act on? Any model answers this in any domain without
+   being taught vocabulary. It drives depth through the pack hint `depth_hints.regulatory_stakes`
+   and defaults to true whenever unstated, because care on a casual question costs seconds and
+   casualness on a consequential one costs a wrong number acted on.
+2. **Retrieval is ungated.** Every enabled evidence retriever joins every sub-question. The
+   Synthesizer weighs what comes back by trust rank, which is where source preference belonged
+   all along. Structured remains signal driven because it is a query against a registered
+   table, not a search, and it alone moves `value_policy`.
+3. **The domain label survives as an observation.** The free keyword pass labels what it can
+   prove; everything else is `unknown`, and `unknown` gates nothing. Scored as
+   `domain_label_precision`, reported and never gated.
+4. **The gate becomes `stakes_accuracy` at 0.90**, measured on a new breadth question set: 60
+   hand written questions across 29 fields, half consequential (medication doses, lease notice
+   periods, drone registration, cookie consent) and half plain understanding (why the sky is
+   blue, how sourdough works). The finance corpus could not measure this judgment, because
+   every question in it is consequential by construction, so a model answering true always
+   would have scored perfectly.
+
+**Also found on the way.**
+
+*Obligation questions were contentless.* Obligation facts carried no subject label, so their
+questions fell back to "the requirement" and 28 of 400 read "What is the obligation on the
+requirement?", which nothing can classify. Obligation facts now carry `the duty to ...` labels
+and the templates use them.
+
+*The eval leaked the answer.* The runner created each question's board with `default_depth`
+set to the expected depth, and the board default is the baseline the Router's recommendation
+starts from. Every route accuracy number measured before this note was inflated by that leak.
+Boards are now created at `fast` and every raise has to be earned, so route accuracy from
+generator 0.2.0 onward is not comparable with the two sweeps above, and it is the honest
+number of the three.
+
+*`no_retriever_enabled` counts evidence.* A profile whose only retriever is its own memory can
+corroborate itself and learn nothing, so boards does not count toward having something to plan
+with.
+
+**Cost of the two sweeps that bought this.** About ten dollars. The first localised the
+blindness, the second proved the mechanism and exposed the dead taxonomy. Generator bumps to
+0.2.0.
+
 ### BN-035 The first live Router gate: two of three targets pass, and why the third failed
 
 **Spec** 03 section 12 and doc 12 phase 4: route accuracy 0.85, domain accuracy 0.90, override

@@ -48,6 +48,7 @@ fn router_output() -> serde_json::Value {
         "run_id": RUN,
         "classification": {
             "question_type": "regulatory",
+            "regulatory_stakes": true,
             "domain": "capital",
             "audience_id": null,
             "language": "en",

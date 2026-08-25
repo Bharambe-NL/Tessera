@@ -36,7 +36,13 @@ Return the classification block only. Judge what the request needs:
   needs_structured_data      the answer depends on a figure from a table
 
 entities are the literal names and terms in the request, copied as written.
-language is the ISO 639-1 code of the request text.";
+language is the ISO 639-1 code of the request text.
+
+regulatory_stakes is true when the answer turns on a rule, threshold, date, or
+obligation the reader might act on, and false for questions of plain
+understanding. When unsure, true: the cost of care on a casual question is
+seconds, and the cost of casualness on a consequential one is a wrong number
+acted on.";
 
 #[async_trait]
 impl Agent for Router {
@@ -60,6 +66,10 @@ impl Agent for Router {
     fn completion_payload(&self, output: &Value) -> Value {
         json!({
             "question_type": output["classification"]["question_type"].clone(),
+            // BN-036: the judgment that replaced the domain taxonomy. It rides
+            // in the event because the eval scores it from here and because
+            // "How this was built" should say why a card went deep.
+            "regulatory_stakes": output["classification"]["regulatory_stakes"].clone(),
             "domain": output["classification"]["domain"].clone(),
             "audience_id": output["classification"]["audience_id"].clone(),
             "depth_chosen": output["depth"]["chosen"].clone(),
@@ -85,25 +95,14 @@ impl Agent for Router {
 
         // Two deterministic pre passes, inserted into the prompt as hints. Doc
         // 03 section 8.1.
-        let domains = string_list(&doctrine["domains"]);
-        let vocabulary = doctrine["domain_vocabulary"].clone();
-        let candidates = keyword_candidates(text, &vocabulary);
+        let candidates = keyword_candidates(text, &doctrine["domain_vocabulary"]);
         let keyword_domain = match candidates.as_slice() {
             [one] => Some(one.clone()),
             _ => None,
         };
         let detected_language = detect_language(text);
 
-        let mut classification = match classify(
-            ctx,
-            packet,
-            &domains,
-            &vocabulary,
-            keyword_domain.as_deref(),
-            &candidates,
-        )
-        .await
-        {
+        let mut classification = match classify(ctx, packet).await {
             Ok(c) => c,
             // Doc 03 section 10: a timeout or a schema violation falls back to a
             // deterministic default and the run continues. A wrong route is
@@ -115,18 +114,20 @@ impl Agent for Router {
             Err(f) => return Err(f),
         };
 
-        // The keyword pass is evidence, not a suggestion: if the vocabulary
-        // matched, that is the domain.
-        if let Some(domain) = &keyword_domain {
-            classification["domain"] = json!(domain);
-        }
-        if !domains.is_empty() {
-            let d = classification["domain"].as_str().unwrap_or("unknown");
-            if !domains.iter().any(|known| known == d) {
-                classification["domain"] = json!("unknown");
-            }
-        }
+        // The domain is an observation, never a judgment the model is asked
+        // to make and never a gate on anything downstream (BN-036). The free
+        // keyword pass labels what it can prove; everything else is unknown,
+        // and unknown costs nothing.
+        classification["domain"] = match &keyword_domain {
+            Some(domain) => json!(domain),
+            None => json!("unknown"),
+        };
         classification["language"] = json!(detected_language);
+        if !classification["regulatory_stakes"].is_boolean() {
+            // A model that failed to say is treated as if it said yes; the
+            // conservative reading is the cheap one to be wrong about.
+            classification["regulatory_stakes"] = json!(true);
+        }
 
         // ------------------------------------------------ 8.2 depth --------
         step(ctx, "resolving_depth")?;
@@ -180,14 +181,7 @@ fn step(ctx: &mut AgentContext<'_>, state: &str) -> Result<(), Failure> {
         .map_err(|e| Failure::new("state_machine", e.to_string(), Recovery::Failed))
 }
 
-async fn classify(
-    ctx: &mut AgentContext<'_>,
-    packet: &Value,
-    domains: &[String],
-    vocabulary: &Value,
-    keyword_domain: Option<&str>,
-    candidates: &[String],
-) -> Result<Value, Failure> {
+async fn classify(ctx: &mut AgentContext<'_>, packet: &Value) -> Result<Value, Failure> {
     let request = &packet["request"];
     let text = request["text"].as_str().unwrap_or_default();
 
@@ -209,39 +203,13 @@ async fn classify(
     if let Some(seed) = packet["board"]["seed_label"].as_str() {
         prompt.push_str(&format!("This board was spun off from: {seed}\n"));
     }
-    // Each domain with the vocabulary the pack gives it.
-    //
-    // Measured, not guessed. On the 400 question sweep the deterministic
-    // keyword pass was right 129 times out of 129 and fired on a third of
-    // the questions. The other two thirds reached the model as four bare
-    // domain names, and a bulk model answered `capital` for most of them,
-    // which is the first name in the list. The terms that tell the domains
-    // apart were in the pack the whole time.
-    prompt.push_str("Available domains, with the terms that characterise each:\n");
-    for domain in domains {
-        let terms = string_list(&vocabulary[domain]);
-        if terms.is_empty() {
-            prompt.push_str(&format!("- {domain}\n"));
-        } else {
-            prompt.push_str(&format!("- {domain}: {}\n", terms.join(", ")));
-        }
-    }
-    prompt.push_str(
-        "A question can be about a domain without using any of these words. \
-Classify by what the question is about, rather than by which words it happens to \
-contain. Answer `unknown` when it is about none of them.\n",
-    );
-    if let Some(d) = keyword_domain {
-        prompt.push_str(&format!("A keyword pass already matched the domain `{d}`.\n"));
-    } else if candidates.len() > 1 {
-        // Previously discarded. A tie decides nothing on its own, and it
-        // still narrows the field, so it is passed on as what it is.
-        prompt.push_str(&format!(
-            "A keyword pass matched more than one domain, so it decided nothing: {}. \
-The answer is most likely one of them.\n",
-            candidates.join(", ")
-        ));
-    }
+    // No domain enumeration. Two paid sweeps proved this prompt cannot be
+    // saved by listing terms: a bare list made the model guess the first
+    // name, and a vocabulary made it answer unknown for anything the list
+    // missed, and the list will always miss, because nobody can enumerate
+    // what users will ask (BN-036). The model is asked one question it can
+    // answer in any domain without being taught: does this carry
+    // regulatory stakes.
     if let Some(notice) = ctx.violation_notice() {
         prompt.push('\n');
         prompt.push_str(&notice);
@@ -274,12 +242,12 @@ The answer is most likely one of them.\n",
 fn classification_schema() -> Value {
     json!({
         "type": "object",
-        "required": ["question_type", "domain", "language", "entities"],
+        "required": ["question_type", "regulatory_stakes", "language", "entities"],
         "additionalProperties": false,
         "properties": {
             "question_type": { "enum": ["factual","comparative","procedural","quantitative",
                                         "regulatory","definitional","exploratory","meta"] },
-            "domain": { "type": "string" },
+            "regulatory_stakes": { "type": "boolean" },
             "audience_id": { "type": ["string", "null"] },
             "language": { "type": "string" },
             "needs_current_information": { "type": "boolean" },
@@ -293,10 +261,14 @@ fn classification_schema() -> Value {
 
 /// Doc 03 section 10: after a retry, a deterministic default with confidence
 /// 0.2. Domain from keywords or unknown, type factual, depth from board default.
+/// Deterministic stand-in when the model call fails. Stakes default to true:
+/// the fallback exists because something already went wrong, and depth is the
+/// wrong place to economise at that moment.
 fn fallback_classification(text: &str, keyword_domain: Option<&str>, language: &str) -> Value {
     json!({
         "question_type": "factual",
         "domain": keyword_domain.unwrap_or("unknown"),
+        "regulatory_stakes": true,
         "audience_id": null,
         "language": language,
         "needs_current_information": false,
@@ -311,17 +283,22 @@ fn fallback_classification(text: &str, keyword_domain: Option<&str>, language: &
 /// reason names the step that decided.
 fn resolve_depth(request: &Value, board: &Value, doctrine: &Value, classification: &Value) -> Value {
     let board_default = board["default_depth"].as_str().unwrap_or("fast");
-    let domain = classification["domain"].as_str().unwrap_or("unknown");
 
     let mut recommended = board_default.to_string();
     let mut reason = format!("Board default {board_default}.");
 
-    // 3. doctrine hint for the classified domain.
-    if let Some(hint) = doctrine["depth_hints"].get(domain).and_then(Value::as_str)
+    // 3. doctrine hint for consequential questions. Keyed by the stakes
+    // judgment rather than a domain taxonomy (BN-036): the pack says how much
+    // care a question with regulatory stakes deserves, and the model says
+    // whether this is one, which works for domains nobody listed.
+    if classification["regulatory_stakes"].as_bool().unwrap_or(true)
+        && let Some(hint) = doctrine["depth_hints"]
+            .get("regulatory_stakes")
+            .and_then(Value::as_str)
         && rank(hint) > rank(&recommended)
     {
         recommended = hint.to_string();
-        reason = format!("Doctrine hints {hint} for the {domain} domain.");
+        reason = format!("Doctrine hints {hint} for a question with regulatory stakes.");
     }
 
     // 4. request signals.

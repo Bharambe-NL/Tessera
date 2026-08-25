@@ -3,29 +3,50 @@
   "version": "1.0.0",
   "name": "General",
   "description": "The substrate pack. It carries the rules that hold whatever the subject is: cite what you assert, do not invent a number, do not answer a question about the future as though it were a fact. A vertical adds a pack, never a schema.",
-
-  "domains": ["general"],
-
-  "domain_vocabulary": {},
-
-  "depth_hints": {},
-
-  "audiences": [],
-
-  "source_hierarchy": [
-    { "class": "regulatory", "trust_rank": 1 },
-    { "class": "structured_query", "trust_rank": 2 },
-    { "class": "local_document", "trust_rank": 3 },
-    { "class": "web", "trust_rank": 4 },
-    { "class": "user_supplied", "trust_rank": 5 }
+  "domains": [
+    "general"
   ],
-
-  "freshness_classes": {
-    "reference": { "max_age_days": 1825, "on_stale": "flag" },
-    "general": { "max_age_days": 730, "on_stale": "flag" },
-    "news": { "max_age_days": 90, "on_stale": "flag" }
+  "domain_vocabulary": {},
+  "depth_hints": {
+    "regulatory_stakes": "deep"
   },
-
+  "audiences": [],
+  "source_hierarchy": [
+    {
+      "class": "regulatory",
+      "trust_rank": 1
+    },
+    {
+      "class": "structured_query",
+      "trust_rank": 2
+    },
+    {
+      "class": "local_document",
+      "trust_rank": 3
+    },
+    {
+      "class": "web",
+      "trust_rank": 4
+    },
+    {
+      "class": "user_supplied",
+      "trust_rank": 5
+    }
+  ],
+  "freshness_classes": {
+    "reference": {
+      "max_age_days": 1825,
+      "on_stale": "flag"
+    },
+    "general": {
+      "max_age_days": 730,
+      "on_stale": "flag"
+    },
+    "news": {
+      "max_age_days": 90,
+      "on_stale": "flag"
+    }
+  },
   "flag_rules": [
     {
       "rule_id": "marker_integrity",
@@ -44,28 +65,40 @@
       "severity": "block",
       "description": "A number with a unit appears in the answer, a finding or a block without a citation.",
       "detector": "deterministic:numeric_without_citation",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "computed_value",
       "severity": "block",
       "description": "A numeric claim whose cited passage does not contain the value. The model never stores a number it computed.",
       "detector": "deterministic:computed_value",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "unsupported_claim",
       "severity": "warn",
       "description": "A sentence the Synthesizer marked as drawn from model knowledge rather than a passage.",
       "detector": "deterministic:unsupported_claim",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "visual_block_unbound",
       "severity": "warn",
       "description": "A visual block carries neither a citation nor a no_claim marking.",
       "detector": "deterministic:visual_block_unbound",
-      "modes": ["deep", "research"]
+      "modes": [
+        "deep",
+        "research"
+      ]
     },
     {
       "rule_id": "length_and_format",
@@ -78,7 +111,9 @@
       "severity": "info",
       "description": "The card ran at fast depth, so nothing in it was checked against a source.",
       "detector": "deterministic:fast_mode_notice",
-      "modes": ["fast"]
+      "modes": [
+        "fast"
+      ]
     },
     {
       "rule_id": "injection_suspected",
@@ -99,7 +134,6 @@
       "detector": "deterministic:verifier_below_threshold"
     }
   ],
-
   "sensitivity_rules": [
     {
       "rule_id": "personal_data_in_request",
@@ -108,12 +142,20 @@
       "patterns": []
     }
   ],
-
   "retrievers": [
-    { "id": "web", "enabled_by_default": false, "must_exclude": [] },
-    { "id": "local", "enabled_by_default": false, "must_exclude": ["Sensitive"] }
+    {
+      "id": "web",
+      "enabled_by_default": false,
+      "must_exclude": []
+    },
+    {
+      "id": "local",
+      "enabled_by_default": false,
+      "must_exclude": [
+        "Sensitive"
+      ]
+    }
   ],
-
   "visual_preferences": {
     "type_preferences": {
       "comparative": "table",
@@ -127,27 +169,33 @@
     "max_rows": 8,
     "generated_images": true
   },
-
   "writing_rules": {
     "units": "as written in the source",
     "spelling": "en-GB",
     "sentence_max_words": 28,
     "dashes": false
   },
-
   "exercise_templates": [
     {
       "id": "general_basic",
-      "item_kinds": ["recall", "apply", "contrast", "trace"],
+      "item_kinds": [
+        "recall",
+        "apply",
+        "contrast",
+        "trace"
+      ],
       "items_per_card_max": 2,
       "options": 4
     }
   ],
-
   "learning_templates": {
-    "curriculum_shapes": ["foundation", "mechanism", "landscape", "edge cases"],
+    "curriculum_shapes": [
+      "foundation",
+      "mechanism",
+      "landscape",
+      "edge cases"
+    ],
     "mastery_threshold": 2
   },
-
   "rulings": []
 }

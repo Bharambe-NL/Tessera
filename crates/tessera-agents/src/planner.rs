@@ -97,7 +97,12 @@ impl Agent for Planner {
 
         // Doc 04 section 10: `no_retriever_enabled` fails with a pointer at the
         // fix, because a plan that can retrieve from nowhere is not a plan.
-        if enabled.is_empty() {
+        //
+        // Boards does not count. Doc 15 section 2 makes a prior card context
+        // and never evidence, so a profile whose only retriever is its own
+        // memory can corroborate itself and learn nothing, which is the exact
+        // loop the own_card_sole_support rule exists to block.
+        if !enabled.iter().any(|id| id != "boards") {
             return Err(Failure::new(
                 "no_retriever_enabled",
                 "No retriever is enabled. Enable at least web or local in Profile.",
@@ -417,30 +422,20 @@ fn assign_retrievers(
     let routing = &packet["routing"];
     let is_enabled = |id: &str| enabled.iter().any(|e| e == id);
 
-    let mut wanted: Vec<&str> = Vec::new();
-    if routing["question_type"] == "regulatory" || routing["domain"] != "unknown" {
-        // In a domain the pack governs, the consolidated texts are the ranked
-        // source (doc 05 section 3), so regulatory joins whenever it exists.
-        wanted.push("regulatory");
-    }
-    if routing["needs_internal_documents"].as_bool().unwrap_or(false) {
-        wanted.push("local");
-    }
-    if routing["needs_current_information"].as_bool().unwrap_or(false) {
-        wanted.push("web");
-    }
-    if routing["needs_structured_data"].as_bool().unwrap_or(false) {
+    // Retrieval is not gated on classification (BN-036). Every enabled
+    // evidence retriever runs on every sub-question: deciding where to search
+    // before any evidence exists is guessing at retrieval's own job, and the
+    // Synthesizer weighs what comes back by trust rank, not by who fetched it.
+    // The one exception is structured, which is not a search but a query
+    // against a table the user registered, so it joins on its signal and it is
+    // the only assignment that changes `value_policy`.
+    let mut wanted: Vec<&str> = enabled
+        .iter()
+        .map(String::as_str)
+        .filter(|id| *id != "boards" && *id != "structured")
+        .collect();
+    if routing["needs_structured_data"].as_bool().unwrap_or(false) && is_enabled("structured") {
         wanted.push("structured");
-    }
-    let mut wanted: Vec<&str> = wanted.into_iter().filter(|id| is_enabled(id)).collect();
-
-    // A sub-question with no evidence retriever answers nothing, so when the
-    // routing signals selected none, every enabled one joins. This happens
-    // before boards is considered, because doc 15 section 2 makes a prior card
-    // context and never evidence: a plan whose only retriever is boards would
-    // type check and still be a plan to retrieve no evidence at all.
-    if wanted.is_empty() {
-        wanted = enabled.iter().map(String::as_str).filter(|id| *id != "boards").collect();
     }
     if is_enabled("boards") {
         // Doc 05 section 8.5: on every sub-question when memory is on.

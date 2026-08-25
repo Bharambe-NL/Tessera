@@ -345,10 +345,29 @@ def _key_phrases(meaning: str) -> list[str]:
     return words[:3]
 
 
+def _duty_label(duty: str) -> str:
+    """A short name for an obligation, so a question about it names its subject.
+
+    Without this, obligation questions fell back to "the requirement" and read
+    "What is the obligation on the requirement?", which no reader and no model
+    could place anywhere. Twenty-eight of the four hundred questions were
+    contentless this way, found while diagnosing the second sweep (BN-036).
+    """
+    words = duty.split()[:6]
+    stop = {"a", "an", "the", "of", "to", "at", "in", "and", "or", "before", "it"}
+    while words and words[-1] in stop:
+        words.pop()
+    return "the duty to " + " ".join(words)
+
+
 def _obligation(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
     duty = rng.choice(OBLIGATION_SUBJECTS[domain])
     statement = f"An institution shall {duty}."
-    return statement, {"text": duty, "key_phrases": _key_phrases(duty)}, []
+    return (
+        statement,
+        {"text": duty, "label": _duty_label(duty), "key_phrases": _key_phrases(duty)},
+        [],
+    )
 
 
 def _procedure(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:

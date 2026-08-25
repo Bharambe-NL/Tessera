@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import boards as boards_mod
+from . import breadth as breadth_mod
 from . import corpus as corpus_mod
 from . import edge_cases, harness, mess, writer
 from . import memory as memory_mod
@@ -41,6 +42,7 @@ def build(seed: int, out: Path) -> dict:
     problems = corpus_mod.verify_exact_plantings(documents, facts)
 
     question_set, dropped = questions_mod.generate(seed, facts, documents)
+    breadth_set = breadth_mod.generate(seed)
     board_set = boards_mod.generate(seed, facts, documents, question_set)
 
     # Memory runs after boards because it plants cards on them.
@@ -53,6 +55,7 @@ def build(seed: int, out: Path) -> dict:
         facts=facts,
         documents=documents,
         questions=question_set,
+        breadth=breadth_set,
         boards=board_set,
         snapshots=snaps,
         memory_truth=memory_truth,

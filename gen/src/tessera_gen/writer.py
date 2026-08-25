@@ -28,6 +28,8 @@ from typing import Any
 
 from .boards import Board
 from .boards import summarise as summarise_boards
+from .breadth import BreadthQuestion
+from .breadth import summarise as summarise_breadth
 from .corpus import Document
 from .entities import manifest, synthetic_source_hierarchy
 from .facts import Fact
@@ -287,6 +289,7 @@ def write_corpus(
     facts: list[Fact],
     documents: list[Document],
     questions: list[Question],
+    breadth: list[BreadthQuestion],
     boards: list[Board],
     snapshots: list[Snapshot],
     memory_truth: MemoryTruth,
@@ -300,6 +303,9 @@ def write_corpus(
     write_json(root / "entities.json", manifest())
     write_jsonl(root / "facts.jsonl", (f.to_json() for f in facts))
     write_jsonl(root / "questions.jsonl", (q.to_json() for q in questions))
+    # BN-036: the pack independent questions, with stakes ground truth. Run
+    # against the general pack, because no doctrine governs paracetamol.
+    write_jsonl(root / "questions_breadth.jsonl", (q.to_json() for q in breadth))
 
     for doc in documents:
         write_document(root, doc)
@@ -346,6 +352,7 @@ def write_corpus(
             "languages": _count(d.language for d in documents),
         },
         "boards": summarise_boards(boards),
+        "breadth": summarise_breadth(breadth),
         "memory": summarise_memory(memory_truth),
         "snapshots": [s.label for s in snapshots],
         "transformations": _count(t.kind for t in transformations),

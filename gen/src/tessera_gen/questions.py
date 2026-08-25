@@ -74,8 +74,8 @@ ROOT_TEMPLATES = {
         "How is {term} defined?",
     ],
     "obligation": [
-        "What must an institution do about {topic}?",
-        "What is the obligation on {topic}?",
+        "What does {label} require in practice?",
+        "What is required under {label}?",
     ],
     "procedure": [
         "How does a firm {goal}?",
