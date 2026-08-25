@@ -56,7 +56,10 @@ fn seed(store: &Store) -> Fixture {
     )
     .expect("board");
 
-    for (id, question) in [(&card_a, "What changed in the capital rule?"), (&card_b, "And for the trading book?")] {
+    for (id, question) in [
+        (&card_a, "What changed in the capital rule?"),
+        (&card_b, "And for the trading book?"),
+    ] {
         c.execute(
             "INSERT INTO card (id, board_id, kind, question, depth, status, created_at, updated_at)
              VALUES (?1, ?2, 'root', ?3, 'deep', 'queued', ?4, ?4)",
@@ -88,9 +91,13 @@ fn script(store: &mut Store, f: &Fixture) {
 
     let requested = store
         .append(
-            NewEvent::new("card.requested.v1", json!({ "question": "What changed?" }), Provenance::user())
-                .on_board(&f.board_id)
-                .on_card(&f.card_a),
+            NewEvent::new(
+                "card.requested.v1",
+                json!({ "question": "What changed?" }),
+                Provenance::user(),
+            )
+            .on_board(&f.board_id)
+            .on_card(&f.card_a),
         )
         .expect("card.requested");
 
@@ -169,9 +176,13 @@ fn script(store: &mut Store, f: &Fixture) {
 
     store
         .append(
-            NewEvent::new("card.answered.v1", json!({}), Provenance::harness("harness", Some(f.run_a.clone())))
-                .on_board(&f.board_id)
-                .on_card(&f.card_a),
+            NewEvent::new(
+                "card.answered.v1",
+                json!({}),
+                Provenance::harness("harness", Some(f.run_a.clone())),
+            )
+            .on_board(&f.board_id)
+            .on_card(&f.card_a),
         )
         .expect("card.answered");
 
@@ -179,9 +190,13 @@ fn script(store: &mut Store, f: &Fixture) {
     // transaction as the event that announces it.
     store
         .append(
-            NewEvent::new("card.routed.v1", json!({ "depth_chosen": "fast" }), agent("router"))
-                .on_board(&f.board_id)
-                .on_card(&f.card_b),
+            NewEvent::new(
+                "card.routed.v1",
+                json!({ "depth_chosen": "fast" }),
+                agent("router"),
+            )
+            .on_board(&f.board_id)
+            .on_card(&f.card_b),
         )
         .expect("routed b");
 
@@ -210,17 +225,25 @@ fn script(store: &mut Store, f: &Fixture) {
 
     store
         .append(
-            NewEvent::new("verify.completed.v1", json!({ "card_confidence": 0.41 }), agent("verifier"))
-                .on_board(&f.board_id)
-                .on_card(&f.card_b),
+            NewEvent::new(
+                "verify.completed.v1",
+                json!({ "card_confidence": 0.41 }),
+                agent("verifier"),
+            )
+            .on_board(&f.board_id)
+            .on_card(&f.card_b),
         )
         .expect("verify b");
 
     store
         .append(
-            NewEvent::new("card.answered.v1", json!({}), Provenance::harness("harness", None))
-                .on_board(&f.board_id)
-                .on_card(&f.card_b),
+            NewEvent::new(
+                "card.answered.v1",
+                json!({}),
+                Provenance::harness("harness", None),
+            )
+            .on_board(&f.board_id)
+            .on_card(&f.card_b),
         )
         .expect("answered b");
 }
@@ -240,7 +263,9 @@ fn card_projection(store: &Store) -> Vec<(String, String, Option<f64>)> {
 fn run_cost(store: &Store, run_id: &str) -> serde_json::Value {
     let raw: String = store
         .conn()
-        .query_row("SELECT cost FROM run WHERE id = ?1", params![run_id], |r| r.get(0))
+        .query_row("SELECT cost FROM run WHERE id = ?1", params![run_id], |r| {
+            r.get(0)
+        })
         .expect("cost");
     serde_json::from_str(&raw).expect("cost json")
 }
@@ -282,7 +307,11 @@ fn events_rebuild_card_state_identically_after_a_restart() {
 
     let after = card_projection(&store);
     assert_eq!(after, before, "replay must reproduce card state exactly");
-    assert_eq!(run_cost(&store, &f.run_a), cost_before, "replay must reproduce run cost");
+    assert_eq!(
+        run_cost(&store, &f.run_a),
+        cost_before,
+        "replay must reproduce run cost"
+    );
 
     // And the cost really was accumulated, not just equal to zero on both sides.
     assert_eq!(cost_before["input_tokens"], 7000);
@@ -312,7 +341,9 @@ fn content_survives_replay_untouched() {
 
     let answer: Option<String> = store
         .conn()
-        .query_row("SELECT answer FROM card WHERE id = ?1", params![f.card_a], |r| r.get(0))
+        .query_row("SELECT answer FROM card WHERE id = ?1", params![f.card_a], |r| {
+            r.get(0)
+        })
         .expect("read answer");
     assert_eq!(answer.as_deref(), Some("The buffer rose to 2.5 percent."));
 
@@ -326,8 +357,12 @@ fn the_event_log_is_append_only() {
     let f = seed(&store);
     let ev = store
         .append(
-            NewEvent::new("board.created.v1", json!({ "title": "Capital" }), Provenance::user())
-                .on_board(&f.board_id),
+            NewEvent::new(
+                "board.created.v1",
+                json!({ "title": "Capital" }),
+                Provenance::user(),
+            )
+            .on_board(&f.board_id),
         )
         .expect("append");
 
@@ -335,12 +370,18 @@ fn the_event_log_is_append_only() {
         "UPDATE event SET payload = '{}' WHERE event_id = ?1",
         params![ev.event_id],
     );
-    assert!(update.is_err(), "updating an event must be refused by the database");
+    assert!(
+        update.is_err(),
+        "updating an event must be refused by the database"
+    );
 
     let delete = store
         .conn()
         .execute("DELETE FROM event WHERE event_id = ?1", params![ev.event_id]);
-    assert!(delete.is_err(), "deleting an event must be refused by the database");
+    assert!(
+        delete.is_err(),
+        "deleting an event must be refused by the database"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -349,7 +390,11 @@ fn the_event_log_is_append_only() {
 fn an_unknown_event_type_is_refused_before_it_is_stored() {
     let mut store = Store::open_in_memory().expect("open");
     let err = store
-        .append(NewEvent::new("card.reticulated.v1", json!({}), Provenance::user()))
+        .append(NewEvent::new(
+            "card.reticulated.v1",
+            json!({}),
+            Provenance::user(),
+        ))
         .expect_err("an event outside the vocabulary must not be stored");
     assert!(matches!(err, StoreError::UnknownEventType(_)));
     assert_eq!(store.event_count().expect("count"), 0);
@@ -364,9 +409,13 @@ fn a_failed_side_write_rolls_back_the_event_too() {
     let f = seed(&store);
 
     let result = store.append_with(
-        NewEvent::new("flag.raised.v1", json!({ "severity": "warn" }), Provenance::user())
-            .on_board(&f.board_id)
-            .on_card(&f.card_a),
+        NewEvent::new(
+            "flag.raised.v1",
+            json!({ "severity": "warn" }),
+            Provenance::user(),
+        )
+        .on_board(&f.board_id)
+        .on_card(&f.card_a),
         |tx| {
             // A flag against a card that does not exist. The foreign key rejects it.
             tx.execute(
@@ -379,11 +428,17 @@ fn a_failed_side_write_rolls_back_the_event_too() {
     );
 
     assert!(result.is_err(), "the side write must fail");
-    assert_eq!(store.event_count().expect("count"), 0, "and take the event with it");
+    assert_eq!(
+        store.event_count().expect("count"),
+        0,
+        "and take the event with it"
+    );
 
     let status: String = store
         .conn()
-        .query_row("SELECT status FROM card WHERE id = ?1", params![f.card_a], |r| r.get(0))
+        .query_row("SELECT status FROM card WHERE id = ?1", params![f.card_a], |r| {
+            r.get(0)
+        })
         .expect("status");
     assert_eq!(status, "queued", "the projection must not have moved either");
 
@@ -429,7 +484,10 @@ fn a_rolled_back_append_does_not_burn_an_index() {
     let next = store
         .append(NewEvent::new("note.added.v1", json!({}), Provenance::user()).on_board(&f.board_id))
         .expect("third");
-    assert_eq!(next.monotonic_index, 2, "the failed append must not consume an index");
+    assert_eq!(
+        next.monotonic_index, 2,
+        "the failed append must not consume an index"
+    );
 }
 
 #[test]
@@ -441,9 +499,13 @@ fn test_provenance_is_preserved_through_the_log() {
     let f = seed(&store);
     store
         .append(
-            NewEvent::new("card.routed.v1", json!({ "depth_chosen": "deep" }), Provenance::agent("router", "r1").with_source(Source::Test))
-                .on_board(&f.board_id)
-                .on_card(&f.card_a),
+            NewEvent::new(
+                "card.routed.v1",
+                json!({ "depth_chosen": "deep" }),
+                Provenance::agent("router", "r1").with_source(Source::Test),
+            )
+            .on_board(&f.board_id)
+            .on_card(&f.card_a),
         )
         .expect("append");
 

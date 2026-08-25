@@ -57,14 +57,20 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
     match ev.event_type {
         // ------------------------------------------------------------- card --
         "card.requested.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             set_card_status(tx, card_id, "queued", ev.timestamp)?;
         }
 
         // The Router is the first agent to touch the card, so this is where it
         // starts running and where its depth and run are fixed.
         "card.routed.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             tx.execute(
                 "UPDATE card SET status = 'running', updated_at = ?1,
                         depth = COALESCE(?2, depth),
@@ -82,15 +88,25 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
         // Doc 07 section B8.6: the Verifier decides card_confidence and
         // card_status, and the harness emits card.answered.v1 after it returns.
         "verify.completed.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             tx.execute(
                 "UPDATE card SET confidence = ?1, updated_at = ?2 WHERE id = ?3",
-                params![p.get("card_confidence").and_then(Value::as_f64), ev.timestamp, card_id],
+                params![
+                    p.get("card_confidence").and_then(Value::as_f64),
+                    ev.timestamp,
+                    card_id
+                ],
             )?;
         }
 
         "card.answered.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             // Doc 01 section 4.2: `flagged` means at least one open Flag exists.
             // Reading the flag table rather than trusting the payload keeps the
             // two consistent even if events arrive out of order on replay.
@@ -99,13 +115,21 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
                 params![card_id],
                 |r| r.get(0),
             )?;
-            set_card_status(tx, card_id, if open > 0 { "flagged" } else { "done" }, ev.timestamp)?;
+            set_card_status(
+                tx,
+                card_id,
+                if open > 0 { "flagged" } else { "done" },
+                ev.timestamp,
+            )?;
         }
 
         // A flag raised at any stage flips the card, including one raised by the
         // Router before retrieval spends anything.
         "flag.raised.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             let severity = p.get("severity").and_then(Value::as_str).unwrap_or("info");
             if severity != "info" {
                 set_card_status(tx, card_id, "flagged", ev.timestamp)?;
@@ -122,22 +146,35 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
                     |r| r.get(0),
                 )?;
                 let current: Option<String> = tx
-                    .query_row("SELECT status FROM card WHERE id = ?1", params![card_id], |r| r.get(0))
+                    .query_row("SELECT status FROM card WHERE id = ?1", params![card_id], |r| {
+                        r.get(0)
+                    })
                     .ok();
                 // Never resurrect a failed card by clearing its flags.
                 if current.as_deref() != Some("failed") {
-                    set_card_status(tx, card_id, if open > 0 { "flagged" } else { "done" }, ev.timestamp)?;
+                    set_card_status(
+                        tx,
+                        card_id,
+                        if open > 0 { "flagged" } else { "done" },
+                        ev.timestamp,
+                    )?;
                 }
             }
         }
 
         "card.failed.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             set_card_status(tx, card_id, "failed", ev.timestamp)?;
         }
 
         "card.superseded.v1" => {
-            let card_id = ev.card_id.map(Ok).unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
             if let Some(by) = p.get("superseded_by").and_then(Value::as_str) {
                 tx.execute(
                     "UPDATE card SET supersedes = ?1, updated_at = ?2 WHERE id = ?3",
@@ -158,9 +195,13 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
             let provider = p.get("provider").and_then(Value::as_str).unwrap_or("unknown");
 
             let current: Option<String> = tx
-                .query_row("SELECT cost FROM run WHERE id = ?1", params![run_id], |r| r.get(0))
+                .query_row("SELECT cost FROM run WHERE id = ?1", params![run_id], |r| {
+                    r.get(0)
+                })
                 .ok();
-            let Some(current) = current else { return Ok(()) };
+            let Some(current) = current else {
+                return Ok(());
+            };
 
             let mut cost: Value = serde_json::from_str(&current)?;
             bump(&mut cost, "input_tokens", input);

@@ -47,7 +47,10 @@ fn write_gate_file(text: &str, raw: &serde_json::Value) {
 #[tauri::command]
 fn report_gate_error(app: tauri::AppHandle, message: String) {
     eprintln!("gate could not run: {message}");
-    write_gate_file(&format!("gate could not run: {message}"), &serde_json::Value::Null);
+    write_gate_file(
+        &format!("gate could not run: {message}"),
+        &serde_json::Value::Null,
+    );
     app.exit(2);
 }
 

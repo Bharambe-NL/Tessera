@@ -78,9 +78,7 @@ impl Store {
     // ------------------------------------------------------------ migrate --
 
     fn migrate(&mut self) -> Result<()> {
-        let found: i32 = self
-            .conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let found: i32 = self.conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
 
         if found > SCHEMA_VERSION {
             // A newer Tessera wrote this profile. Refusing beats corrupting it.
@@ -138,7 +136,10 @@ impl Store {
         // claimed under this transaction's lock: two writers cannot take the
         // same index, and a rolled back append does not burn one.
         let index: i64 = tx.query_row("SELECT next FROM event_sequence WHERE id = 1", [], |r| r.get(0))?;
-        tx.execute("UPDATE event_sequence SET next = ?1 WHERE id = 1", params![index + 1])?;
+        tx.execute(
+            "UPDATE event_sequence SET next = ?1 WHERE id = 1",
+            params![index + 1],
+        )?;
 
         writes(&tx)?;
 
@@ -228,14 +229,20 @@ impl Store {
             })
         };
         let rows = match board_id {
-            Some(b) => stmt.query_map(params![b], map)?.collect::<std::result::Result<Vec<_>, _>>()?,
-            None => stmt.query_map([], map)?.collect::<std::result::Result<Vec<_>, _>>()?,
+            Some(b) => stmt
+                .query_map(params![b], map)?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            None => stmt
+                .query_map([], map)?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
         };
         Ok(rows)
     }
 
     pub fn event_count(&self) -> Result<i64> {
-        Ok(self.conn.query_row("SELECT COUNT(*) FROM event", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM event", [], |r| r.get(0))?)
     }
 
     /// Throw away every projection and fold the whole log back over them.

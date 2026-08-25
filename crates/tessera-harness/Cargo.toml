@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
+regex = "1.13.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tessera-doctrine = { version = "0.1.0", path = "../tessera-doctrine" }
@@ -22,3 +24,6 @@ thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 tracing = "0.1.44"
 ulid = { version = "3.0.0", features = ["serde", "std"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }

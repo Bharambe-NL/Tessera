@@ -33,7 +33,11 @@ pub struct Violation {
 
 impl std::fmt::Display for Violation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let at = if self.instance_path.is_empty() { "/" } else { &self.instance_path };
+        let at = if self.instance_path.is_empty() {
+            "/"
+        } else {
+            &self.instance_path
+        };
         write!(f, "{at}: {}", self.message)
     }
 }
@@ -62,7 +66,10 @@ struct EmbeddedRetriever {
 }
 
 impl Retrieve for EmbeddedRetriever {
-    fn retrieve(&self, uri: &Uri<String>) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    fn retrieve(
+        &self,
+        uri: &Uri<String>,
+    ) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
         let key = uri.as_str();
         self.documents
             .get(key)
@@ -120,7 +127,10 @@ impl Registry {
             validators.insert(id.clone(), validator);
         }
 
-        Ok(Self { documents, validators })
+        Ok(Self {
+            documents,
+            validators,
+        })
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
@@ -163,6 +173,29 @@ impl Registry {
                 violations,
             })
         }
+    }
+
+    /// A self contained copy of a schema, with every `tessera:` reference
+    /// inlined.
+    ///
+    /// Doc 10 section 7: structured output goes through JSON mode where the
+    /// provider has it. A provider cannot resolve our reference scheme, so the
+    /// schema it receives has to carry its own definitions. The registry copy
+    /// stays split, because that is what keeps one definition of a ULID.
+    pub fn bundled(&self, id: &str) -> Result<Value> {
+        let doc = self
+            .documents
+            .get(id)
+            .ok_or_else(|| SchemaError::Unknown(id.to_string()))?;
+        jsonschema::options()
+            .with_retriever(EmbeddedRetriever {
+                documents: Arc::clone(&self.documents),
+            })
+            .bundle(doc)
+            .map_err(|e| SchemaError::Compile {
+                id: id.to_string(),
+                message: format!("could not bundle: {e}"),
+            })
     }
 
     pub fn is_valid(&self, id: &str, instance: &Value) -> Result<bool> {

@@ -75,7 +75,9 @@ fn router_output() -> serde_json::Value {
 
 #[test]
 fn router_output_round_trips() {
-    registry().validate(ids::OUT_ROUTER, &router_output()).expect("valid router output");
+    registry()
+        .validate(ids::OUT_ROUTER, &router_output())
+        .expect("valid router output");
 }
 
 #[test]
@@ -95,7 +97,11 @@ fn router_reason_may_not_be_empty() {
     let r = registry();
     let mut bad = router_output();
     bad["depth"]["reason"] = json!("");
-    assert!(!r.violations(ids::OUT_ROUTER, &bad).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_ROUTER, &bad)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -103,7 +109,11 @@ fn router_run_id_must_be_a_ulid() {
     let r = registry();
     let mut bad = router_output();
     bad["run_id"] = json!("run-7");
-    assert!(!r.violations(ids::OUT_ROUTER, &bad).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_ROUTER, &bad)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 // ------------------------------------------------------------------ visual --
@@ -125,14 +135,19 @@ fn tree_visual(depth_below_root: usize) -> serde_json::Value {
 #[test]
 fn a_tree_three_levels_below_root_is_allowed() {
     // Doc 01 section 4.3.1: depth at most 3 below root.
-    registry().validate(ids::VISUAL, &tree_visual(3)).expect("three levels is the limit");
+    registry()
+        .validate(ids::VISUAL, &tree_visual(3))
+        .expect("three levels is the limit");
 }
 
 #[test]
 fn a_tree_four_levels_below_root_is_rejected() {
     let r = registry();
     let violations = r.violations(ids::VISUAL, &tree_visual(4)).expect("violations");
-    assert!(!violations.is_empty(), "doc 01 section 4.3.1 caps tree depth at 3 below root");
+    assert!(
+        !violations.is_empty(),
+        "doc 01 section 4.3.1 caps tree depth at 3 below root"
+    );
 }
 
 #[test]
@@ -222,7 +237,9 @@ fn synth_output() -> serde_json::Value {
 
 #[test]
 fn synthesizer_output_round_trips() {
-    registry().validate(ids::OUT_SYNTHESIZER, &synth_output()).expect("valid");
+    registry()
+        .validate(ids::OUT_SYNTHESIZER, &synth_output())
+        .expect("valid");
 }
 
 #[test]
@@ -232,7 +249,11 @@ fn a_citation_binding_of_block_belongs_to_the_visualizer_not_the_synthesizer() {
     let r = registry();
     let mut bad = synth_output();
     bad["citations"][0]["binding"] = json!("block");
-    assert!(!r.violations(ids::OUT_SYNTHESIZER, &bad).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_SYNTHESIZER, &bad)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -240,7 +261,11 @@ fn an_unsupported_statement_needs_a_reason_from_the_fixed_set() {
     let r = registry();
     let mut bad = synth_output();
     bad["unsupported_statements"] = json!([{ "span": { "start": 0, "end": 5 }, "reason": "vibes" }]);
-    assert!(!r.violations(ids::OUT_SYNTHESIZER, &bad).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_SYNTHESIZER, &bad)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 // ---------------------------------------------------------------- verifier --
@@ -264,7 +289,9 @@ fn verifier_output() -> serde_json::Value {
 
 #[test]
 fn verifier_output_round_trips() {
-    registry().validate(ids::OUT_VERIFIER, &verifier_output()).expect("valid");
+    registry()
+        .validate(ids::OUT_VERIFIER, &verifier_output())
+        .expect("valid");
 }
 
 #[test]
@@ -273,13 +300,18 @@ fn a_skipped_check_must_say_why() {
     // must say why. A silent skip is how a disabled check hides.
     let r = registry();
     let mut bad = verifier_output();
-    bad["checks_run"] = json!([{ "rule_id": "advice_language", "outcome": "skipped", "detector": "model:advice" }]);
+    bad["checks_run"] =
+        json!([{ "rule_id": "advice_language", "outcome": "skipped", "detector": "model:advice" }]);
     let violations = r.violations(ids::OUT_VERIFIER, &bad).expect("violations");
-    assert!(!violations.is_empty(), "a skipped check without a reason must be rejected");
+    assert!(
+        !violations.is_empty(),
+        "a skipped check without a reason must be rejected"
+    );
 
     let mut good = bad.clone();
     good["checks_run"][0]["reason"] = json!("The pack rule names no detector.");
-    r.validate(ids::OUT_VERIFIER, &good).expect("with a reason it passes");
+    r.validate(ids::OUT_VERIFIER, &good)
+        .expect("with a reason it passes");
 }
 
 #[test]
@@ -287,7 +319,11 @@ fn a_verdict_outside_the_four_is_rejected() {
     let r = registry();
     let mut bad = verifier_output();
     bad["citation_verdicts"][0]["verdict"] = json!("probably fine");
-    assert!(!r.violations(ids::OUT_VERIFIER, &bad).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_VERIFIER, &bad)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -296,7 +332,11 @@ fn card_status_may_only_be_done_or_flagged() {
     let r = registry();
     let mut bad = verifier_output();
     bad["card_status"] = json!("failed");
-    assert!(!r.violations(ids::OUT_VERIFIER, &bad).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_VERIFIER, &bad)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 // --------------------------------------------------------------- retriever --
@@ -323,7 +363,11 @@ fn a_passage_over_the_cap_is_rejected() {
         "coverage": "full",
         "confidence": 0.7
     });
-    assert!(!r.violations(ids::OUT_RETRIEVER, &out).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_RETRIEVER, &out)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 // ------------------------------------------------------------------- tutor --
@@ -337,11 +381,16 @@ fn the_tutor_may_not_cite() {
 
     let mut with_marker = base.clone();
     with_marker["reply"] = json!("The buffer is 2.5 percent [1].");
-    assert!(!r.violations(ids::OUT_TUTOR, &with_marker).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::OUT_TUTOR, &with_marker)
+            .expect("violations")
+            .is_empty()
+    );
 
     let mut without = base;
     without["reply"] = json!("The buffer is on the card you just opened.");
-    r.validate(ids::OUT_TUTOR, &without).expect("a reply with no marker passes");
+    r.validate(ids::OUT_TUTOR, &without)
+        .expect("a reply with no marker passes");
 }
 
 // ------------------------------------------------------------------- event --
@@ -381,7 +430,11 @@ fn an_unversioned_event_type_is_rejected() {
         "sequence": { "monotonic_index": 1 },
         "timestamp": "2026-08-25T09:12:00.000Z"
     });
-    assert!(!r.violations(ids::EVENT_ENVELOPE, &ev).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::EVENT_ENVELOPE, &ev)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -395,7 +448,11 @@ fn an_unknown_provenance_source_is_rejected() {
         "sequence": { "monotonic_index": 1 },
         "timestamp": "2026-08-25T09:12:00.000Z"
     });
-    assert!(!r.violations(ids::EVENT_ENVELOPE, &ev).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::EVENT_ENVELOPE, &ev)
+            .expect("violations")
+            .is_empty()
+    );
 }
 
 // -------------------------------------------------------------------- pack --
@@ -424,10 +481,14 @@ fn a_flag_rule_detector_must_name_deterministic_or_model() {
         })
     };
 
-    r.validate(ids::DOCTRINE_PACK, &pack("deterministic:advice_language")).expect("deterministic");
-    r.validate(ids::DOCTRINE_PACK, &pack("model:advice_v1")).expect("model");
+    r.validate(ids::DOCTRINE_PACK, &pack("deterministic:advice_language"))
+        .expect("deterministic");
+    r.validate(ids::DOCTRINE_PACK, &pack("model:advice_v1"))
+        .expect("model");
     assert!(
-        !r.violations(ids::DOCTRINE_PACK, &pack("advice_language")).expect("violations").is_empty(),
+        !r.violations(ids::DOCTRINE_PACK, &pack("advice_language"))
+            .expect("violations")
+            .is_empty(),
         "a detector with no kind prefix must be rejected"
     );
 }
@@ -447,7 +508,11 @@ fn a_pack_version_must_be_semver() {
         "retrievers": [],
         "exercise_templates": []
     });
-    assert!(!r.violations(ids::DOCTRINE_PACK, &pack).expect("violations").is_empty());
+    assert!(
+        !r.violations(ids::DOCTRINE_PACK, &pack)
+            .expect("violations")
+            .is_empty()
+    );
     pack["version"] = json!("1.0.0");
     r.validate(ids::DOCTRINE_PACK, &pack).expect("semver passes");
 }
@@ -468,12 +533,15 @@ fn a_bundle_manifest_pins_its_format_version() {
         "local_documents": [],
         "blobs": []
     });
-    r.validate(ids::BUNDLE_MANIFEST, &manifest).expect("valid manifest");
+    r.validate(ids::BUNDLE_MANIFEST, &manifest)
+        .expect("valid manifest");
 
     let mut future = manifest;
     future["format_version"] = json!("2.0");
     assert!(
-        !r.violations(ids::BUNDLE_MANIFEST, &future).expect("violations").is_empty(),
+        !r.violations(ids::BUNDLE_MANIFEST, &future)
+            .expect("violations")
+            .is_empty(),
         "a v1 importer must refuse a format it does not know"
     );
 }
@@ -488,8 +556,13 @@ fn violations_name_the_offending_path() {
     let mut bad = router_output();
     bad["classification"]["language"] = json!("english");
     let violations = r.violations(ids::OUT_ROUTER, &bad).expect("violations");
-    assert!(violations.iter().any(|v| v.instance_path.contains("language")),
-            "got {violations:?}");
+    assert!(
+        violations.iter().any(|v| v.instance_path.contains("language")),
+        "got {violations:?}"
+    );
     let rendered = violations[0].to_string();
-    assert!(rendered.contains('/'), "a violation renders with its path: {rendered}");
+    assert!(
+        rendered.contains('/'),
+        "a violation renders with its path: {rendered}"
+    );
 }

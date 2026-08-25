@@ -4719,6 +4719,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "tessera-doctrine",
@@ -4736,10 +4738,12 @@ name = "tessera-providers"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "hex",
  "keyring",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tessera-schema",
  "thiserror 2.0.20",
  "tokio",
