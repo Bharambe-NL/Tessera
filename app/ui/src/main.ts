@@ -18,6 +18,7 @@ import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
 import { Rpc, RpcError, type Notification } from './rpc.js';
+import { COPY, PRODUCT_NAME } from './strings.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -290,6 +291,10 @@ async function runPerfGate(cardCount: number): Promise<void> {
 // ------------------------------------------------------------------- boot --
 
 async function boot(): Promise<void> {
+  // BN-024: the name has one home in code. index.html carries a static title so
+  // the tab is not blank before this runs, and this is what it settles on.
+  document.title = PRODUCT_NAME;
+
   const params = new URLSearchParams(location.search);
 
   const gateCards = Number(params.get('gate') ?? '0');
@@ -310,7 +315,7 @@ async function boot(): Promise<void> {
     renderBoard(fixture);
     viewport.fit(boundsOf(fixture.cards, heightOf));
     composer.classList.add('disabled');
-    ask.placeholder = 'Open Tessera to ask a question';
+    ask.placeholder = COPY.askOffline;
     ask.disabled = true;
     return;
   }

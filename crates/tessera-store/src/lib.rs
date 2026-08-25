@@ -23,9 +23,15 @@ pub use crate::event::{
 };
 
 /// Bumped by one per migration file. `PRAGMA user_version` carries it.
-const SCHEMA_VERSION: i32 = 1;
+///
+/// Public because the diagnostics export reports it and because a test that
+/// hard codes the number has to be edited by every migration that follows.
+pub const SCHEMA_VERSION: i32 = 2;
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/0001_initial.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/0001_initial.sql")),
+    (2, include_str!("../migrations/0002_memory.sql")),
+];
 
 pub struct Store {
     conn: Connection,
@@ -89,12 +95,49 @@ impl Store {
             });
         }
 
+        if found == SCHEMA_VERSION {
+            return Ok(());
+        }
+
+        // Foreign keys go off for the duration.
+        //
+        // SQLite cannot widen a CHECK constraint in place, so a migration that
+        // adds an enum value has to rebuild the table, which means dropping it.
+        // Dropping a parent table with foreign keys on runs an implicit delete
+        // that fires ON DELETE CASCADE: 0002 drops `source`, and `passage`
+        // cascades from it, so every passage in the profile would go with it.
+        // Deferring is not enough, because deferring delays the violation check
+        // and not the cascade itself.
+        //
+        // The pragma is a no-op inside a transaction, so it has to sit outside
+        // the loop rather than at the top of a migration file. `foreign_key_check`
+        // below is what earns the right to turn them back on.
+        self.conn.pragma_update(None, "foreign_keys", "OFF")?;
+        let outcome = Self::run_migrations(&mut self.conn, found);
+        self.conn.pragma_update(None, "foreign_keys", "ON")?;
+        outcome
+    }
+
+    fn run_migrations(conn: &mut Connection, found: i32) -> Result<()> {
         for (version, sql) in MIGRATIONS {
             if *version <= found {
                 continue;
             }
-            let tx = self.conn.transaction()?;
+            let tx = conn.transaction()?;
             tx.execute_batch(sql)?;
+
+            // Step 10 of the rebuild procedure. A rebuild that copied rows into
+            // the replacement but missed one would leave a dangling reference
+            // that nothing notices until a much later read, so it is caught here
+            // and rolled back with the rest of the migration.
+            let broken: i64 = tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
+            if broken > 0 {
+                return Err(StoreError::MigrationBrokeReferences {
+                    version: *version,
+                    rows: broken,
+                });
+            }
+
             tx.pragma_update(None, "user_version", *version)?;
             tx.commit()?;
         }

@@ -297,7 +297,10 @@ fn events_rebuild_card_state_identically_after_a_restart() {
 
     // Reopen the profile from disk and throw every projection away.
     let mut store = Store::open(&f.root).expect("reopen");
-    assert_eq!(store.schema_version().expect("version"), 1);
+    assert_eq!(
+        store.schema_version().expect("version"),
+        tessera_store::SCHEMA_VERSION
+    );
 
     let events = store.event_count().expect("count");
     assert_eq!(events, 12, "the script wrote twelve events");

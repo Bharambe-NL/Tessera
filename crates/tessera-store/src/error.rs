@@ -23,6 +23,11 @@ pub enum StoreError {
     #[error("no migration path from schema version {found} to {expected}")]
     SchemaVersion { found: i32, expected: i32 },
 
+    /// Migrations run with foreign keys off, because a table rebuild has to
+    /// drop a parent table. This is the check that they went back on clean.
+    #[error("migration to schema version {version} left {rows} broken foreign key references")]
+    MigrationBrokeReferences { version: i32, rows: i64 },
+
     #[error("blob {0} is not in the store")]
     BlobMissing(String),
 

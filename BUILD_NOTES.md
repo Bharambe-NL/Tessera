@@ -345,6 +345,121 @@ optimistic one works until it meets a model nobody tested against.
 
 ---
 
+## Decisions from the v0.2 documents
+
+Five documents arrived on 2026-08-25: `HANDOFF.md` and `15-memory-v0.2.md` are new,
+`01-data-model-v0.2.md` and `05-retriever-agents-v0.2.md` revise their v0.1 originals, and
+`14-learn-mode-tutor-v0.2.md` is byte identical to v0.1, so doc 14 is unchanged.
+
+### BN-024 The code identifier stays `tessera`
+
+**Spec** `HANDOFF.md` section 3: "Use identifier `canvas` in code until confirmed; keep the
+product name in one config constant."
+
+**Decision** Keep `tessera`. Adopt the constant.
+
+**Why** That document was written before the naming question was put to the owner. It was put
+and answered, the answer was Tessera, and BN-001 recorded it on the first commit, so the
+condition the instruction waits on is already met. Ten crate names, every path and every import
+now carry it. The instruction's second half is good advice at any name and is adopted: the
+product name lives in one constant, so changing it stays a one line edit.
+
+### BN-025 A pack may set a minimum depth, which answers two open questions at once
+
+**Spec** 03 question 3 ("whether `depth_hints` should be able to force a minimum depth the user
+cannot lower"; proposal: the pack may set a minimum and the UI shows why fast is unavailable)
+and 06 question A2 ("whether fast mode should be allowed on the finance pack at all"), which
+the document itself ties to the first.
+
+**Decision** Both as proposed. The pack sets a minimum depth per question type; finance sets it
+to `deep` for regulatory question types.
+
+**Why** The second question reads as a product decision and turns out to be a consequence of the
+first. Resolving it in the pack rather than in code means no branch anywhere asks which pack is
+loaded, which is doc 12 principle 4: doctrine is data.
+
+### BN-026 Background intake is skipped when the profile states a role
+
+**Spec** 14 question 2, proposal yes. Resolved as proposed.
+
+### BN-027 A local model for the sensitive folder support check stays a measurement
+
+**Spec** 05 question 1 and 07 question B3, listed as still open in `HANDOFF.md` section 5.
+
+**Decision** Unchanged from the approved plan: decided at M8 against an Ollama alias, on the
+false positive numbers rather than in advance.
+
+### BN-028 The memory schema lands as migration 0002, not as an edit to 0001
+
+**Spec** 01 v0.2 adds `Card.builds_on`, source class `own_card`, ConceptLink relation
+`builds_on`, and `Profile.memory_enabled`.
+
+**Decision** A second migration file.
+
+**Why** No database exists outside this machine, so editing `0001` would have worked and cost
+less. It would also mean the migration runner had still never run a second migration on the day
+M13 ships an installer that upgrades a real user's profile. Running it now costs nothing when it
+fails.
+
+It found something immediately. SQLite cannot widen a `CHECK` constraint in place, so adding
+`own_card` means rebuilding `source`, which means dropping it, and `passage.source_id` cascades
+on delete. With foreign keys enabled the migration would have deleted every passage in the
+profile, and every citation points at a passage, so the audit trail would have gone with them.
+`PRAGMA defer_foreign_keys` does not help: it delays the violation check, not the cascade. So
+`Store::migrate` turns foreign keys off for the duration and `pragma_foreign_key_check` inside
+the transaction earns the right to turn them back on.
+
+The test that would have caught it in production is
+`crates/tessera-store/tests/migration.rs::a_version_one_profile_upgrades_without_losing_a_row`.
+
+### BN-029 The source class enum widens without a schema version bump
+
+**Spec** 01 section 4.8 and `schemas/entity/common.v1.json`.
+
+**Decision** `own_card` joins the enum, and the schema stays at v1.
+
+**Why** Adding an enum value widens what validates, so every document valid under the old enum
+is still valid. No bundle has ever been exported, so no reader exists anywhere that could reject
+the new value. The version bumps when a change first narrows something, which is the case a
+version number exists to signal.
+
+### BN-030 The house style is a test, not a document
+
+**Spec** `HANDOFF.md` section 7: "no dashes of any kind, sentence case, verbs name actions, no
+apologies. The owner's preference: no em dashes anywhere and no 'it is not X, it is Y'
+constructions. Run these as a lint on UI strings."
+
+**Decision** `crates/tessera-style`, run by `cargo test`. Four rules are checked: dashes, a
+hyphen used as sentence punctuation, title case in a heading, and the construction the owner
+named. Apologies are checked too. "Verbs name actions" is left to review, because a checker that
+guessed at it would flag every noun label a product legitimately has.
+
+**Why scope is narrow** The first version guessed at which strings a user reads and reported
+four violations in TypeScript, where `=>` reads as a closing HTML tag, and two in a doctrine
+pack, where a synthetic regulator is called "Central Authority for Prudential Oversight" because
+that is its name. A lint with a six in six false positive rate gets switched off in a week. So
+the extractor is told what surface it is reading: HTML text nodes and label attributes, Rust
+double quoted literals, the doctrine pack fields that reach the screen, and TypeScript only in a
+file named `strings.ts`. That file does not exist yet; M9 writes the copy that goes in it.
+
+U+2212 MINUS SIGN is deliberately not in the dash set. The zoom control uses it as the
+counterpart to a plus, and it is a mathematical symbol rather than punctuation.
+
+### BN-031 Memory emits no new events
+
+**Spec** 15 and 05 v0.2 section 8.5 name no event of their own.
+
+**Decision** The boards retriever uses the existing retrieval vocabulary, and `builds_on` rides
+on `card.answered.v1`.
+
+**Why** Recording it here so the absence reads as a decision rather than an oversight. Doc 05
+section 8.5 says the card records `builds_on` for every `own_card` passage cited or used, which
+is only known once the Synthesizer has finished, and `card.answered.v1` is the event emitted at
+that moment. A projection field that no event carries cannot survive a replay, so it had to ride
+on something.
+
+---
+
 ## Measured findings
 
 ### BN-014 M0 canvas gate passes at 200 cards, ceiling between 400 and 800

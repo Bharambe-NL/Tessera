@@ -127,6 +127,18 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
                 if open > 0 { "flagged" } else { "done" },
                 ev.timestamp,
             )?;
+
+            // Doc 05 section 8.5: the card records `builds_on` for every
+            // own_card passage that was cited or used. It rides on this event
+            // rather than on one of its own, because it is only known once the
+            // Synthesizer has finished and because a projection field that no
+            // event carries cannot survive a replay.
+            if let Some(builds_on) = p.get("builds_on").filter(|v| v.is_array()) {
+                tx.execute(
+                    "UPDATE card SET builds_on = ?1 WHERE id = ?2",
+                    params![builds_on.to_string(), card_id],
+                )?;
+            }
         }
 
         // A flag raised at any stage flips the card, including one raised by the

@@ -431,12 +431,18 @@ pub fn write_flag(store: &mut Store, at: CardRef<'_>, f: NewFlag<'_>) -> Result<
 /// Record the Verifier's verdicts and confidence, then answer the card.
 /// Doc 07 section B7: `card.answered.v1` is emitted by the harness after the
 /// Verifier returns.
+///
+/// `builds_on` is the prior cards this card was built from, doc 05 section 8.5.
+/// It is a parameter rather than something read back out of the store because
+/// only the pipeline knows which recalled passages the Synthesizer actually
+/// used, and doc 15 section 2 makes that distinction load bearing.
 pub fn finish_card(
     store: &mut Store,
     at: CardRef<'_>,
     confidence: f64,
     verdicts: &[(i64, String)],
     checks_run: &Value,
+    builds_on: &[Value],
 ) -> Result<()> {
     let (card_id, board_id, run_id) = (at.card_id, at.board_id, at.run_id);
     let card = card_id.to_string();
@@ -478,7 +484,12 @@ pub fn finish_card(
     store.append(
         NewEvent::new(
             "card.answered.v1",
-            json!({ "card_id": card_id, "status": status, "card_confidence": confidence }),
+            json!({
+                "card_id": card_id,
+                "status": status,
+                "card_confidence": confidence,
+                "builds_on": builds_on
+            }),
             Provenance::harness("harness", Some(run_id.to_string())),
         )
         .on_board(board_id)
@@ -538,6 +549,10 @@ pub struct CardView {
     pub flags: Vec<Value>,
     pub status: String,
     pub confidence: Option<f64>,
+    /// Doc 01 section 4.4. Prior verified cards this one was built from, as
+    /// {board_id, card_id, verified_at}. Context, never evidence: doc 15
+    /// section 2. Empty on every card that used no prior work.
+    pub builds_on: Vec<Value>,
     pub model_alias: Option<String>,
     pub stages: Vec<Value>,
     pub position: Value,
@@ -599,7 +614,7 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
     let mut stmt = conn.prepare(
         "SELECT c.id, c.parent_card_id, c.kind, c.anchor_text, c.anchor_block_ref, c.question,
                 c.depth, c.audience_id, c.answer, c.findings, c.status, c.confidence,
-                c.produced_by, c.position, c.visual_id
+                c.produced_by, c.position, c.visual_id, c.builds_on
          FROM card c
          WHERE c.board_id = ?1
            AND NOT EXISTS (SELECT 1 FROM card newer WHERE newer.supersedes = c.id)
@@ -630,6 +645,10 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
                     flags: Vec::new(),
                     status: r.get(10)?,
                     confidence: r.get(11)?,
+                    builds_on: parse_json(&r.get::<_, String>(15)?)
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default(),
                     model_alias: produced_by
                         .as_deref()
                         .map(parse_json)

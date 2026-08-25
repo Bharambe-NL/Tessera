@@ -8,6 +8,7 @@
  */
 
 import type { Board } from './canvas/types.js';
+import { COPY } from './strings.js';
 
 export interface RpcErrorShape {
   code: number;
@@ -57,7 +58,7 @@ export class Rpc {
     if (!this.transport) {
       throw new RpcError({
         code: -32000,
-        message: 'This page is not connected to a core. Open Tessera to ask a question.',
+        message: COPY.notConnected,
         data: { kind: 'disconnected' },
       });
     }

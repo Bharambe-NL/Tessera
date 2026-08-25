@@ -382,7 +382,9 @@ pub async fn run_card(
         .unwrap_or_default();
 
     let confidence = verified["card_confidence"].as_f64().unwrap_or(0.0);
-    repo::finish_card(store, at, confidence, &verdicts, &verified["checks_run"])?;
+    // Empty until the boards retriever lands at M6. Doc 05 section 8.5 fills
+    // this with the own_card passages the Synthesizer cited or used.
+    repo::finish_card(store, at, confidence, &verdicts, &verified["checks_run"], &[])?;
     repo::end_run(store, &run_id, "done")?;
     repo::touch_board(store, board_id)?;
 
