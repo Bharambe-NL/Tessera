@@ -18,7 +18,8 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -101,9 +102,18 @@ struct Args {
     /// The reference provider's keychain entry.
     #[arg(long, default_value = "anthropic-default")]
     reference_key_ref: String,
+
+    /// How many questions to run at once.
+    ///
+    /// Doc 10 section 6 caps a profile at three runs in flight, and the eval
+    /// respects it: a sweep that overran the product's own limit would measure
+    /// a configuration the product never runs in. Each worker gets its own
+    /// throwaway profile, so nothing shares a store.
+    #[arg(long, default_value_t = 3)]
+    workers: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Question {
     q_id: String,
     text: String,
@@ -203,55 +213,98 @@ fn main() -> std::process::ExitCode {
     };
     println!("{}", plan.describe());
 
-    // The real keychain, because the policies name the providers' own key_refs
-    // and a core holding a fake key refuses every stage before it calls anything.
-    let keys: Box<dyn KeyStore> = if args.mock {
-        Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
-    } else {
-        Box::new(OsKeychain)
-    };
-    let first_key_ref = if args.mock {
-        "test-key"
-    } else {
-        args.bulk_key_ref.as_str()
-    };
+    let workers = args.workers.max(1).min(total.max(1));
+    println!("{workers} workers");
 
-    let mut core = match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("could not bring the core up: {e}");
-            return std::process::ExitCode::from(2);
+    let queue = Arc::new(Mutex::new(
+        questions
+            .iter()
+            .take(total)
+            .cloned()
+            .collect::<std::collections::VecDeque<_>>(),
+    ));
+    let done = Arc::new(AtomicUsize::new(0));
+    let collected: Arc<Mutex<Vec<RunRecord>>> = Arc::new(Mutex::new(Vec::with_capacity(total)));
+    let plan = Arc::new(plan);
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let queue = Arc::clone(&queue);
+            let done = Arc::clone(&done);
+            let collected = Arc::clone(&collected);
+            let plan = Arc::clone(&plan);
+            let args = &args;
+
+            scope.spawn(move || {
+                // Each worker gets its own profile. Doc 10 section 6's ledger is
+                // per profile, and sharing one store would have the workers
+                // contend on the very lock the limit exists to avoid.
+                let keys: Box<dyn KeyStore> = if args.mock {
+                    Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
+                } else {
+                    Box::new(OsKeychain)
+                };
+                let first_key_ref = if args.mock {
+                    "test-key"
+                } else {
+                    args.bulk_key_ref.as_str()
+                };
+
+                let mut core =
+                    match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("a worker could not bring a core up: {e}");
+                            return;
+                        }
+                    };
+                // Doc 02 section 10.1 and doc 10 section 5: test provenance, so
+                // nothing here trips a policy hook meant for live work.
+                core.source = Source::Test;
+                if let Err(e) = core.use_pack(&args.pack) {
+                    eprintln!("a worker could not load the `{}` pack: {e}", args.pack);
+                    return;
+                }
+
+                let mut current = String::new();
+                let mut local_failures = 0usize;
+
+                loop {
+                    let Some(q) = queue.lock().ok().and_then(|mut q| q.pop_front()) else {
+                        break;
+                    };
+
+                    let on_reference = plan.reference_ids.contains(&q.q_id);
+                    let leg = if on_reference { &plan.reference } else { &plan.bulk };
+                    if leg.name != current {
+                        core.use_provider(Arc::clone(&leg.provider), leg.policy.clone());
+                        current = leg.name.clone();
+                    }
+
+                    let mut record = run_one(&mut core, &q, &mut local_failures);
+                    record.provider = leg.name.clone();
+                    record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
+
+                    let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if finished % 10 == 0 || finished == total {
+                        println!("  {finished}/{total}");
+                    }
+                    if let Ok(mut out) = collected.lock() {
+                        out.push(record);
+                    }
+                }
+            });
         }
-    };
-    // Doc 02 section 10.1 and doc 10 section 5: test provenance, so nothing here
-    // trips a policy hook meant for live work.
-    core.source = Source::Test;
-    if let Err(e) = core.use_pack(&args.pack) {
-        eprintln!("could not load the `{}` pack: {e}", args.pack);
-        return std::process::ExitCode::from(2);
-    }
+    });
 
-    let mut records = Vec::with_capacity(total);
-    let mut failures = 0usize;
-
-    let mut current = String::new();
-    for (i, q) in questions.iter().take(total).enumerate() {
-        if i % 25 == 0 && i > 0 {
-            println!("  {i}/{total}");
-        }
-
-        let on_reference = plan.reference_ids.contains(&q.q_id);
-        let leg = if on_reference { &plan.reference } else { &plan.bulk };
-        if leg.name != current {
-            core.use_provider(Arc::clone(&leg.provider), leg.policy.clone());
-            current = leg.name.clone();
-        }
-
-        let mut record = run_one(&mut core, q, &mut failures);
-        record.provider = leg.name.clone();
-        record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
-        records.push(record);
-    }
+    let mut records = collected
+        .lock()
+        .map(|mut r| std::mem::take(&mut *r))
+        .unwrap_or_default();
+    // Question order, so two runs of one corpus produce comparable files however
+    // the workers happened to interleave.
+    records.sort_by(|a, b| a.q_id.cmp(&b.q_id));
+    let failures = records.iter().filter(|r| !r.ok).count();
 
     let dir = args
         .out
