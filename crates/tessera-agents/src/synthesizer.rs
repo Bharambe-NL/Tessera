@@ -1,0 +1,789 @@
+//! The Synthesizer. Doc 06 part A.
+//!
+//! Writes the prose answer and the key findings from retrieved passages, binding
+//! every sourced claim to a citation. In fast mode it writes from model knowledge
+//! with no citations and says so.
+//!
+//! Doc 06 section A10 fixes the posture: "strict about provenance, tolerant about
+//! coverage. An honest thin answer beats a full unsupported one." Two rules carry
+//! that:
+//!
+//! `no_passages` in deep or research produces an answer that says no sources were
+//! found, with an empty citation set and confidence 0. It never falls back to
+//! model knowledge silently, because a card that looks answered and is not is
+//! worse than a card that says it found nothing.
+//!
+//! Citation binding is deterministic. The model writes `[n]` markers; the code
+//! parses them, computes the spans, and looks the passages up. A marker with no
+//! passage behind it is removed and its sentence listed as unsupported, so the
+//! model cannot invent a citation by writing a number.
+
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use tessera_harness::{Agent, AgentContext, Failure, Recovery, sequences};
+use tessera_providers::{CompletionRequest, Effort};
+use tessera_schema::ids;
+
+use crate::prompts;
+
+pub struct Synthesizer;
+
+const SYSTEM: &str = "\
+You write one short answer for a card on a research canvas, and the structured \
+summary a diagram will be built from.
+
+Every claim you take from a passage must be followed by that passage's number in \
+square brackets, like [2]. Anything without a number is treated as unsupported and \
+will be flagged, so if you cannot point at a passage, leave the claim out. Never \
+write a number, a date or a threshold that does not appear in a passage you cite. \
+Never calculate a value from two others.
+
+structured_summary is the only thing the diagram is built from, so every entity, \
+relation and value you want shown must appear there, and every value must carry \
+the citation number that supports it.";
+
+const FAST_SYSTEM: &str = "\
+You write one short answer for a card on a research canvas, and the structured \
+summary a diagram will be built from.
+
+You have no sources. The reader has been told this card is unverified, so write \
+what you know plainly and do not invent citations, numbers or dates that you are \
+not confident in. Prefer saying that something depends on a source you do not have \
+over guessing at it.";
+
+#[async_trait]
+impl Agent for Synthesizer {
+    fn id(&self) -> &str {
+        "synthesizer"
+    }
+    fn packet_schema(&self) -> &'static str {
+        // The Synthesizer packet is assembled by the pipeline from the plan and
+        // the retrieved passages. Doc 06 section A4.
+        ids::COMMON
+    }
+    fn output_schema(&self) -> &'static str {
+        ids::OUT_SYNTHESIZER
+    }
+    fn states(&self) -> &'static [&'static str] {
+        sequences::SYNTHESIZER
+    }
+    fn completion_event(&self) -> Option<&'static str> {
+        None // The pipeline emits card.synthesized.v1 with the row write.
+    }
+
+    async fn execute(&self, ctx: &mut AgentContext<'_>, packet: &Value) -> Result<Value, Failure> {
+        step(ctx, "validating")?;
+
+        let mode = packet["mode"].as_str().unwrap_or("fast");
+        let passages = packet["passages"].as_array().cloned().unwrap_or_default();
+
+        // Doc 06 section A10: never fall back to model knowledge silently.
+        if mode != "fast" && passages.is_empty() {
+            step(ctx, "emitting")?;
+            step(ctx, "done")?;
+            return Ok(no_sources(ctx, packet));
+        }
+
+        step(ctx, "drafting")?;
+        let draft = draft(ctx, packet, mode, &passages).await?;
+
+        step(ctx, "binding_citations")?;
+        let bound = bind(&draft, &passages, mode);
+
+        step(ctx, "reconciling_conflicts")?;
+        let conflicts = detect_conflicts(&bound.summary, &passages);
+
+        // Doc 06 section A8 point 4. No audience is set in this build, so the
+        // state is walked without a second call rather than skipped silently.
+        step(ctx, "applying_audience")?;
+        step(ctx, "summarising_structure")?;
+        step(ctx, "emitting")?;
+        step(ctx, "done")?;
+
+        Ok(json!({
+            "schema_version": "1.0",
+            "agent_id": "synthesizer",
+            "run_id": ctx.run_id,
+            "answer": bound.answer,
+            "findings": bound.findings,
+            "citations": bound.citations,
+            "conflicts": conflicts,
+            "scope_statement": packet["plan"]["constraints"]["answer_scope"].clone(),
+            "unsupported_statements": bound.unsupported,
+            "audience_applied": Value::Null,
+            "advice_handling": if has_advice_flag(packet) { json!("reframed_descriptive") } else { json!("none") },
+            "structured_summary": bound.summary,
+            "confidence": bound.confidence,
+            "caveats": bound.caveats,
+        }))
+    }
+}
+
+fn step(ctx: &mut AgentContext<'_>, state: &str) -> Result<(), Failure> {
+    ctx.machine
+        .advance_to(state)
+        .map(|_| ())
+        .map_err(|e| Failure::new("state_machine", e.to_string(), Recovery::Failed))
+}
+
+fn has_advice_flag(packet: &Value) -> bool {
+    packet["flags"]
+        .as_array()
+        .map(|f| f.iter().any(|x| x["rule_id"] == "advice_request"))
+        .unwrap_or(false)
+}
+
+/// Doc 06 section A10 `no_passages`. The card is honest about what it found.
+fn no_sources(ctx: &AgentContext<'_>, packet: &Value) -> Value {
+    let question = packet["request"]["text"].as_str().unwrap_or("this question");
+    json!({
+        "schema_version": "1.0",
+        "agent_id": "synthesizer",
+        "run_id": ctx.run_id,
+        "answer": format!("No sources were found for {question}"),
+        "findings": [],
+        "citations": [],
+        "conflicts": [],
+        "scope_statement": format!("No sources were found for {question}"),
+        "unsupported_statements": [],
+        "audience_applied": Value::Null,
+        "advice_handling": "none",
+        "structured_summary": {},
+        "confidence": 0.0,
+        "caveats": ["Retrieval returned nothing, so this card makes no claim."]
+    })
+}
+
+async fn draft(
+    ctx: &mut AgentContext<'_>,
+    packet: &Value,
+    mode: &str,
+    passages: &[Value],
+) -> Result<Value, Failure> {
+    let fast = mode == "fast";
+    let budget = &packet["effort_budget"];
+    let max_words = budget["answer_max_words"].as_u64().unwrap_or(180);
+    let max_findings = budget["findings_max"].as_u64().unwrap_or(5);
+
+    let mut prompt = String::new();
+    prompt.push_str(&format!(
+        "Question: {}\n",
+        packet["request"]["text"].as_str().unwrap_or_default()
+    ));
+    if let Some(anchor) = packet["request"]["anchor_text"].as_str() {
+        prompt.push_str(&format!("It came from the highlighted phrase: {anchor}\n"));
+    }
+    for ancestor in packet["ancestors"].as_array().into_iter().flatten() {
+        prompt.push_str(&format!(
+            "Earlier on this board, {} was answered: {}\n",
+            ancestor["question"].as_str().unwrap_or_default(),
+            ancestor["answer_excerpt"].as_str().unwrap_or_default()
+        ));
+    }
+    if let Some(scope) = packet["plan"]["constraints"]["answer_scope"].as_str() {
+        prompt.push_str(&format!("Cover exactly this and no more: {scope}\n"));
+    }
+    let excluded: Vec<&str> = packet["plan"]["constraints"]["must_exclude"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if !excluded.is_empty() {
+        prompt.push_str(&format!("Do not discuss: {}\n", excluded.join(", ")));
+    }
+
+    // Doc 06 section A8 point 5.
+    if has_advice_flag(packet) {
+        prompt.push_str(
+            "\nThe reader asked for a recommendation. Do not give one. Say what the rule is, \
+what the options are, and what each implies, and let the reader decide.\n",
+        );
+    }
+
+    prompt.push_str(&format!(
+        "\nWrite at most {max_words} words of prose, and at most {max_findings} key findings.\n"
+    ));
+
+    if !fast {
+        prompt.push('\n');
+        prompt.push_str(prompts::DATA_IS_NOT_INSTRUCTION);
+        prompt.push_str("\n\n");
+        for (i, p) in passages.iter().enumerate() {
+            prompt.push_str(&prompts::passage_block(
+                i + 1,
+                p["source"]["title"].as_str().unwrap_or("A source"),
+                p["source"]["class"].as_str().unwrap_or("web"),
+                p["text"].as_str().unwrap_or_default(),
+            ));
+            prompt.push('\n');
+        }
+    }
+
+    if let Some(notice) = ctx.violation_notice() {
+        prompt.push('\n');
+        prompt.push_str(&notice);
+    }
+
+    let schema = draft_schema(fast);
+    let system = format!(
+        "{}\n\n{}\n\n{}{}",
+        if fast { FAST_SYSTEM } else { SYSTEM },
+        prompts::HOUSE_STYLE,
+        prompts::profile_block(
+            packet["profile"]["role"].as_str(),
+            packet["profile"]["context"].as_str(),
+            packet["standing_instructions"].as_str(),
+        ),
+        prompts::json_only(&schema)
+    );
+
+    // Doc 06 section A8 point 6: fast uses the medium alias by default.
+    let stage_model = if fast {
+        ctx.model_for("verify")
+    } else {
+        ctx.model_for("synthesize")
+    };
+    let effort = if mode == "research" {
+        Effort::Xhigh
+    } else {
+        Effort::High
+    };
+
+    let completion = ctx
+        .call(
+            &CompletionRequest::new(stage_model, "synthesize")
+                .system(system)
+                .user(prompt)
+                .effort(effort)
+                .max_tokens(4000)
+                .expecting(schema),
+        )
+        .await?;
+
+    completion.json().map_err(|e| Failure {
+        kind: "schema_violation".into(),
+        detail: e.to_string(),
+        recovery: Recovery::Retried,
+        evidence: None,
+        recoverable: true,
+    })
+}
+
+fn draft_schema(fast: bool) -> Value {
+    let marker_note = if fast {
+        "Plain prose. Do not use citation markers; there are no sources."
+    } else {
+        "Prose with a [n] marker after every claim taken from passage n."
+    };
+    json!({
+        "type": "object",
+        "required": ["answer", "structured_summary"],
+        "additionalProperties": false,
+        "properties": {
+            "answer": { "type": "string", "description": marker_note },
+            "findings": {
+                "type": "array",
+                "items": { "type": "string", "description": marker_note }
+            },
+            "structured_summary": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "entities": { "type": "array", "items": { "type": "string" } },
+                    "relations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["from", "to", "kind"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "from": { "type": "string" },
+                                "to": { "type": "string" },
+                                "kind": { "type": "string" }
+                            }
+                        }
+                    },
+                    "values": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["label", "value"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "label": { "type": "string" },
+                                "value": { "type": "string" },
+                                "unit": { "type": "string" },
+                                "citation": { "type": "integer" }
+                            }
+                        }
+                    },
+                    "steps": { "type": "array", "items": { "type": "string" } },
+                    "groups": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["heading", "items"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "heading": { "type": "string" },
+                                "items": { "type": "array", "items": { "type": "string" } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+struct Bound {
+    answer: String,
+    findings: Value,
+    citations: Value,
+    unsupported: Value,
+    summary: Value,
+    confidence: f64,
+    caveats: Value,
+}
+
+/// Doc 06 section A8 point 2. Deterministic: markers are parsed, spans computed
+/// from the sentence containing the marker, `passage_id` looked up. Markers with
+/// no passage are removed and the sentence listed as unsupported.
+fn bind(draft: &Value, passages: &[Value], mode: &str) -> Bound {
+    let raw_answer = draft["answer"].as_str().unwrap_or_default().to_string();
+    let fast = mode == "fast";
+
+    let mut citations = Vec::new();
+    let mut unsupported = Vec::new();
+    let mut caveats = Vec::new();
+    let mut seen_ordinals = std::collections::BTreeSet::new();
+
+    // In fast mode there are no passages, so every marker is orphaned by
+    // definition. Strip them all rather than list a hundred unsupported spans.
+    let answer = if fast {
+        strip_markers(&raw_answer)
+    } else {
+        raw_answer.clone()
+    };
+
+    if fast {
+        // Doc 06 section A5: in fast mode citations must be empty and
+        // unsupported_statements must cover the whole answer.
+        unsupported.push(json!({
+            "span": { "start": 0, "end": answer.chars().count() },
+            "reason": "model_knowledge"
+        }));
+    } else {
+        for (sentence_start, sentence_end, sentence) in sentences(&answer) {
+            for ordinal in markers_in(sentence) {
+                match passages.get(ordinal.saturating_sub(1)) {
+                    Some(p) if ordinal >= 1 => {
+                        if seen_ordinals.insert(ordinal) {
+                            citations.push(json!({
+                                "n": ordinal,
+                                "passage_id": p["passage_id"].clone(),
+                                "claim_span": { "start": sentence_start, "end": sentence_end },
+                                "binding": "answer"
+                            }));
+                        }
+                    }
+                    _ => {
+                        // Doc 06 section A10 `marker_orphaned`.
+                        unsupported.push(json!({
+                            "span": { "start": sentence_start, "end": sentence_end },
+                            "reason": "no_passage"
+                        }));
+                    }
+                }
+            }
+            if markers_in(sentence).is_empty() && !sentence.trim().is_empty() {
+                unsupported.push(json!({
+                    "span": { "start": sentence_start, "end": sentence_end },
+                    "reason": "model_knowledge"
+                }));
+            }
+        }
+    }
+
+    let findings: Vec<Value> = draft["findings"]
+        .as_array()
+        .map(|f| {
+            f.iter()
+                .filter_map(Value::as_str)
+                .map(|text| {
+                    let ordinals: Vec<usize> = if fast { vec![] } else { markers_in(text) };
+                    json!({
+                        "text": if fast { strip_markers(text) } else { text.to_string() },
+                        "citations": ordinals.iter().filter(|o| seen_ordinals.contains(o)).collect::<Vec<_>>()
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut summary = draft["structured_summary"].clone();
+    // Measured before the drop below, or the term would always read 1.0.
+    let values_drafted = summary
+        .get("values")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    if fast {
+        // A value carries a citation ordinal that cannot exist here.
+        if let Some(values) = summary.get_mut("values").and_then(Value::as_array_mut) {
+            for v in values.iter_mut() {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.remove("citation");
+                }
+            }
+        }
+    } else if let Some(values) = summary.get_mut("values").and_then(Value::as_array_mut) {
+        // Doc 06 section A5: in deep and research a numeric value without a
+        // citation is a schema violation. Dropping it here means the Visualizer
+        // never sees an uncited value, so no block can be built from one.
+        let before = values.len();
+        values.retain(|v| {
+            v.get("citation")
+                .and_then(Value::as_u64)
+                .is_some_and(|n| seen_ordinals.contains(&(n as usize)))
+        });
+        if values.len() < before {
+            caveats.push(json!(format!(
+                "{} value{} were left out because nothing cited supported them.",
+                before - values.len(),
+                if before - values.len() == 1 { "" } else { "s" }
+            )));
+        }
+    }
+
+    // Doc 06 section A9. Deterministic, and fast is fixed at 0 and displayed as
+    // "Unverified".
+    let confidence = if fast {
+        0.0
+    } else {
+        let total = sentences(&answer).len().max(1) as f64;
+        let supported = total
+            - unsupported
+                .iter()
+                .filter(|u| u["reason"] == "model_knowledge")
+                .count() as f64;
+        let sentence_share = (supported / total).clamp(0.0, 1.0);
+
+        // Doc 06 section A9: the fraction of structured_summary values that
+        // carry a citation. Uncited ones were dropped above, so this is the
+        // share that survived. A summary with no values at all is not penalised:
+        // there was nothing to cite.
+        let values_kept = summary
+            .get("values")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        let value_share = if values_drafted == 0 {
+            1.0
+        } else {
+            values_kept as f64 / values_drafted as f64
+        };
+
+        ((sentence_share * 0.5 + value_share * 0.2 + 0.15 + 0.15) * 100.0).round() / 100.0
+    };
+
+    Bound {
+        answer,
+        findings: json!(findings),
+        citations: json!(citations),
+        unsupported: json!(unsupported),
+        summary,
+        confidence,
+        caveats: json!(caveats),
+    }
+}
+
+/// Split into sentences with their character offsets, which is what
+/// `Citation.claim_span` records. Doc 06 open question A1 keeps this at
+/// sentence level for v1.
+fn sentences(text: &str) -> Vec<(usize, usize, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+
+    for (i, (byte, c)) in chars.iter().enumerate() {
+        if matches!(c, '.' | '!' | '?') {
+            // A full stop inside a marker or a decimal is not a sentence end.
+            let next = chars.get(i + 1).map(|(_, c)| *c);
+            if next.is_some_and(|n| n.is_ascii_digit()) {
+                continue;
+            }
+            let end = byte + c.len_utf8();
+            let slice = text[start..end].trim();
+            if !slice.is_empty() {
+                out.push((start, end, slice));
+            }
+            start = end;
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        out.push((start, text.len(), tail));
+    }
+    out
+}
+
+/// Every `[n]` in a span, including `[1, 2]`.
+pub(crate) fn markers_in(text: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'['
+            && let Some(close) = text[i..].find(']')
+        {
+            let inner = &text[i + 1..i + close];
+            if !inner.is_empty()
+                && inner
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == ',' || c.is_whitespace())
+            {
+                for part in inner.split(',') {
+                    if let Ok(n) = part.trim().parse::<usize>() {
+                        out.push(n);
+                    }
+                }
+            }
+            i += close + 1;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn strip_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(close) = rest[open..].find(']') else {
+            break;
+        };
+        let inner = &rest[open + 1..open + close];
+        let is_marker = !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == ',' || c.is_whitespace());
+        out.push_str(&rest[..open]);
+        if is_marker {
+            // A marker is written after the word it supports, so removing it
+            // must take the space in front of it too, or the sentence ends
+            // with a gap before its full stop.
+            while out.ends_with(' ') {
+                out.pop();
+            }
+        } else {
+            out.push_str(&rest[open..open + close + 1]);
+        }
+        rest = &rest[open + close + 1..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
+
+/// Doc 06 section A8 point 3. Deterministic detection when two cited passages
+/// give different values for the same labelled value.
+fn detect_conflicts(summary: &Value, passages: &[Value]) -> Value {
+    let Some(values) = summary.get("values").and_then(Value::as_array) else {
+        return json!([]);
+    };
+    let mut by_label: std::collections::BTreeMap<&str, Vec<(&str, usize)>> = Default::default();
+    for v in values {
+        let (Some(label), Some(value)) = (v["label"].as_str(), v["value"].as_str()) else {
+            continue;
+        };
+        let ordinal = v["citation"].as_u64().unwrap_or(0) as usize;
+        by_label.entry(label).or_default().push((value, ordinal));
+    }
+
+    let mut conflicts = Vec::new();
+    for (label, readings) in by_label {
+        let distinct: std::collections::BTreeSet<&str> = readings.iter().map(|(v, _)| *v).collect();
+        if distinct.len() < 2 {
+            continue;
+        }
+        // The doctrine resolves this: higher trust rank wins, then later date.
+        // The passage ranks are already in the packet.
+        let best = readings
+            .iter()
+            .min_by_key(|(_, o)| {
+                passages
+                    .get(o.saturating_sub(1))
+                    .and_then(|p| p["source"]["trust_rank"].as_i64())
+                    .unwrap_or(i64::MAX)
+            })
+            .map(|(v, _)| *v);
+        conflicts.push(json!({
+            "claim": label,
+            "readings": readings.iter().map(|(v, o)| json!({
+                "passage_id": passages.get(o.saturating_sub(1)).map(|p| p["passage_id"].clone()).unwrap_or(Value::Null),
+                "value": v
+            })).collect::<Vec<_>>(),
+            "resolution": if best.is_some() { "higher_trust" } else { "presented_both" }
+        }));
+    }
+    json!(conflicts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn passages(n: usize) -> Vec<Value> {
+        (1..=n)
+            .map(|i| {
+                json!({
+                    "passage_id": format!("01JAV9YQ4M8T7R2K5N6P3W1XZ{}", (b'A' + i as u8 - 1) as char),
+                    "text": format!("passage {i} text"),
+                    "source": { "title": format!("Source {i}"), "class": "web", "trust_rank": 4 }
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn markers_are_parsed_including_lists() {
+        assert_eq!(markers_in("a claim [1] and another [2, 3]."), vec![1, 2, 3]);
+        assert_eq!(markers_in("no markers here"), Vec::<usize>::new());
+        // Bracketed prose is not a marker.
+        assert_eq!(markers_in("the rule [as amended] applies"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_marker_with_no_passage_behind_it_is_dropped_not_trusted() {
+        // Doc 06 section A10 marker_orphaned. Otherwise a model could invent a
+        // citation just by writing a number.
+        let draft = json!({
+            "answer": "The buffer rose [1]. The floor fell [9].",
+            "structured_summary": {}
+        });
+        let bound = bind(&draft, &passages(1), "deep");
+        let citations = bound.citations.as_array().expect("citations");
+        assert_eq!(citations.len(), 1, "only the real one binds");
+        assert_eq!(citations[0]["n"], 1);
+        assert!(
+            bound
+                .unsupported
+                .as_array()
+                .expect("unsupported")
+                .iter()
+                .any(|u| u["reason"] == "no_passage"),
+            "the orphaned sentence must be listed"
+        );
+    }
+
+    #[test]
+    fn a_claim_span_points_at_the_sentence_that_carries_the_marker() {
+        let draft = json!({
+            "answer": "First sentence with no source. Second one has one [1].",
+            "structured_summary": {}
+        });
+        let bound = bind(&draft, &passages(1), "deep");
+        let c = &bound.citations.as_array().expect("citations")[0];
+        let start = c["claim_span"]["start"].as_u64().expect("start") as usize;
+        let end = c["claim_span"]["end"].as_u64().expect("end") as usize;
+        let span = &bound.answer[start..end];
+        assert!(span.contains("Second one"), "got `{span}`");
+        assert!(!span.contains("First sentence"));
+    }
+
+    #[test]
+    fn fast_mode_produces_no_citations_and_covers_the_whole_answer() {
+        // Doc 06 section A5's harness rule for fast mode.
+        let draft = json!({
+            "answer": "World models predict how state evolves under actions.",
+            "findings": ["A finding [1]."],
+            "structured_summary": { "values": [{ "label": "x", "value": "1", "citation": 1 }] }
+        });
+        let bound = bind(&draft, &[], "fast");
+
+        assert_eq!(bound.citations.as_array().map(Vec::len), Some(0));
+        assert_eq!(
+            bound.confidence, 0.0,
+            "fast is fixed at 0 and shows as Unverified"
+        );
+
+        let unsupported = bound.unsupported.as_array().expect("unsupported");
+        assert_eq!(unsupported.len(), 1);
+        assert_eq!(unsupported[0]["reason"], "model_knowledge");
+        assert_eq!(unsupported[0]["span"]["start"], 0);
+
+        // A marker in fast mode is stripped rather than left to render as a
+        // superscript pointing at nothing.
+        assert_eq!(bound.findings[0]["text"], "A finding.");
+        assert!(bound.summary["values"][0].get("citation").is_none());
+    }
+
+    #[test]
+    fn an_uncited_value_never_reaches_the_visualizer() {
+        // Doc 06 section A5: in deep and research a value without a citation is a
+        // schema violation. Dropping it here means no block can be built from one.
+        let draft = json!({
+            "answer": "The buffer is 2.5 percent [1].",
+            "structured_summary": {
+                "values": [
+                    { "label": "buffer", "value": "2.5", "unit": "%", "citation": 1 },
+                    { "label": "floor", "value": "7", "unit": "%" }
+                ]
+            }
+        });
+        let bound = bind(&draft, &passages(1), "deep");
+        let values = bound.summary["values"].as_array().expect("values");
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["label"], "buffer");
+        assert!(
+            !bound.caveats.as_array().expect("caveats").is_empty(),
+            "the drop is declared"
+        );
+    }
+
+    #[test]
+    fn a_decimal_point_does_not_end_a_sentence() {
+        let s = sentences("The buffer is 2.5 percent of assets. It applies from March.");
+        assert_eq!(s.len(), 2, "got {s:?}");
+    }
+
+    #[test]
+    fn two_passages_disagreeing_on_one_label_is_a_conflict() {
+        // Doc 06 section A8 point 3.
+        let summary = json!({
+            "values": [
+                { "label": "buffer", "value": "2.5", "citation": 1 },
+                { "label": "buffer", "value": "3.0", "citation": 2 }
+            ]
+        });
+        let mut ps = passages(2);
+        ps[0]["source"]["trust_rank"] = json!(1);
+        let conflicts = detect_conflicts(&summary, &ps);
+        let arr = conflicts.as_array().expect("conflicts");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["claim"], "buffer");
+        assert_eq!(arr[0]["resolution"], "higher_trust");
+    }
+
+    #[test]
+    fn agreement_is_not_a_conflict() {
+        let summary = json!({
+            "values": [
+                { "label": "buffer", "value": "2.5", "citation": 1 },
+                { "label": "buffer", "value": "2.5", "citation": 2 }
+            ]
+        });
+        assert_eq!(
+            detect_conflicts(&summary, &passages(2)).as_array().map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn stripping_markers_leaves_bracketed_prose_alone() {
+        assert_eq!(
+            strip_markers("The rule [as amended] applies [1] from March."),
+            "The rule [as amended] applies from March."
+        );
+    }
+}

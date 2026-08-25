@@ -4688,6 +4688,7 @@ dependencies = [
 name = "tessera-core"
 version = "0.1.0"
 dependencies = [
+ "rusqlite",
  "serde",
  "serde_json",
  "tessera-agents",

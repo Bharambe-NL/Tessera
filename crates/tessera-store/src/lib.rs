@@ -9,6 +9,7 @@ pub mod blob;
 pub mod error;
 pub mod event;
 pub mod projection;
+pub mod repo;
 
 use std::path::{Path, PathBuf};
 

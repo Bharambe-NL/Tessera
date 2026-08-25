@@ -107,11 +107,17 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
                 .card_id
                 .map(Ok)
                 .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
-            // Doc 01 section 4.2: `flagged` means at least one open Flag exists.
+            // Doc 01 section 4.2 says `flagged` means any open Flag exists; doc
+            // 07 section B5 says it means any flag of severity warn or block.
+            // The second wins (BN-015): an info flag is a chip on the header,
+            // not a queue item, and "unverified" on every fast card would drown
+            // the Flags queue in things nobody has to decide.
+            //
             // Reading the flag table rather than trusting the payload keeps the
-            // two consistent even if events arrive out of order on replay.
+            // projection and the Verifier consistent on replay.
             let open: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM flag WHERE card_id = ?1 AND status = 'open'",
+                "SELECT COUNT(*) FROM flag
+                 WHERE card_id = ?1 AND status = 'open' AND severity != 'info'",
                 params![card_id],
                 |r| r.get(0),
             )?;
@@ -141,7 +147,8 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
         "review.decided.v1" => {
             if let Some(card_id) = ev.card_id.or_else(|| p.get("card_id").and_then(Value::as_str)) {
                 let open: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM flag WHERE card_id = ?1 AND status = 'open'",
+                    "SELECT COUNT(*) FROM flag
+                     WHERE card_id = ?1 AND status = 'open' AND severity != 'info'",
                     params![card_id],
                     |r| r.get(0),
                 )?;

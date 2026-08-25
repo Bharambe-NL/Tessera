@@ -19,7 +19,7 @@
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use tessera_providers::{Completion, CompletionRequest, ModelProvider};
+use tessera_providers::{Completion, CompletionRequest, ModelProvider, ResolvedPolicy};
 use tessera_schema::Registry;
 use tessera_store::{NewEvent, Provenance, Source, Store, new_id, now_iso8601};
 
@@ -57,9 +57,34 @@ pub struct AgentContext<'a> {
     /// Provenance for every event this run emits. `test` under the eval harness,
     /// so policy hooks do not fire (doc 02 section 10.1, doc 10 section 5).
     pub source: Source,
+    /// Every stage resolved to a concrete model, snapshotted at run start.
+    /// Doc 03 section 8.3.
+    pub policy: ResolvedPolicy,
 }
 
 impl AgentContext<'_> {
+    /// The concrete model a stage resolved to.
+    ///
+    /// A stage the policy did not resolve is a harness bug rather than a user
+    /// problem, so this falls back to whatever the provider considers current
+    /// instead of failing the card at the point of use. The resolver already
+    /// refused to start a run whose required stages had no key (doc 03 section
+    /// 8.3 `policy_unresolvable`).
+    pub fn model_for(&self, stage: &str) -> String {
+        self.policy
+            .get(stage)
+            .map(|s| s.model.clone())
+            .unwrap_or_else(|| "claude-sonnet-5".to_string())
+    }
+
+    /// The alias name a stage resolved to, for `produced_by.model_alias`.
+    pub fn alias_for(&self, stage: &str) -> String {
+        self.policy
+            .get(stage)
+            .map(|s| s.alias.clone())
+            .unwrap_or_else(|| "medium".to_string())
+    }
+
     /// Make a model call and record it. Every call an agent makes goes through
     /// here, so nothing reaches a provider without landing in the audit trail.
     pub async fn call(&mut self, request: &CompletionRequest) -> Result<Completion, Failure> {
@@ -130,6 +155,7 @@ pub struct RunAgent<'a> {
     pub board_id: Option<String>,
     pub sequence: i64,
     pub source: Source,
+    pub policy: ResolvedPolicy,
 }
 
 /// Validate, run, validate, retry once, record.
@@ -187,6 +213,7 @@ pub async fn run_agent(
             model_calls: Vec::new(),
             last_violations: last_violations.clone(),
             source: cfg.source,
+            policy: cfg.policy.clone(),
         };
 
         let result = agent.execute(&mut ctx, &packet).await;

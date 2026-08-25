@@ -6,10 +6,15 @@
 //!
 //! The core runs in process with the shell in v1, so the web client can later
 //! talk to the identical protocol over a socket. Everything the shell needs is a
-//! method on [`rpc::Router`]; nothing reaches around it.
+//! method on the router built by [`core::build_router`]; nothing reaches around
+//! it.
 
 pub mod bridge;
+pub mod core;
+pub mod pipeline;
 pub mod rpc;
 
 pub use bridge::{Notification, ToastLevel, translate, translate_all};
+pub use core::{Core, CoreError, build_router};
+pub use pipeline::{CardOutcome, RunContext, run_card};
 pub use rpc::{Request, Response, Router, RpcError, codes, params};

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tessera_harness::{
     Agent, AgentContext, Failure, Ledger, Recovery, RunAgent, RunKind, run_agent, sequences,
 };
-use tessera_providers::{CompletionRequest, Effort, MockFailure, MockProvider, MockResponse};
+use tessera_providers::{CompletionRequest, Effort, MockFailure, MockProvider, MockResponse, ResolvedPolicy};
 use tessera_schema::{Registry, ids};
 use tessera_store::{Source, Store, new_id, now_iso8601};
 
@@ -230,6 +230,9 @@ fn cfg<'a>(registry: &'a Registry, provider: &'a MockProvider, ids: &Ids) -> Run
         board_id: Some(ids.board_id.clone()),
         sequence: 1,
         source: Source::Test,
+        // The stub names its model directly, so an empty policy exercises the
+        // context's fallback rather than hiding it.
+        policy: ResolvedPolicy::default(),
     }
 }
 

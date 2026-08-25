@@ -1,0 +1,367 @@
+#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+
+//! M3 acceptance: a real question goes through Router, Synthesizer, Visualizer
+//! and Verifier and lands as a card, and every part of that card is
+//! reconstructable from the Event table alone.
+//!
+//! The provider is the deterministic mock, so these tests assert the pipeline's
+//! behaviour rather than a model's. What a real model produces is measured from
+//! M4, against the synthetic corpus.
+
+use std::sync::Arc;
+
+use serde_json::{Value, json};
+use tessera_core::{Core, build_router, rpc::Request};
+use tessera_providers::{MockProvider, MockResponse};
+
+fn router_output(run_id_free: bool) -> Value {
+    let _ = run_id_free;
+    json!({
+        "classification": {
+            "question_type": "definitional",
+            "domain": "general",
+            "audience_id": null,
+            "language": "en",
+            "needs_current_information": false,
+            "needs_internal_documents": false,
+            "needs_structured_data": false,
+            "entities": ["world model"],
+            "is_follow_up_of_context": false
+        }
+    })
+}
+
+fn synth_output() -> Value {
+    json!({
+        "answer": "A world model is an internal representation an agent uses to predict how a \
+    situation will change. It lets the agent try an action in simulation before trying it for real.",
+        "findings": ["A world model predicts state, not text."],
+        "structured_summary": {
+            "entities": ["World model", "Perception", "Dynamics predictor", "Action policy"],
+            "relations": [
+                { "from": "World model", "to": "Perception", "kind": "has" },
+                { "from": "World model", "to": "Dynamics predictor", "kind": "has" },
+                { "from": "World model", "to": "Action policy", "kind": "has" }
+            ]
+        }
+    })
+}
+
+fn visual_output() -> Value {
+    json!({
+        "title": "Parts of a world model",
+        "payload": {
+            "root": {
+                "label": "World model",
+                "children": [
+                    { "label": "Perception", "note": "Turns observations into a compact state." },
+                    { "label": "Dynamics predictor", "note": "Predicts the next state given an action." },
+                    { "label": "Action policy", "note": "Chooses actions by planning in the model." }
+                ]
+            }
+        }
+    })
+}
+
+fn mock() -> Arc<MockProvider> {
+    Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("synthesize", MockResponse::Json(synth_output()))
+            .on("visualize", MockResponse::Json(visual_output())),
+    )
+}
+
+fn core_with(provider: Arc<MockProvider>) -> Core {
+    Core::in_memory(provider).expect("core comes up")
+}
+
+#[test]
+fn a_question_becomes_a_card_with_a_visual() {
+    let provider = mock();
+    let mut core = core_with(Arc::clone(&provider));
+
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+    let outcome = core
+        .ask(&board_id, "what are world models?", None)
+        .expect("the card runs");
+
+    assert_eq!(provider.calls_for("route"), 1);
+    assert_eq!(provider.calls_for("synthesize"), 1);
+    assert_eq!(provider.calls_for("visualize"), 1);
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board exists");
+    assert_eq!(board.cards.len(), 1);
+
+    let card = &board.cards[0];
+    assert_eq!(card.id, outcome.card_id);
+    assert_eq!(card.question, "what are world models?");
+    assert!(card.answer.as_deref().is_some_and(|a| a.contains("world model")));
+
+    let visual = card.visual.as_ref().expect("a visual was produced");
+    assert_eq!(visual["type"], "tree");
+    assert_eq!(visual["payload"]["root"]["label"], "World model");
+
+    // Every block carries its JSON pointer, which is what makes "Investigate
+    // this further" an exact reference rather than a label match.
+    let blocks = visual["block_index"].as_array().expect("block index");
+    assert_eq!(blocks.len(), 4, "the root and its three children");
+    assert!(
+        blocks
+            .iter()
+            .all(|b| b["ref"].as_str().is_some_and(|r| r.starts_with('/')))
+    );
+}
+
+#[test]
+fn a_fast_card_says_it_is_unverified_rather_than_claiming_confidence() {
+    // Doc 06 section A8 point 6 and doc 07 section B8.1's fast_mode_notice.
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    let outcome = core.ask(&board_id, "what are world models?", None).expect("runs");
+
+    assert_eq!(
+        outcome.confidence, 0.0,
+        "fast is fixed at 0 and shows as Unverified"
+    );
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board");
+    let card = &board.cards[0];
+    assert!(card.citations.is_empty(), "fast mode cites nothing");
+    assert!(
+        card.flags.iter().any(|f| f["rule_id"] == "fast_mode_notice"),
+        "the reader is told, got {:?}",
+        card.flags
+    );
+}
+
+#[test]
+fn a_deep_card_with_no_retrievers_reports_no_sources_rather_than_guessing() {
+    // Doc 06 section A10 no_passages. Retrievers arrive at M6; until then a deep
+    // card must say it found nothing, never fall back to model knowledge.
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "deep").expect("board");
+    let outcome = core
+        .ask(&board_id, "what changed in the capital rule?", Some("deep"))
+        .expect("runs");
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board");
+    let card = &board.cards[0];
+    let answer = card.answer.as_deref().unwrap_or_default();
+
+    assert!(answer.starts_with("No sources were found"), "got `{answer}`");
+    assert!(card.citations.is_empty());
+    assert_eq!(outcome.confidence, 0.0);
+}
+
+#[test]
+fn the_whole_card_is_reconstructable_from_the_event_log() {
+    // The M3 acceptance criterion.
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    let outcome = core.ask(&board_id, "what are world models?", None).expect("runs");
+
+    let events = core.store.events(Some(&board_id)).expect("events");
+    let types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+
+    // The pipeline's spine, in order.
+    for expected in [
+        "board.created.v1",
+        "card.requested.v1",
+        "card.routed.v1",
+        "card.synthesized.v1",
+        "visual.produced.v1",
+        "verify.completed.v1",
+        "card.answered.v1",
+    ] {
+        assert!(types.contains(&expected), "missing {expected} in {types:?}");
+    }
+
+    // Order matters: an answer cannot precede the routing that chose its depth.
+    let at = |t: &str| types.iter().position(|x| *x == t).expect(t);
+    assert!(at("card.requested.v1") < at("card.routed.v1"));
+    assert!(at("card.routed.v1") < at("card.synthesized.v1"));
+    assert!(at("card.synthesized.v1") < at("visual.produced.v1"));
+    assert!(at("visual.produced.v1") < at("verify.completed.v1"));
+    assert!(at("verify.completed.v1") < at("card.answered.v1"));
+
+    // Every model call is on the record with its prompt hash, so the run can be
+    // reproduced. Doc 01 section 6.2.
+    let calls: Vec<&tessera_store::Event> = events
+        .iter()
+        .filter(|e| e.event_type == "model.call.v1")
+        .collect();
+    assert_eq!(calls.len(), 3, "route, synthesize, visualize");
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.payload["prompt_hash"].as_str().is_some_and(|h| h.len() == 64))
+    );
+
+    // And the projection rebuilds to the same state.
+    let before: Vec<(String, Option<f64>)> = vec![(outcome.status.clone(), Some(outcome.confidence))];
+    core.store.rebuild_projections().expect("replay");
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board");
+    assert_eq!(
+        vec![(board.cards[0].status.clone(), board.cards[0].confidence)],
+        before
+    );
+}
+
+#[test]
+fn garbage_from_the_provider_never_becomes_a_card() {
+    // Doc 12 operating principle 5. The mock's default is garbage, so an
+    // unscripted synthesize stage exercises this.
+    let provider = Arc::new(MockProvider::new().on("route", MockResponse::Json(router_output(true))));
+    let mut core = core_with(Arc::clone(&provider));
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let result = core.ask(&board_id, "what are world models?", None);
+    assert!(result.is_err(), "a card must not be admitted from garbage");
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board");
+    assert_eq!(board.cards[0].status, "failed");
+    assert!(board.cards[0].answer.is_none(), "no answer was stored");
+
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(types.contains(&"card.failed.v1".to_string()));
+    assert!(!types.contains(&"card.answered.v1".to_string()));
+}
+
+#[test]
+fn a_visualizer_failure_degrades_the_card_rather_than_killing_it() {
+    // Doc 06 section B10: a card without a visual is acceptable.
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("synthesize", MockResponse::Json(synth_output()))
+            .on("visualize", MockResponse::Garbage)
+            .on("visualize", MockResponse::Garbage),
+    );
+    let mut core = core_with(provider);
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None)
+        .expect("the card still lands");
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board");
+    let card = &board.cards[0];
+    assert!(card.answer.is_some(), "the prose survives");
+    assert!(card.visual.is_none(), "the diagram does not");
+
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(types.contains(&"visual.declined.v1".to_string()));
+    assert!(types.contains(&"card.answered.v1".to_string()));
+}
+
+// ------------------------------------------------------------ rpc surface --
+
+fn call(router: &tessera_core::Router<Core>, core: &mut Core, method: &str, params: Value) -> Value {
+    let response = router
+        .dispatch(core, Request::new(method, params, 1))
+        .expect("a request gets a reply");
+    assert!(response.is_ok(), "{method} failed: {:?}", response.error);
+    response.result.expect("result")
+}
+
+#[test]
+fn the_shell_can_drive_a_whole_board_through_the_rpc_surface() {
+    // Doc 10 section 2: everything the shell does is a method here, so the web
+    // client that arrives later talks to the identical protocol.
+    let router = build_router();
+    let mut core = core_with(mock());
+
+    let created = call(
+        &router,
+        &mut core,
+        "board.create",
+        json!({ "title": "Untitled board", "depth": "fast" }),
+    );
+    let board_id = created["board_id"].as_str().expect("board id").to_string();
+
+    let asked = call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+    assert!(asked["card_id"].as_str().is_some());
+
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert_eq!(board["cards"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        board["title"], "what are world models?",
+        "the board takes its name from the first question"
+    );
+
+    let listed = call(&router, &mut core, "board.list", json!({}));
+    assert_eq!(listed["boards"].as_array().map(Vec::len), Some(1));
+
+    let history = call(
+        &router,
+        &mut core,
+        "board.history",
+        json!({ "board_id": board_id }),
+    );
+    assert!(history["events"].as_array().is_some_and(|e| e.len() > 5));
+
+    // Pattern 25: the UI reads notifications, not raw events.
+    let notes = call(
+        &router,
+        &mut core,
+        "board.notifications",
+        json!({ "board_id": board_id, "after": 0 }),
+    );
+    let kinds: Vec<&str> = notes["notifications"]
+        .as_array()
+        .expect("notifications")
+        .iter()
+        .filter_map(|n| n["kind"].as_str())
+        .collect();
+    assert!(kinds.contains(&"card_stage"), "got {kinds:?}");
+    assert!(kinds.contains(&"card_answered"));
+    assert!(
+        !kinds.contains(&"model_call"),
+        "the log's detail stays in the log"
+    );
+}
+
+#[test]
+fn an_empty_question_is_refused_with_something_the_user_can_act_on() {
+    let router = build_router();
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let response = router
+        .dispatch(
+            &mut core,
+            Request::new("card.ask", json!({ "board_id": board_id, "question": "   " }), 1),
+        )
+        .expect("reply");
+    let error = response.error.expect("an error");
+    assert_eq!(error.message, "Type a question first.");
+    assert_eq!(error.data.expect("data")["kind"], "empty_question");
+}

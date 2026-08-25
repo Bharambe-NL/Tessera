@@ -133,7 +133,7 @@ pub struct ResolvedStage {
 
 /// Every stage resolved at run start, snapshotted onto the Run so a rerun months
 /// later can say which model produced the card. Doc 01 section 6.1.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ResolvedPolicy {
     pub stages: BTreeMap<String, ResolvedStage>,
     /// Stages the policy deliberately gives no model.

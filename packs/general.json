@@ -1,0 +1,153 @@
+{
+  "code": "general",
+  "version": "1.0.0",
+  "name": "General",
+  "description": "The substrate pack. It carries the rules that hold whatever the subject is: cite what you assert, do not invent a number, do not answer a question about the future as though it were a fact. A vertical adds a pack, never a schema.",
+
+  "domains": ["general"],
+
+  "domain_vocabulary": {},
+
+  "depth_hints": {},
+
+  "audiences": [],
+
+  "source_hierarchy": [
+    { "class": "regulatory", "trust_rank": 1 },
+    { "class": "structured_query", "trust_rank": 2 },
+    { "class": "local_document", "trust_rank": 3 },
+    { "class": "web", "trust_rank": 4 },
+    { "class": "user_supplied", "trust_rank": 5 }
+  ],
+
+  "freshness_classes": {
+    "reference": { "max_age_days": 1825, "on_stale": "flag" },
+    "general": { "max_age_days": 730, "on_stale": "flag" },
+    "news": { "max_age_days": 90, "on_stale": "flag" }
+  },
+
+  "flag_rules": [
+    {
+      "rule_id": "marker_integrity",
+      "severity": "block",
+      "description": "Every citation marker in the answer has a citation, and every citation has a marker.",
+      "detector": "deterministic:marker_integrity"
+    },
+    {
+      "rule_id": "scope_exclusion",
+      "severity": "block",
+      "description": "The answer or a visual block mentions a term the plan excluded.",
+      "detector": "deterministic:scope_exclusion"
+    },
+    {
+      "rule_id": "numeric_without_citation",
+      "severity": "block",
+      "description": "A number with a unit appears in the answer, a finding or a block without a citation.",
+      "detector": "deterministic:numeric_without_citation",
+      "modes": ["deep", "research"]
+    },
+    {
+      "rule_id": "computed_value",
+      "severity": "block",
+      "description": "A numeric claim whose cited passage does not contain the value. The model never stores a number it computed.",
+      "detector": "deterministic:computed_value",
+      "modes": ["deep", "research"]
+    },
+    {
+      "rule_id": "unsupported_claim",
+      "severity": "warn",
+      "description": "A sentence the Synthesizer marked as drawn from model knowledge rather than a passage.",
+      "detector": "deterministic:unsupported_claim",
+      "modes": ["deep", "research"]
+    },
+    {
+      "rule_id": "visual_block_unbound",
+      "severity": "warn",
+      "description": "A visual block carries neither a citation nor a no_claim marking.",
+      "detector": "deterministic:visual_block_unbound",
+      "modes": ["deep", "research"]
+    },
+    {
+      "rule_id": "length_and_format",
+      "severity": "info",
+      "description": "The answer runs over budget, uses a dash, or writes a unit in a form the pack does not use.",
+      "detector": "deterministic:length_and_format"
+    },
+    {
+      "rule_id": "fast_mode_notice",
+      "severity": "info",
+      "description": "The card ran at fast depth, so nothing in it was checked against a source.",
+      "detector": "deterministic:fast_mode_notice",
+      "modes": ["fast"]
+    },
+    {
+      "rule_id": "injection_suspected",
+      "severity": "warn",
+      "description": "A retrieved passage or an image contained text addressed to the model.",
+      "detector": "deterministic:injection_suspected"
+    },
+    {
+      "rule_id": "stale_source",
+      "severity": "warn",
+      "description": "A cited source is past its freshness class, or its content changed since retrieval.",
+      "detector": "deterministic:stale_source"
+    },
+    {
+      "rule_id": "verifier_below_threshold",
+      "severity": "info",
+      "description": "The Verifier has not yet met the agreement threshold on this pack, so a spot check is advised.",
+      "detector": "deterministic:verifier_below_threshold"
+    }
+  ],
+
+  "sensitivity_rules": [
+    {
+      "rule_id": "personal_data_in_request",
+      "detector": "deterministic:personal_data",
+      "severity": "block",
+      "patterns": []
+    }
+  ],
+
+  "retrievers": [
+    { "id": "web", "enabled_by_default": false, "must_exclude": [] },
+    { "id": "local", "enabled_by_default": false, "must_exclude": ["Sensitive"] }
+  ],
+
+  "visual_preferences": {
+    "type_preferences": {
+      "comparative": "table",
+      "procedural": "steps",
+      "definitional": "tree",
+      "quantitative": "table",
+      "factual": "list",
+      "exploratory": "tree"
+    },
+    "max_nodes": 18,
+    "max_rows": 8,
+    "generated_images": true
+  },
+
+  "writing_rules": {
+    "units": "as written in the source",
+    "spelling": "en-GB",
+    "sentence_max_words": 28,
+    "dashes": false
+  },
+
+  "exercise_templates": [
+    {
+      "id": "general_basic",
+      "item_kinds": ["recall", "apply", "contrast", "trace"],
+      "items_per_card_max": 2,
+      "options": 4
+    }
+  ],
+
+  "learning_templates": {
+    "curriculum_shapes": ["foundation", "mechanism", "landscape", "edge cases"],
+    "mastery_threshold": 2
+  },
+
+  "rulings": []
+}

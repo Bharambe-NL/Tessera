@@ -170,6 +170,34 @@ facing provider failure surfaces as a failure, per each agent's taxonomy.
 **Reason** Doc 06 section A10 requires that an unreachable provider never silently becomes an answer.
 Sample text presented as an answer is exactly that.
 
+### BN-015 An info flag does not make a card flagged
+
+**Spec** 01 section 4.2: "`flagged` means at least one open Flag exists." 07 section B5: "`card_status`
+is `flagged` when any flag has severity warn or block."
+
+**Decision** Severity warn or block. An info flag shows as a chip on the card header and does not
+change the card's status or put it in the Flags queue.
+
+**Reason** The two rules disagree, and the difference is not academic: `fast_mode_notice` is an info
+rule that fires on every fast card (doc 07 section B8.1), and `verifier_below_threshold` fires on
+every deep card until M8. Under doc 01's reading every card in the product would be flagged and the
+Flags queue would hold nothing anyone has to decide, which is the opposite of what doc 09 section 6
+sorts it for. Found because the projection followed doc 01 and the Verifier followed doc 07, so a
+replay changed a card's status. Doc 01 section 4.2 should be corrected in v0.2.
+
+### BN-016 A card with no citations scores zero confidence
+
+**Spec** 07 section B8.6 computes `card_confidence` as supported citations over all citations (0.5),
+no block flags (0.25), no stale sources (0.15), visual blocks all bound (0.1). It does not say what
+the first term means when there are no citations at all.
+
+**Decision** In deep and research, a card with no citations scores 0.
+
+**Reason** The other three terms reward the absence of problems the card had no opportunity to have.
+A deep card that retrieved nothing would otherwise score 0.5 and, per doc 09 section 4's confidence
+dot, present as no worse than a card with sources. Doc 06 section A10 already fixes the Synthesizer's
+confidence at 0 for that case; this keeps the Verifier from raising it back.
+
 ---
 
 ## Measured findings
