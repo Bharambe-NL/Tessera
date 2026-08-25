@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:event/envelope.v1",
+  "title": "Event envelope",
+  "description": "Doc 01 section 6.3. Every action in Tessera is an event, including the user's own, which is what makes 'who changed what' answerable without a second mechanism.",
+  "type": "object",
+  "required": ["event_id", "event_type", "payload", "provenance", "sequence", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "event_type": {
+      "type": "string",
+      "description": "Versioned, e.g. card.answered.v1. The store checks it against EVENT_VOCABULARY before the insert.",
+      "pattern": "^[a-z_]+\\.[a-z_]+\\.v[0-9]+$"
+    },
+    "payload": { "type": "object" },
+    "provenance": {
+      "type": "object",
+      "required": ["source", "emitter_id", "emitter_type", "trust_level"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": ["live", "test", "replay", "healthcheck", "harness"],
+          "description": "test and replay are filtered out of policy hooks by default (doc 10 section 5)."
+        },
+        "emitter_id": { "type": "string", "minLength": 1 },
+        "emitter_type": { "enum": ["agent", "harness", "user", "retriever"] },
+        "run_id": { "oneOf": [{ "$ref": "tessera:entity/common.v1#/$defs/ulid" }, { "type": "null" }] },
+        "trust_level": { "enum": ["verified", "unverified", "degraded"] }
+      }
+    },
+    "sequence": {
+      "type": "object",
+      "required": ["monotonic_index"],
+      "additionalProperties": false,
+      "properties": {
+        "monotonic_index": { "type": "integer", "minimum": 1 },
+        "causal_parent_id": {
+          "oneOf": [{ "$ref": "tessera:entity/common.v1#/$defs/ulid" }, { "type": "null" }]
+        }
+      }
+    },
+    "board_id": { "oneOf": [{ "$ref": "tessera:entity/common.v1#/$defs/ulid" }, { "type": "null" }] },
+    "card_id": { "oneOf": [{ "$ref": "tessera:entity/common.v1#/$defs/ulid" }, { "type": "null" }] },
+    "timestamp": { "$ref": "tessera:entity/common.v1#/$defs/timestamp" }
+  }
+}

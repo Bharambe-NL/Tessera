@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/tutor.v1",
+  "title": "Tutor output",
+  "description": "Doc 14 section 3.5. Harness rules: check items must pass the Exercise traceability and distractor checks; next_if_right and next_if_wrong must reference the target card's entities; the tutor may request at most one card per turn and at most eight per session without the learner choosing another; no reply may contain a citation marker, because the tutor cites nothing and cards do.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_id",
+    "run_id",
+    "stage"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stage": {
+      "enum": [
+        "intake",
+        "building",
+        "reading",
+        "checking",
+        "opening",
+        "ended"
+      ]
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "q",
+          "options"
+        ],
+        "properties": {
+          "q": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "cards": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "required": [
+              "question",
+              "why"
+            ],
+            "properties": {
+              "question": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              },
+              "visual_hint": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "type": "object"
+        },
+        "next_if_right": {
+          "type": "string"
+        },
+        "next_if_wrong": {
+          "type": "string"
+        }
+      }
+    },
+    "reply": {
+      "oneOf": [
+        {
+          "type": "string",
+          "not": {
+            "pattern": "\\[[0-9]+\\]"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "open": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

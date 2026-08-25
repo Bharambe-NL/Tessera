@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/retriever.v1",
+  "title": "Retriever output",
+  "description": "Doc 05 section 5, shared by web, local, regulatory and structured. Harness rules: passage text capped at 1,200 characters, longer spans are split; no passage from an excluded path or domain, which is hook enforced and a hard failure rather than a caveat; trust_rank is set from doctrine, never by the retriever's own judgment.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_id",
+    "run_id",
+    "passages",
+    "coverage"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sq_id": {
+      "type": "string"
+    },
+    "passages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "passage_id",
+          "source_id",
+          "text",
+          "source"
+        ],
+        "properties": {
+          "passage_id": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          },
+          "source_id": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 1200
+          },
+          "location": {
+            "type": "object"
+          },
+          "score": {
+            "type": "number"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "class",
+              "title",
+              "locator",
+              "trust_rank",
+              "freshness_class"
+            ],
+            "properties": {
+              "class": {
+                "$ref": "tessera:entity/common.v1#/$defs/source_class"
+              },
+              "title": {
+                "type": "string"
+              },
+              "locator": {
+                "type": "string"
+              },
+              "issuer": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "published_at": {
+                "oneOf": [
+                  {
+                    "$ref": "tessera:entity/common.v1#/$defs/timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "trust_rank": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "freshness_class": {
+                "type": "string"
+              },
+              "version_ref": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "content_hash": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sources_created": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sources_deduplicated": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "coverage": {
+      "enum": [
+        "full",
+        "partial",
+        "none"
+      ]
+    },
+    "exclusions_applied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

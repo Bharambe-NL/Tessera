@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/synthesizer.v1",
+  "title": "Synthesizer output",
+  "description": "Doc 06 section A5. Harness rules: every [n] in answer and findings has a citation with that n; every citation's passage_id is in the packet; claim_span offsets fall inside the answer; in deep and research a numeric value in structured_summary.values without a citation is a schema violation; in fast mode citations must be empty and unsupported_statements must cover the whole answer with reason model_knowledge.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_id",
+    "run_id",
+    "answer",
+    "citations",
+    "structured_summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "answer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "citations": {
+            "$ref": "tessera:entity/common.v1#/$defs/citation_ordinals"
+          }
+        }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "n",
+          "passage_id",
+          "claim_span",
+          "binding"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "passage_id": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          },
+          "claim_span": {
+            "type": "object",
+            "required": [
+              "start",
+              "end"
+            ],
+            "properties": {
+              "start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "binding": {
+            "enum": [
+              "answer",
+              "finding"
+            ]
+          }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "claim",
+          "readings",
+          "resolution"
+        ],
+        "properties": {
+          "claim": {
+            "type": "string"
+          },
+          "readings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "passage_id": {
+                  "$ref": "tessera:entity/common.v1#/$defs/ulid"
+                },
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "resolution": {
+            "enum": [
+              "higher_trust",
+              "later_date",
+              "presented_both"
+            ]
+          }
+        }
+      }
+    },
+    "scope_statement": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "unsupported_statements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "span",
+          "reason"
+        ],
+        "properties": {
+          "span": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer"
+              },
+              "end": {
+                "type": "integer"
+              }
+            }
+          },
+          "reason": {
+            "enum": [
+              "no_passage",
+              "model_knowledge"
+            ]
+          }
+        }
+      }
+    },
+    "audience_applied": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "advice_handling": {
+      "enum": [
+        "none",
+        "reframed_descriptive"
+      ]
+    },
+    "structured_summary": {
+      "$ref": "tessera:entity/structured-summary.v1"
+    }
+  }
+}

@@ -2,9 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::process::ExitCode;
-use std::sync::Mutex;
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 /// Set to a card count to run the doc 12 phase 0 acceptance gate instead of the
 /// normal board, print the result to stdout, and exit with the gate's verdict.
@@ -12,9 +11,6 @@ const GATE_ENV: &str = "TESSERA_GATE";
 
 /// File the gate result is written to, so a windowed release build can report.
 const GATE_OUT_ENV: &str = "TESSERA_GATE_OUT";
-
-#[derive(Default)]
-struct GateOutcome(Mutex<Option<bool>>);
 
 /// Called once by the webview when the gate finishes. Printing here rather than
 /// in the webview means the numbers land in the terminal and in CI, which is
@@ -24,11 +20,6 @@ fn report_gate(app: tauri::AppHandle, text: String, passed: bool, raw: serde_jso
     println!("{text}");
     // A release build on Windows has no console, so the file is the real channel.
     write_gate_file(&text, &raw);
-    if let Some(state) = app.try_state::<GateOutcome>() {
-        if let Ok(mut slot) = state.0.lock() {
-            *slot = Some(passed);
-        }
-    }
     app.exit(if passed { 0 } else { 1 });
 }
 
@@ -64,7 +55,6 @@ fn main() -> ExitCode {
     let gate = std::env::var(GATE_ENV).ok().filter(|v| !v.is_empty());
 
     let result = tauri::Builder::default()
-        .manage(GateOutcome::default())
         .invoke_handler(tauri::generate_handler![report_gate, report_gate_error])
         .setup(move |app| {
             let url = match &gate {

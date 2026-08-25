@@ -1,0 +1,6 @@
+# The workspace denies unwrap, expect and panic in production code: a silent
+# unwrap at a boundary is the failure mode the schema guard exists to prevent.
+# Tests are where a panic is the correct way to fail.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

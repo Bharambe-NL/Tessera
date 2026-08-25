@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/visualizer.v1",
+  "title": "Visualizer output",
+  "description": "Doc 06 section B5. Harness rules: payload validates against the type schema in doc 01 section 4.3.1; every label in the payload appears in block_index; every block has citations or no_claim true; in deep and research a block whose label is a value from structured_summary.values must carry that value's citation; no_claim blocks are limited to structural labels; node and row counts within doctrine limits; figure svg passes sanitisation.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_id",
+    "run_id",
+    "type"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "type": {
+      "enum": [
+        "tree",
+        "table",
+        "list",
+        "steps",
+        "figure",
+        "none"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "block_index": {
+      "type": "array",
+      "items": {
+        "$ref": "tessera:entity/visual.v1#/$defs/block"
+      }
+    },
+    "declined_reason": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

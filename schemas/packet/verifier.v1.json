@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/verifier.v1",
+  "title": "Verifier packet",
+  "description": "Doc 07 section B4. The Verifier reads a finished card and decides what the user must look at. Under full automation everything else is admitted without review, so its misses are the product's risk and its false positives are the product's friction.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "card_id",
+    "mode",
+    "kind",
+    "doctrine"
+  ],
+  "properties": {
+    "card_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "mode": {
+      "$ref": "tessera:entity/common.v1#/$defs/depth"
+    },
+    "kind": {
+      "enum": [
+        "root",
+        "follow",
+        "branch",
+        "read",
+        "verify_only"
+      ]
+    },
+    "answer": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "passages": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "visual": {
+      "oneOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "structured_summary": {
+      "$ref": "tessera:entity/structured-summary.v1"
+    },
+    "early_flags": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "plan_constraints": {
+      "type": "object"
+    },
+    "doctrine": {
+      "type": "object",
+      "required": [
+        "flag_rules"
+      ],
+      "properties": {
+        "flag_rules": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "freshness_classes": {
+          "type": "object"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "effort_budget": {
+      "$ref": "tessera:entity/common.v1#/$defs/effort_budget"
+    }
+  }
+}

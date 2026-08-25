@@ -1,14 +1,321 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+//! Storage for one profile: SQLite, the blob store, and the event log.
+//!
+//! Doc 10 section 1: all state lives on the user's machine. Doc 10 section 15:
+//! the profile folder is the unit of backup, restore, and "open profile from
+//! folder", which is why the database and the blob directory live side by side
+//! under one root.
+
+pub mod blob;
+pub mod error;
+pub mod event;
+pub mod projection;
+
+use std::path::{Path, PathBuf};
+
+use rusqlite::{Connection, OptionalExtension, params};
+use ulid::Ulid;
+
+pub use crate::blob::BlobStore;
+pub use crate::error::{Result, StoreError};
+pub use crate::event::{
+    EVENT_VOCABULARY, EmitterType, Event, NewEvent, Provenance, Source, TrustLevel, is_known_event_type,
+};
+
+/// Bumped by one per migration file. `PRAGMA user_version` carries it.
+const SCHEMA_VERSION: i32 = 1;
+
+const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/0001_initial.sql"))];
+
+pub struct Store {
+    conn: Connection,
+    blobs: BlobStore,
+    root: PathBuf,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Store {
+    /// Open (or create) a profile at `root`. The database is `tessera.sqlite`
+    /// and the blobs are in `blobs/`, so the whole profile is one folder.
+    pub fn open(root: impl AsRef<Path>) -> Result<Self> {
+        let root = root.as_ref().to_path_buf();
+        std::fs::create_dir_all(&root)?;
+        let conn = Connection::open(root.join("tessera.sqlite"))?;
+        Self::from_parts(conn, BlobStore::open(root.join("blobs"))?, root)
     }
+
+    /// An in memory profile, for tests and for the eval harness.
+    pub fn open_in_memory() -> Result<Self> {
+        let root = std::env::temp_dir().join(format!("tessera-mem-{}", Ulid::generate()));
+        let conn = Connection::open_in_memory()?;
+        Self::from_parts(conn, BlobStore::open(root.join("blobs"))?, root)
+    }
+
+    fn from_parts(conn: Connection, blobs: BlobStore, root: PathBuf) -> Result<Self> {
+        // WAL so a reader never blocks the writer; doc 01 section 8.
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+
+        let mut store = Self { conn, blobs, root };
+        store.migrate()?;
+        Ok(store)
+    }
+
+    pub fn blobs(&self) -> &BlobStore {
+        &self.blobs
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Escape hatch for the repository layer. Every write that must be atomic
+    /// with an event goes through [`Store::append_with`] instead.
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    // ------------------------------------------------------------ migrate --
+
+    fn migrate(&mut self) -> Result<()> {
+        let found: i32 = self
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))?;
+
+        if found > SCHEMA_VERSION {
+            // A newer Tessera wrote this profile. Refusing beats corrupting it.
+            return Err(StoreError::SchemaVersion {
+                found,
+                expected: SCHEMA_VERSION,
+            });
+        }
+
+        for (version, sql) in MIGRATIONS {
+            if *version <= found {
+                continue;
+            }
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(sql)?;
+            tx.pragma_update(None, "user_version", *version)?;
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    pub fn schema_version(&self) -> Result<i32> {
+        Ok(self.conn.pragma_query_value(None, "user_version", |r| r.get(0))?)
+    }
+
+    // -------------------------------------------------------------- events --
+
+    /// Append one event and fold it into the projections, in one transaction.
+    ///
+    /// Doc 10 section 4: "projections are updated in the same transaction as the
+    /// event write so a crash cannot leave them apart."
+    pub fn append(&mut self, ev: NewEvent) -> Result<Event> {
+        self.append_with(ev, |_| Ok(()))
+    }
+
+    /// Append an event, run `writes` in the same transaction, and fold the event
+    /// into the projections. This is how an entity row and the event announcing
+    /// it stay atomic: a Visual row and its `visual.produced.v1` either both
+    /// land or neither does.
+    pub fn append_with<F>(&mut self, ev: NewEvent, writes: F) -> Result<Event>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<()>,
+    {
+        if !is_known_event_type(&ev.event_type) {
+            return Err(StoreError::UnknownEventType(ev.event_type));
+        }
+
+        let event_id = Ulid::generate().to_string();
+        let timestamp = now_iso8601();
+        let payload = serde_json::to_string(&ev.payload)?;
+
+        let tx = self.conn.transaction()?;
+
+        // The sequence lives in a row rather than in AUTOINCREMENT so it is
+        // claimed under this transaction's lock: two writers cannot take the
+        // same index, and a rolled back append does not burn one.
+        let index: i64 = tx.query_row("SELECT next FROM event_sequence WHERE id = 1", [], |r| r.get(0))?;
+        tx.execute("UPDATE event_sequence SET next = ?1 WHERE id = 1", params![index + 1])?;
+
+        writes(&tx)?;
+
+        tx.execute(
+            "INSERT INTO event (
+                event_id, monotonic_index, event_type, payload,
+                source, emitter_id, emitter_type, run_id, trust_level,
+                causal_parent_id, board_id, card_id, timestamp
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                event_id,
+                index,
+                ev.event_type,
+                payload,
+                ev.provenance.source.as_str(),
+                ev.provenance.emitter_id,
+                ev.provenance.emitter_type.as_str(),
+                ev.provenance.run_id,
+                ev.provenance.trust_level.as_str(),
+                ev.causal_parent_id,
+                ev.board_id,
+                ev.card_id,
+                timestamp,
+            ],
+        )?;
+
+        projection::apply(
+            &tx,
+            &projection::Projected {
+                event_type: &ev.event_type,
+                payload: &ev.payload,
+                card_id: ev.card_id.as_deref(),
+                run_id: ev.provenance.run_id.as_deref(),
+                timestamp: &timestamp,
+            },
+        )?;
+
+        tx.commit()?;
+
+        Ok(Event {
+            event_id,
+            monotonic_index: index,
+            event_type: ev.event_type,
+            payload: ev.payload,
+            provenance: ev.provenance,
+            causal_parent_id: ev.causal_parent_id,
+            board_id: ev.board_id,
+            card_id: ev.card_id,
+            timestamp,
+        })
+    }
+
+    /// Every event, in order. The board history surface (doc 09 section 12) and
+    /// the audit exporter read this.
+    pub fn events(&self, board_id: Option<&str>) -> Result<Vec<Event>> {
+        let sql = match board_id {
+            Some(_) => {
+                "SELECT event_id, monotonic_index, event_type, payload, source, emitter_id,
+                        emitter_type, run_id, trust_level, causal_parent_id, board_id, card_id, timestamp
+                 FROM event WHERE board_id = ?1 ORDER BY monotonic_index ASC"
+            }
+            None => {
+                "SELECT event_id, monotonic_index, event_type, payload, source, emitter_id,
+                        emitter_type, run_id, trust_level, causal_parent_id, board_id, card_id, timestamp
+                 FROM event ORDER BY monotonic_index ASC"
+            }
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Event> {
+            let payload: String = r.get(3)?;
+            Ok(Event {
+                event_id: r.get(0)?,
+                monotonic_index: r.get(1)?,
+                event_type: r.get(2)?,
+                payload: serde_json::from_str(&payload).unwrap_or(serde_json::Value::Null),
+                provenance: Provenance {
+                    source: parse_source(&r.get::<_, String>(4)?),
+                    emitter_id: r.get(5)?,
+                    emitter_type: parse_emitter(&r.get::<_, String>(6)?),
+                    run_id: r.get(7)?,
+                    trust_level: parse_trust(&r.get::<_, String>(8)?),
+                },
+                causal_parent_id: r.get(9)?,
+                board_id: r.get(10)?,
+                card_id: r.get(11)?,
+                timestamp: r.get(12)?,
+            })
+        };
+        let rows = match board_id {
+            Some(b) => stmt.query_map(params![b], map)?.collect::<std::result::Result<Vec<_>, _>>()?,
+            None => stmt.query_map([], map)?.collect::<std::result::Result<Vec<_>, _>>()?,
+        };
+        Ok(rows)
+    }
+
+    pub fn event_count(&self) -> Result<i64> {
+        Ok(self.conn.query_row("SELECT COUNT(*) FROM event", [], |r| r.get(0))?)
+    }
+
+    /// Throw away every projection and fold the whole log back over them.
+    /// The debugging path for a bad card, and the M1 acceptance test.
+    pub fn rebuild_projections(&mut self) -> Result<u64> {
+        let tx = self.conn.transaction()?;
+        let n = projection::rebuild(&tx)?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    // ------------------------------------------------------------- ledger --
+
+    /// Reclaim runs whose worker died. Doc 10 section 6: an app crash mid
+    /// research leaves a claim that the next start reclaims or marks failed.
+    ///
+    /// Returns the run ids that were failed.
+    pub fn reclaim_stale_runs(&mut self, stale_after_seconds: i64) -> Result<Vec<String>> {
+        let tx = self.conn.transaction()?;
+        let ids: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM run
+                 WHERE status = 'running'
+                   AND (heartbeat_at IS NULL
+                        OR CAST((julianday('now') - julianday(heartbeat_at)) * 86400 AS INTEGER) > ?1)",
+            )?;
+            stmt.query_map(params![stale_after_seconds], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for id in &ids {
+            tx.execute(
+                "UPDATE run SET status = 'failed', ended_at = ?1, claimed_by = NULL WHERE id = ?2",
+                params![now_iso8601(), id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    pub fn board_exists(&self, board_id: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row("SELECT 1 FROM board WHERE id = ?1", params![board_id], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+}
+
+fn parse_source(s: &str) -> Source {
+    match s {
+        "test" => Source::Test,
+        "replay" => Source::Replay,
+        "healthcheck" => Source::Healthcheck,
+        "harness" => Source::Harness,
+        _ => Source::Live,
+    }
+}
+
+fn parse_emitter(s: &str) -> EmitterType {
+    match s {
+        "harness" => EmitterType::Harness,
+        "user" => EmitterType::User,
+        "retriever" => EmitterType::Retriever,
+        _ => EmitterType::Agent,
+    }
+}
+
+fn parse_trust(s: &str) -> TrustLevel {
+    match s {
+        "verified" => TrustLevel::Verified,
+        "degraded" => TrustLevel::Degraded,
+        _ => TrustLevel::Unverified,
+    }
+}
+
+/// ISO 8601 with offset, per doc 01 section 3.
+pub fn now_iso8601() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+pub fn new_id() -> String {
+    Ulid::generate().to_string()
 }

@@ -10,7 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["serde"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 hex = "0.4.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -19,4 +19,4 @@ sha2 = "0.11.0"
 tessera-schema = { version = "0.1.0", path = "../tessera-schema" }
 thiserror = "2.0.20"
 tracing = "0.1.44"
-ulid = { version = "3.0.0", features = ["serde"] }
+ulid = { version = "3.0.0", features = ["serde", "std"] }

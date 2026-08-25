@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/verifier.v1",
+  "title": "Verifier output",
+  "description": "Doc 07 section B5. Harness rules: every citation in the packet has a verdict; every block severity flag has a target; card_status is flagged when any flag has severity warn or block; checks_run lists every doctrine rule and a skipped rule must say why; in fast mode every verdict is unchecked and the only rules that run are the deterministic ones needing no passages.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_id",
+    "run_id",
+    "citation_verdicts",
+    "flags",
+    "card_confidence",
+    "card_status",
+    "checks_run"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "citation_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "n",
+          "verdict"
+        ],
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "verdict": {
+            "enum": [
+              "supported",
+              "weak",
+              "unsupported",
+              "unchecked"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/flag"
+      }
+    },
+    "block_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "action"
+        ],
+        "properties": {
+          "ref": {
+            "$ref": "tessera:entity/common.v1#/$defs/block_ref"
+          },
+          "action": {
+            "enum": [
+              "keep",
+              "hide",
+              "remove"
+            ]
+          },
+          "flag_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "card_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "card_status": {
+      "enum": [
+        "done",
+        "flagged"
+      ]
+    },
+    "checks_run": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "outcome"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "pass",
+              "fail",
+              "skipped"
+            ]
+          },
+          "detector": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Required when outcome is skipped."
+          },
+          "ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "skipped"
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            },
+            "then": {
+              "required": [
+                "reason"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "flag": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "severity",
+        "reason"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "tessera:entity/common.v1#/$defs/severity"
+        },
+        "target": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "answer_span",
+                "block",
+                "citation",
+                "whole_card"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            }
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/exercise.v1",
+  "title": "Exercise output",
+  "description": "Doc 08 section 5. Harness rules: answer_id is one of the options; source_card_id is in scope; the correct option's text appears, normalised, in the source card's answer, findings or visual labels; citation_ordinals exist on that card; distractors must not be true statements from any other card in scope.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "agent_id",
+    "run_id",
+    "title",
+    "items"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "title": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "prompt",
+          "options",
+          "answer_id",
+          "explanation",
+          "source_card_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "recall",
+              "apply",
+              "contrast",
+              "trace"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "text"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "answer_id": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "source_card_id": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          },
+          "citation_ordinals": {
+            "$ref": "tessera:entity/common.v1#/$defs/citation_ordinals"
+          },
+          "concept_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "tessera:entity/common.v1#/$defs/ulid"
+            }
+          }
+        }
+      }
+    }
+  }
+}

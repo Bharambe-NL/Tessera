@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:entity/structured-summary.v1",
+  "title": "Structured summary",
+  "description": "Doc 06 section A5. The Visualizer's only input from the Synthesizer, so it must contain the entities and values the visual will show, each with its citation. Doc 06 section B8 forbids the Visualizer from introducing any label not present here, which is what stops a visual from saying more than the prose. The Reader produces the same shape (doc 07 section A8) so a read card follows the same binding rules as an answered one.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "entities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "relations": {
+      "type": "array",
+      "description": "Relations forming a hierarchy select the tree type. Doc 06 section B8.",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "kind"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "kind": { "type": "string" }
+        }
+      }
+    },
+    "values": {
+      "type": "array",
+      "description": "Doc 01 section 3: the model never stores a number it computed, so a value carries an explicit unit and the citation that supports it. In deep and research a value without a citation is a schema violation, checked by the harness against the mode.",
+      "items": {
+        "type": "object",
+        "required": ["label", "value"],
+        "properties": {
+          "label": { "type": "string" },
+          "value": { "type": "string" },
+          "unit": { "type": "string" },
+          "citation": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["heading", "items"],
+        "properties": {
+          "heading": { "type": "string" },
+          "items": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

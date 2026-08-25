@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/router.v1",
+  "title": "Router packet",
+  "description": "Doc 03 section 4. Built by the harness. Amendment A1 applies: the effort budget is a field, the Router does not pick its own. The recent list is capped at ten and carries questions only, so the packet stays small.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "card_id",
+    "request",
+    "board",
+    "profile",
+    "doctrine"
+  ],
+  "properties": {
+    "card_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "text",
+        "kind"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "root",
+            "follow",
+            "branch",
+            "read_follow"
+          ]
+        },
+        "anchor_text": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "anchor_block_ref": {
+          "oneOf": [
+            {
+              "$ref": "tessera:entity/common.v1#/$defs/block_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_override": {
+          "oneOf": [
+            {
+              "$ref": "tessera:entity/common.v1#/$defs/depth"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_override": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "stage",
+                "alias"
+              ],
+              "properties": {
+                "stage": {
+                  "type": "string"
+                },
+                "alias": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "audience_override": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "board": {
+      "type": "object",
+      "required": [
+        "board_id",
+        "default_depth",
+        "doctrine_pack"
+      ],
+      "properties": {
+        "board_id": {
+          "$ref": "tessera:entity/common.v1#/$defs/ulid"
+        },
+        "title": {
+          "type": "string"
+        },
+        "default_depth": {
+          "$ref": "tessera:entity/common.v1#/$defs/depth"
+        },
+        "seed_label": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "enum": [
+            "explore",
+            "learn"
+          ]
+        },
+        "doctrine_pack": {
+          "type": "object",
+          "required": [
+            "code",
+            "version"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "parent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "card_id",
+            "question"
+          ],
+          "properties": {
+            "card_id": {
+              "$ref": "tessera:entity/common.v1#/$defs/ulid"
+            },
+            "question": {
+              "type": "string"
+            },
+            "answer": {
+              "type": "string"
+            },
+            "depth": {
+              "$ref": "tessera:entity/common.v1#/$defs/depth"
+            },
+            "confidence": {
+              "type": "number"
+            },
+            "answered_at": {
+              "$ref": "tessera:entity/common.v1#/$defs/timestamp"
+            },
+            "citation_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stale_citations": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "model_policy"
+      ],
+      "properties": {
+        "role": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_depth": {
+          "$ref": "tessera:entity/common.v1#/$defs/depth"
+        },
+        "model_policy": {
+          "type": "object"
+        }
+      }
+    },
+    "doctrine": {
+      "type": "object",
+      "properties": {
+        "audiences": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sensitivity_rules": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "depth_hints": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "tessera:entity/common.v1#/$defs/depth"
+          }
+        }
+      }
+    },
+    "recent": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "depth": {
+            "$ref": "tessera:entity/common.v1#/$defs/depth"
+          },
+          "at": {
+            "$ref": "tessera:entity/common.v1#/$defs/timestamp"
+          }
+        }
+      }
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "effort_budget": {
+      "$ref": "tessera:entity/common.v1#/$defs/effort_budget"
+    }
+  }
+}

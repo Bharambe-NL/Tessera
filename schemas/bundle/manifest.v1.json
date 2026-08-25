@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:bundle/manifest.v1",
+  "title": "Bundle manifest",
+  "description": "Doc 01 section 7. A bundle is a zip carrying one board and everything needed to audit it without re-retrieving. Import never overwrites: imported rows keep their ids, and because ids are ULIDs collisions do not occur. Attempts, profile context, model keys and folder paths are never included.",
+  "type": "object",
+  "required": ["bundle_id", "format_version", "exported_at", "board_id", "doctrine_pack", "includes"],
+  "additionalProperties": false,
+  "properties": {
+    "bundle_id": { "type": "string", "minLength": 1 },
+    "format_version": { "const": "1.0" },
+    "exported_at": { "$ref": "tessera:entity/common.v1#/$defs/timestamp" },
+    "exported_by": {
+      "type": "string",
+      "description": "Display name only. Doc 10 section 8: a bundle carries no other identity."
+    },
+    "board_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "board_title": { "type": "string" },
+
+    "doctrine_pack": {
+      "type": "object",
+      "required": ["code", "version"],
+      "properties": {
+        "code": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+
+    "includes": {
+      "type": "object",
+      "description": "Which files the archive carries. events.jsonl is on by default; export without history drops it and every Step.task_packet.",
+      "required": ["cards", "visuals", "citations", "sources", "passages"],
+      "properties": {
+        "cards": { "type": "boolean" },
+        "visuals": { "type": "boolean" },
+        "citations": { "type": "boolean" },
+        "flags": { "type": "boolean" },
+        "reviews": { "type": "boolean" },
+        "ink": { "type": "boolean" },
+        "notes": { "type": "boolean" },
+        "images": { "type": "boolean" },
+        "sources": { "type": "boolean" },
+        "passages": { "type": "boolean" },
+        "concepts": { "type": "boolean" },
+        "exercises": { "type": "boolean" },
+        "events": { "type": "boolean" }
+      }
+    },
+
+    "counts": {
+      "type": "object",
+      "description": "What the importer expects to find, so a truncated archive is caught before it is merged.",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+
+    "local_documents": {
+      "type": "array",
+      "description": "The checklist the exporter shows before export, so nothing leaves by accident. Local document passages carry the text but never the file path beyond the file name.",
+      "items": {
+        "type": "object",
+        "required": ["source_id", "file_name", "included"],
+        "properties": {
+          "source_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "file_name": { "type": "string" },
+          "included": { "type": "boolean" },
+          "text_withheld": {
+            "type": "boolean",
+            "description": "True for a folder marked sensitive: offsets only, and export of the text is blocked. Doc 01 open question 2."
+          }
+        }
+      }
+    },
+
+    "blobs": {
+      "type": "array",
+      "description": "Content addressed. Hashes are verified on import; no code is ever carried.",
+      "items": {
+        "type": "object",
+        "required": ["sha256", "bytes"],
+        "properties": {
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "mime": { "type": "string" }
+        }
+      }
+    }
+  }
+}
