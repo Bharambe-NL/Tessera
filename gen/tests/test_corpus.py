@@ -814,3 +814,71 @@ def test_metric_names_are_unique(corpus: Path, tmp_path: Path) -> None:
     names = [m.name for m in report.metrics]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     assert not duplicates, f"duplicated metric names: {duplicates}"
+
+
+def test_a_run_that_produced_nothing_scores_nothing(corpus: Path, tmp_path: Path) -> None:
+    """Records present, output absent: every gated metric must report n/a.
+
+    The empty-run guard above does not catch this shape. Here the runs exist,
+    so a denominator taken from ground truth is non-zero, while the numerator
+    comes from run fields nothing wrote. That combination produces 0.000 and
+    reads as a failing capability rather than an unexercised one, which is what
+    `stale_propagation` did with every memory flag turned on.
+    """
+    questions = [
+        json.loads(line)
+        for line in (corpus / "questions.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ][:40]
+
+    results = tmp_path / "run"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "q_id": q["q_id"],
+                    "text": q["text"],
+                    "domain": q.get("domain", ""),
+                    "depth_expected": q.get("depth_expected", "deep"),
+                    "required_facts": q.get("required_facts", []),
+                    "required_sources": q.get("required_sources", []),
+                    "forbidden_facts": q.get("forbidden_facts", []),
+                    "expected_visual": q.get("expected_visual", "none"),
+                    "expected_flags": q.get("expected_flags", []),
+                    "edge_case_ids": q.get("edge_case_ids", []),
+                    # Everything the pipeline would fill is absent.
+                    "ok": False,
+                    "answer": None,
+                    "citations": [],
+                    "flags": [],
+                    "prior_cards": [],
+                }
+            )
+            for q in questions
+        ),
+        encoding="utf-8",
+    )
+    (results / "manifest.json").write_text(
+        json.dumps(
+            {
+                "provider": "anthropic",
+                "snapshot": "T1",
+                "retrievers_enabled": True,
+                "memory_enabled": True,
+                "support_check_enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = harness.score(results, corpus)
+    scored_zero = [
+        m.name
+        for m in report.metrics
+        if m.value == 0.0 and m.name in harness.THRESHOLDS and m.name not in harness.LOWER_IS_BETTER
+    ]
+    assert not scored_zero, (
+        "these scored 0.000 against a threshold from a run that produced nothing, "
+        f"which reads as a failure rather than an absence: {scored_zero}"
+    )

@@ -1035,19 +1035,40 @@ def _memory_metrics(
             expected_ends += 1
             if ref in flagged:
                 reached += 1
+    # Gated on the verify_only run, not on memory. The chain is matched by
+    # `card_ref`, which only a re-verification run records, so with memory on
+    # and verify_only absent this counted two expected ends against zero
+    # reached and called it 0.000. That is a metric failing on the strength of
+    # a field nothing writes.
+    reverified = any(run.get("card_ref") for run in runs)
     metrics.append(
         _ratio("stale_propagation", reached, expected_ends)
-        if enabled
-        else Metric("stale_propagation", None, reached, expected_ends, pending)
+        if enabled and reverified
+        else Metric(
+            "stale_propagation",
+            None,
+            reached,
+            expected_ends,
+            (
+                pending
+                if not enabled
+                else "no run re-verified a prior card; needs the verify_only run"
+            ),
+        )
     )
 
     # ---- answer length with prior context ----------------------------------
     with_prior = [len(_answer_text(r)) for r in answered if r.get("prior_cards")]
     without = [len(_answer_text(r)) for r in answered if not r.get("prior_cards")]
-    if enabled and with_prior and without:
-        mean_with = sum(with_prior) / len(with_prior)
-        mean_without = sum(without) / len(without)
-        change = (mean_without - mean_with) / mean_without if mean_without else 0.0
+    mean_with = sum(with_prior) / len(with_prior) if with_prior else 0.0
+    mean_without = sum(without) / len(without) if without else 0.0
+    # A baseline of zero is not a baseline. Answers that report no sources are
+    # excluded from the length by `_answer_text`, so a run whose only
+    # prior-free questions were the empty corpus ones has nothing to compare
+    # against, and dividing by that zero produced a flat 0.000 that read as "no
+    # change" rather than "no comparison".
+    if enabled and with_prior and mean_without > 0:
+        change = (mean_without - mean_with) / mean_without
         metrics.append(
             Metric(
                 "answer_length_with_prior_context",
@@ -1065,7 +1086,11 @@ def _memory_metrics(
                 None,
                 len(with_prior),
                 len(without),
-                pending,
+                (
+                    pending
+                    if not enabled
+                    else "no answer without prior context had any length to compare against"
+                ),
             )
         )
 

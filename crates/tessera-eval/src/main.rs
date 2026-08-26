@@ -16,6 +16,8 @@
 //! verified with (doc 02 section 11). This binary produces the record; `gen
 //! score` turns it into metrics.
 
+mod boards;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use tessera_core::retrieval::RetrieverSet;
@@ -317,7 +319,10 @@ fn main() -> std::process::ExitCode {
                 // server". Until this was wired the eval measured a pipeline
                 // with no retrievers and reported n/a for the half of the
                 // product that had just been built.
-                if !args.no_retrievers && let Err(e) = configure_retrievers(&mut core, &args.corpus) {
+                if !args.no_retrievers
+                    && let Err(e) =
+                        configure_retrievers(&mut core, &args.corpus, &args.snapshot)
+                {
                     eprintln!("a worker could not index the corpus: {e}");
                     return;
                 }
@@ -560,7 +565,25 @@ fn run_one(
                     .and_then(|v| v["block_index"].as_array().cloned())
                     .unwrap_or_default(),
                 citations: card.map(|c| c.citations.clone()).unwrap_or_default(),
-                prior_cards: Vec::new(),
+                // Doc 05 section 8.5's `builds_on`, in the "board_id/card_id"
+                // shape doc 15's ground truth names a prior card by. This was
+                // hardcoded empty while the metric that reads it carried a
+                // threshold, so prior card recall reported 0.000 for a
+                // capability nothing had exercised.
+                prior_cards: card
+                    .map(|c| {
+                        c.builds_on
+                            .iter()
+                            .filter_map(|b| {
+                                Some(format!(
+                                    "{}/{}",
+                                    b["board_id"].as_str()?,
+                                    b["card_id"].as_str()?
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 plan: plan.clone(),
                 flags: card.map(|c| c.flags.clone()).unwrap_or_default(),
                 status: Some(o.status),
@@ -1024,7 +1047,7 @@ fn doctrine_must_exclude(pack_code: &str) -> Vec<String> {
 /// The Sensitive folder is excluded here rather than filtered later. Doc 05
 /// section 8.2 is exact: "Excluded folders are never opened." A folder that is
 /// read and then discarded has already been read.
-fn configure_retrievers(core: &mut Core, corpus: &Path) -> Result<(), String> {
+fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Result<(), String> {
     let profile_id = core.profile_id.clone();
     let exclude = doctrine_exclusions(core);
     let mut embedder: Option<Arc<dyn Embedder>> = None;
@@ -1091,6 +1114,30 @@ fn configure_retrievers(core: &mut Core, corpus: &Path) -> Result<(), String> {
     tessera_retrievers::boards::ensure_folder(core.store.conn(), &profile_id)
         .map_err(|e| format!("boards: {e}"))?;
     configured.push(("boards".to_string(), IndexedConfig::boards()));
+
+    // Doc 02 section 6's twenty prior boards. Without them the boards retriever
+    // searches an empty index, and doc 15's three gates measure nothing while
+    // reporting 0.000, which reads as a broken retriever rather than an
+    // unasked question.
+    let pack_id = core.active_pack_id().map_err(|e| format!("pack: {e}"))?;
+    let seeded = boards::load(corpus)?;
+    let report =
+        boards::seed(&mut core.store, &profile_id, &pack_id, &seeded, snapshot, embedder.as_deref())?;
+    if !report.eligibility_disagreements.is_empty() {
+        // Doc 15 section 3 is the rule and the corpus label is a second opinion.
+        // Where they differ one of them is wrong, and finding out which is worth
+        // more than quietly trusting either.
+        eprintln!(
+            "  boards: {} of {} cards disagree with the corpus on eligibility: {}",
+            report.eligibility_disagreements.len(),
+            report.cards,
+            report.eligibility_disagreements.join("; ")
+        );
+    }
+    println!(
+        "  boards: {} boards, {} cards, {} eligible to remember",
+        report.boards, report.cards, report.indexed
+    );
 
     core.retrievers = RetrieverSet { indexed: configured, embedder };
     Ok(())

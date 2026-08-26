@@ -164,10 +164,21 @@ impl Core {
         Ok(())
     }
 
+    /// The stored id of the active doctrine pack, writing it if it is not there.
+    ///
+    /// A caller building rows that reference a pack needs the id the store
+    /// knows, and `pack_code` is the pack's name rather than its row.
+    pub fn active_pack_id(&self) -> Result<String, CoreError> {
+        let pack = self.packs.get(&self.pack_code)?;
+        Ok(repo::ensure_pack(
+            &self.store,
+            &serde_json::to_value(pack).unwrap_or(Value::Null),
+        )?)
+    }
+
     /// Create a board on the active pack.
     pub fn create_board(&mut self, title: &str, depth: &str) -> Result<String, CoreError> {
-        let general = self.packs.get(&self.pack_code)?;
-        let pack_id = repo::ensure_pack(&self.store, &serde_json::to_value(general).unwrap_or(Value::Null))?;
+        let pack_id = self.active_pack_id()?;
         let profile_id = self.profile_id.clone();
         Ok(repo::create_board(
             &mut self.store,
