@@ -717,3 +717,100 @@ def test_every_memory_metric_reports_n_a_until_the_retriever_exists() -> None:
     for metric in metrics:
         assert metric.value is None, metric.name
         assert metric.verdict() == "n/a", metric.name
+
+
+# --------------------------------------------------------- the instrument --
+# BN-019 has fired four times: a metric with nothing to measure reporting zero
+# instead of n/a. Four occurrences is not a slip, it is the default failure
+# mode of writing a scorer before the thing it scores exists. These turn it
+# into a failing build.
+
+
+def _empty_report(tmp_path: Path, corpus: Path, manifest: dict) -> object:
+    results = tmp_path / "run"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text("", encoding="utf-8")
+    (results / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return harness.score(results, corpus)
+
+
+def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:
+    """A run with no data must report n/a everywhere, never a score.
+
+    This is the shape of every BN-019: a scorer that divides by a zero it
+    treats as one, or a metric hardcoded to a constant, produces a number that
+    reads as a verdict and measures nothing.
+    """
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+
+    for metric in report.metrics:
+        if metric.value is None:
+            continue
+        # A metric may legitimately report on an empty run only when its
+        # denominator is genuinely zero-meaning, like a count.
+        assert (
+            metric.denominator > 0 or metric.numerator > 0
+        ), f"{metric.name} reported {metric.value} from no data at all"
+
+
+def test_every_metric_that_cannot_measure_says_what_it_waits_for(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """An n/a with no reason is indistinguishable from a broken metric."""
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+
+    silent = [m.name for m in report.metrics if m.value is None and not m.note.strip()]
+    assert not silent, f"these report n/a and do not say why: {silent}"
+
+
+def test_no_metric_is_hardcoded_to_a_constant(corpus: Path, tmp_path: Path) -> None:
+    """A metric that ignores its input will keep saying n/a after it should not.
+
+    Six metrics were hardcoded to `None` before this test existed, so they
+    would have gone on reporting n/a after the capability they waited for had
+    landed. The check: turn every gate on and assert the answers change.
+    """
+    off = _empty_report(tmp_path / "off", corpus, {"provider": "mock", "snapshot": "T1"})
+    on = _empty_report(
+        tmp_path / "on",
+        corpus,
+        {
+            "provider": "anthropic",
+            "snapshot": "T3",
+            "retrievers_enabled": True,
+            "memory_enabled": True,
+            "support_check_enabled": True,
+            "reader_enabled": True,
+            "exercise_enabled": True,
+        },
+    )
+
+    by_name_off = {m.name: m for m in off.metrics}
+    by_name_on = {m.name: m for m in on.metrics}
+    assert set(by_name_off) == set(by_name_on), "the metric set depends on the flags"
+
+    # At least the ones the flags exist for must respond to them.
+    responsive = [
+        name
+        for name in by_name_off
+        if by_name_off[name].note != by_name_on[name].note
+        or by_name_off[name].value != by_name_on[name].value
+    ]
+    for gated in ("fact_recall_deep", "reader_structure_recovery_f1", "exercise_traceability"):
+        assert gated in responsive, f"{gated} ignores the flag it is supposed to wait on"
+
+
+def test_every_threshold_belongs_to_a_metric_that_exists(corpus: Path, tmp_path: Path) -> None:
+    """A threshold with no metric is a gate nobody is standing at."""
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+    produced = {m.name for m in report.metrics}
+    orphans = sorted(set(harness.THRESHOLDS) - produced)
+    assert not orphans, f"thresholds with no metric: {orphans}"
+
+
+def test_metric_names_are_unique(corpus: Path, tmp_path: Path) -> None:
+    """Two metrics with one name means one of them is never read."""
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+    names = [m.name for m in report.metrics]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    assert not duplicates, f"duplicated metric names: {duplicates}"

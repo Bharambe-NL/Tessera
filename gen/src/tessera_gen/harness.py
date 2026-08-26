@@ -36,6 +36,13 @@ THRESHOLDS: dict[str, float] = {
     "citation_accuracy_ledger": 0.95,
     "verifier_agreement": 0.90,
     "staleness_detection": 0.95,
+    # Doc 07 section B12: "flag false positive rate per rule under 0.10". It was
+    # computed without this, which made it a readout rather than a gate.
+    "flag_false_positive_rate": 0.10,
+    # Doc 02 section 10.2 names fact precision beside fact recall. Recall alone
+    # rewards an answer that states everything it saw; precision is what stops
+    # that being a strategy.
+    "fact_precision": 0.90,
     "reader_structure_recovery_f1": 0.80,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
     # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
@@ -83,6 +90,13 @@ class Metric:
     numerator: int = 0
     denominator: int = 0
     note: str = ""
+    #: Reported rather than gated, for this run only.
+    #:
+    #: Some numbers are real measurements of the wrong thing under a mock. The
+    #: alternative to saying so is a metric that fails every mock run forever,
+    #: which teaches everyone to ignore it, and an ignored gate is worse than
+    #: an absent one.
+    advisory: bool = False
 
     @property
     def reported(self) -> str:
@@ -93,7 +107,7 @@ class Metric:
     def verdict(self) -> str:
         if self.value is None:
             return "n/a"
-        if self.name in NO_THRESHOLD or self.name not in THRESHOLDS:
+        if self.advisory or self.name in NO_THRESHOLD or self.name not in THRESHOLDS:
             return "reported"
         threshold = THRESHOLDS[self.name]
         if self.name in LOWER_IS_BETTER:
@@ -107,7 +121,7 @@ class Metric:
             "reported": self.reported,
             "numerator": self.numerator,
             "denominator": self.denominator,
-            "threshold": THRESHOLDS.get(self.name),
+            "threshold": None if self.advisory else THRESHOLDS.get(self.name),
             "verdict": self.verdict(),
             "note": self.note,
         }
@@ -123,6 +137,9 @@ class Report:
     per_question: list[dict] = field(default_factory=list)
     per_edge_case: dict[str, dict] = field(default_factory=dict)
     per_provider: dict[str, dict] = field(default_factory=dict)
+    #: Doc 07 section B12's gate is per rule, so the breakdown is what makes
+    #: "the rule is disabled and listed" actionable.
+    per_rule_false_positives: dict[str, float] = field(default_factory=dict)
 
     @property
     def failed(self) -> list[Metric]:
@@ -138,6 +155,7 @@ class Report:
             "metrics": [m.to_json() for m in self.metrics],
             "per_edge_case": self.per_edge_case,
             "per_provider": self.per_provider,
+            "per_rule_false_positives": self.per_rule_false_positives,
             "failed": [m.name for m in self.failed],
         }
 
@@ -282,6 +300,47 @@ def score(results: Path, corpus: Path) -> Report:
                     "retrievers arrive at M6; nothing was available to recall",
                 )
             )
+
+    # ----------------------------------------------------- fact precision ---
+    # Doc 02 section 10.2, named there and never implemented until now.
+    #
+    # Of the planted values an answer states, how many were the ones asked for.
+    # Recall on its own rewards an answer that repeats everything it retrieved,
+    # and on a corpus where one label carries several values that is a strategy
+    # rather than an accident. Precision is what makes it cost something.
+    #
+    # Scored against planted facts only. A number the corpus never planted is
+    # not evidence of imprecision, it is a number this harness knows nothing
+    # about, and counting it would measure the ledger's coverage.
+    wanted = wrong = 0
+    for run in answered:
+        text = _answer_text(run)
+        required = set(run.get("required_facts") or [])
+        forbidden = set(run.get("forbidden_facts") or [])
+        for fact_id in required | forbidden:
+            fact = facts.get(fact_id)
+            if fact is None or not matchers.matches(fact["kind"], fact["value"], text):
+                continue
+            if fact_id in required:
+                wanted += 1
+            else:
+                wrong += 1
+    report.metrics.append(
+        _ratio(
+            "fact_precision",
+            wanted,
+            wanted + wrong,
+            "planted values stated that were the ones asked for",
+        )
+        if retrievers
+        else Metric(
+            "fact_precision",
+            None,
+            wanted,
+            wanted + wrong,
+            "retrievers arrive at M6; nothing was available to state",
+        )
+    )
 
     # -------------------------------------------------- forbidden facts ----
     # Doc 02 section 10.3: target zero. A forbidden value that reaches an
@@ -511,42 +570,177 @@ def score(results: Path, corpus: Path) -> Report:
 
     # ------------------------------------------------- flags and staleness --
     expected_hits = expected_total = 0
-    unexpected = 0
+    # Per rule, because doc 07 section B12 states the gate per rule: "flag false
+    # positive rate per rule under 0.10, or the rule is disabled and listed".
+    # Summed across rules it was flags per card, which can exceed one and so was
+    # not a rate at all; a threshold on it meant nothing.
+    fired: dict[str, int] = {}
+    wrongly: dict[str, int] = {}
     for run in answered:
         raised = {f.get("rule_id") for f in run.get("flags", [])}
+        expected = set(run.get("expected_flags", []))
         for rule in run.get("expected_flags", []):
             expected_total += 1
             if rule in raised:
                 expected_hits += 1
-        unexpected += len(raised - set(run.get("expected_flags", [])) - _EXPECTED_EVERYWHERE)
+        for rule in raised - _EXPECTED_EVERYWHERE:
+            if rule is None:
+                continue
+            fired[rule] = fired.get(rule, 0) + 1
+            if rule not in expected:
+                wrongly[rule] = wrongly.get(rule, 0) + 1
+
     report.metrics.append(_ratio("flag_recall", expected_hits, expected_total))
+
+    # The worst rule is the metric, because one rule crying wolf is enough to
+    # make the Flags queue something a user learns to ignore, and an average
+    # across rules would hide it behind the well behaved ones.
+    per_rule = {rule: wrongly.get(rule, 0) / count for rule, count in fired.items() if count}
+    report.per_rule_false_positives = dict(
+        sorted(per_rule.items(), key=lambda kv: kv[1], reverse=True)
+    )
+    if per_rule:
+        worst_rule, worst_rate = max(per_rule.items(), key=lambda kv: kv[1])
+        offenders = [r for r, v in per_rule.items() if v > THRESHOLDS["flag_false_positive_rate"]]
+        # Under a mock this measures the answer writer, not the Verifier. The
+        # grounded mock concatenates whole passages, so it trips length and
+        # citation rules by construction, and failing the build on that would
+        # be reading a real number as a verdict on the wrong subject.
+        mocked = manifest.get("provider") == "mock"
+        report.metrics.append(
+            Metric(
+                "flag_false_positive_rate",
+                worst_rate,
+                wrongly.get(worst_rule, 0),
+                fired[worst_rule],
+                f"worst rule `{worst_rule}`"
+                + (f"; over threshold: {', '.join(sorted(offenders))}" if offenders else "")
+                + (
+                    "; advisory under a mock, which writes crudely and trips these by "
+                    "construction"
+                    if mocked
+                    else ""
+                ),
+                advisory=mocked,
+            )
+        )
+    else:
+        report.metrics.append(
+            Metric(
+                "flag_false_positive_rate",
+                None,
+                0,
+                0,
+                "no rule fired outside the always on notices",
+            )
+        )
+
+    # ------------------------------------------------------- staleness -----
+    # Doc 02 section 10.2, measured at T3 against cards written at T1: a
+    # citation whose value has since been superseded has to be marked stale.
+    #
+    # The denominator is citations that actually point at a superseded fact, so
+    # a run at T1, where nothing is stale yet, reports n/a rather than a perfect
+    # score for having found none.
+    stale_expected = stale_found = 0
+    for run in runs:
+        superseded = {
+            fact_id
+            for fact_id in (run.get("required_facts") or [])
+            if (facts.get(fact_id) or {}).get("truth") == "superseded"
+        }
+        if not superseded:
+            continue
+        stale_expected += 1
+        marked = any(
+            (c or {}).get("stale") for c in run.get("citations", []) if isinstance(c, dict)
+        ) or any(
+            (f or {}).get("rule_id") == "stale_source"
+            for f in run.get("flags", [])
+            if isinstance(f, dict)
+        )
+        stale_found += int(marked)
     report.metrics.append(
-        _ratio(
-            "flag_false_positive_rate",
-            unexpected,
-            max(len(answered), 1),
-            "flags raised that no question expected, excluding the always on notices",
+        _ratio("staleness_detection", stale_found, stale_expected)
+        if stale_expected
+        else Metric(
+            "staleness_detection",
+            None,
+            0,
+            0,
+            "no citation in this run points at a superseded value; run the T3 snapshot",
         )
     )
 
+    # ---------------------------------------------- source hierarchy --------
+    # Doc 02 section 10.2. The corpus plants a web page and a regulation that
+    # disagree, and the doctrine hierarchy says the regulation wins. Compliance
+    # is whether the answer took the higher ranked value.
+    #
+    # Scored only on the questions where a disagreement was planted, because
+    # everywhere else there is no hierarchy to comply with and counting them
+    # would dilute the one thing this measures into noise.
+    contested = complied = 0
+    for run in answered:
+        if "contradiction_across_classes" not in (run.get("edge_case_ids") or []):
+            continue
+        text = _answer_text(run)
+        required = run.get("required_facts") or []
+        forbidden = run.get("forbidden_facts") or []
+        took_ranked = any(
+            matchers.matches(facts[f]["kind"], facts[f]["value"], text)
+            for f in required
+            if f in facts
+        )
+        took_lower = any(
+            matchers.matches(facts[f]["kind"], facts[f]["value"], text)
+            for f in forbidden
+            if f in facts
+        )
+        contested += 1
+        complied += int(took_ranked and not took_lower)
     report.metrics.append(
-        Metric(
-            "staleness_detection",
+        _ratio(
+            "source_hierarchy_compliance",
+            complied,
+            contested,
+            "answers that took the higher ranked value where two classes disagreed",
+        )
+        if contested
+        else Metric(
+            "source_hierarchy_compliance",
             None,
-            note="measured at T3 against a board written at T1; needs the retrievers from M6",
+            0,
+            0,
+            "no question in this run had two source classes disagreeing",
+        )
+    )
+
+    # ------------------------------------------------- Reader and Exercise --
+    # Gated on the manifest rather than hardcoded, so the day the Reader lands
+    # the number appears instead of the note staying put.
+    reader = bool(manifest.get("reader_enabled", False))
+    exercise = bool(manifest.get("exercise_enabled", False))
+    report.metrics.append(
+        _ratio("reader_structure_recovery_f1", 0, 0)
+        if reader
+        else Metric(
+            "reader_structure_recovery_f1",
+            None,
+            0,
+            0,
+            "the Reader arrives at M10; set reader_enabled when it does",
         )
     )
     report.metrics.append(
-        Metric("reader_structure_recovery_f1", None, note="the Reader arrives at M10")
-    )
-    report.metrics.append(
-        Metric("exercise_traceability", None, note="the Exercise agent arrives at M10")
-    )
-    report.metrics.append(
-        Metric(
-            "source_hierarchy_compliance",
+        _ratio("exercise_traceability", 0, 0)
+        if exercise
+        else Metric(
+            "exercise_traceability",
             None,
-            note="needs retrieval across two source classes; M6",
+            0,
+            0,
+            "the Exercise agent arrives at M10; set exercise_enabled when it does",
         )
     )
 
@@ -558,7 +752,11 @@ def score(results: Path, corpus: Path) -> Report:
 
     report.metrics.append(
         Metric(
-            "cards_produced", len(answered) / len(runs) if runs else None, len(answered), len(runs)
+            "cards_produced",
+            len(answered) / len(runs) if runs else None,
+            len(answered),
+            len(runs),
+            "" if runs else "the run recorded no questions",
         )
     )
     report.metrics.append(
@@ -576,6 +774,7 @@ def score(results: Path, corpus: Path) -> Report:
             float(latencies[int(len(latencies) * 0.95) - 1]) if latencies else None,
             0,
             len(latencies),
+            "" if latencies else "the run recorded no timings",
         )
     )
 

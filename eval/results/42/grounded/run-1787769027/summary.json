@@ -63,6 +63,16 @@
       "verdict": "fail"
     },
     {
+      "denominator": 207,
+      "name": "fact_precision",
+      "note": "planted values stated that were the ones asked for",
+      "numerator": 207,
+      "reported": "1.000",
+      "threshold": 0.9,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
       "denominator": 400,
       "name": "forbidden_fact_rate",
       "note": "share of answers stating a value planted as wrong",
@@ -203,19 +213,19 @@
       "verdict": "reported"
     },
     {
-      "denominator": 400,
+      "denominator": 353,
       "name": "flag_false_positive_rate",
-      "note": "flags raised that no question expected, excluding the always on notices",
-      "numerator": 682,
-      "reported": "1.705",
+      "note": "worst rule `unsupported_claim`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory under a mock, which writes crudely and trips these by construction",
+      "numerator": 353,
+      "reported": "1.000",
       "threshold": null,
-      "value": 1.705,
+      "value": 1.0,
       "verdict": "reported"
     },
     {
       "denominator": 0,
       "name": "staleness_detection",
-      "note": "measured at T3 against a board written at T1; needs the retrievers from M6",
+      "note": "no citation in this run points at a superseded value; run the T3 snapshot",
       "numerator": 0,
       "reported": "n/a",
       "threshold": 0.95,
@@ -223,9 +233,19 @@
       "verdict": "n/a"
     },
     {
+      "denominator": 8,
+      "name": "source_hierarchy_compliance",
+      "note": "answers that took the higher ranked value where two classes disagreed",
+      "numerator": 5,
+      "reported": "0.625",
+      "threshold": null,
+      "value": 0.625,
+      "verdict": "reported"
+    },
+    {
       "denominator": 0,
       "name": "reader_structure_recovery_f1",
-      "note": "the Reader arrives at M10",
+      "note": "the Reader arrives at M10; set reader_enabled when it does",
       "numerator": 0,
       "reported": "n/a",
       "threshold": 0.8,
@@ -235,17 +255,7 @@
     {
       "denominator": 0,
       "name": "exercise_traceability",
-      "note": "the Exercise agent arrives at M10",
-      "numerator": 0,
-      "reported": "n/a",
-      "threshold": null,
-      "value": null,
-      "verdict": "n/a"
-    },
-    {
-      "denominator": 0,
-      "name": "source_hierarchy_compliance",
-      "note": "needs retrieval across two source classes; M6",
+      "note": "the Exercise agent arrives at M10; set exercise_enabled when it does",
       "numerator": 0,
       "reported": "n/a",
       "threshold": null,
@@ -449,6 +459,13 @@
       "recalled": 207,
       "required": 380
     }
+  },
+  "per_rule_false_positives": {
+    "advice_request": 0.0,
+    "injection_suspected": 1.0,
+    "length_and_format": 1.0,
+    "numeric_without_citation": 1.0,
+    "unsupported_claim": 1.0
   },
   "policy": "grounded",
   "snapshot": "T1"
