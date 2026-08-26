@@ -18,6 +18,7 @@ tessera-bundle = { version = "0.1.0", path = "../tessera-bundle" }
 tessera-doctrine = { version = "0.1.0", path = "../tessera-doctrine" }
 tessera-harness = { version = "0.1.0", path = "../tessera-harness" }
 tessera-providers = { version = "0.1.0", path = "../tessera-providers" }
+tessera-retrievers = { version = "0.1.0", path = "../tessera-retrievers" }
 tessera-schema = { version = "0.1.0", path = "../tessera-schema" }
 tessera-store = { version = "0.1.0", path = "../tessera-store" }
 thiserror = "2.0.20"

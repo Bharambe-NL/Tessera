@@ -12,6 +12,7 @@
 pub mod bridge;
 pub mod core;
 pub mod pipeline;
+pub mod retrieval;
 pub mod rpc;
 
 pub use bridge::{Notification, ToastLevel, translate, translate_all};

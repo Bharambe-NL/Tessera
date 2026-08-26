@@ -37,6 +37,11 @@ pub struct RunContext<'a> {
     pub policy: ResolvedPolicy,
     pub profile_id: String,
     pub source: Source,
+    /// Doc 10 section 6's limit on retriever assignments in flight.
+    pub ledger: &'a tessera_harness::Ledger,
+    /// What this profile can retrieve from. Empty until a folder is watched,
+    /// which is why a fresh profile answers honestly rather than emptily.
+    pub retrievers: &'a crate::retrieval::RetrieverSet,
 }
 
 pub struct CardOutcome {
@@ -199,10 +204,58 @@ pub async fn run_card(
     };
 
     // -------------------------------------------------------- Retrievers --
-    // M6. The plan says where passages would come from; nothing fans out yet,
-    // so a planned card reaches the Synthesizer with none and doc 06 section
-    // A10 turns that into an honest "no sources" card rather than a guess.
-    let passages: Vec<Value> = Vec::new();
+    // Doc 05 section 2. Fast never retrieves: doc 06 section A8 says a fast
+    // card is written from model knowledge and marked unverified, and going to
+    // the corpus for it would be a different product.
+    //
+    // With no retriever configured this returns nothing and doc 06 section A10
+    // turns that into an honest "no sources" card, which is what a profile
+    // that has not been pointed at a folder yet deserves.
+    let passages: Vec<Value> = if mode == "fast" {
+        Vec::new()
+    } else {
+        let doctrine = json!({
+            "trust_ranks": ctx.pack.source_hierarchy.iter().map(|r| json!({
+                "class": r.class,
+                "issuer_pattern": r.issuer_pattern,
+                "rank": r.trust_rank,
+            })).collect::<Vec<_>>(),
+            "denied_domains": [],
+        });
+        let must_exclude = ctx.pack.must_exclude();
+        let profile_id = ctx.profile_id.clone();
+        let fan = crate::retrieval::run(
+            store,
+            ctx.ledger,
+            ctx.retrievers,
+            &profile_id,
+            tessera_store::repo::RetrievalRef {
+                run_id: &run_id,
+                board_id,
+                card_id,
+                retriever_id: "",
+                sq_id: None,
+            },
+            plan.as_ref(),
+            question,
+            &doctrine,
+            &must_exclude,
+        );
+        for caveat in &fan.caveats {
+            // Doc 05 section 10: the card says a category was excluded and
+            // never which item, because the item is the thing being protected.
+            store.append(
+                tessera_store::NewEvent::new(
+                    "context.stale_noted.v1",
+                    json!({ "card_id": card_id, "note": format!("excluded: {caveat}") }),
+                    tessera_store::Provenance::harness("retrieval", Some(run_id.clone())),
+                )
+                .on_board(board_id)
+                .on_card(card_id),
+            )?;
+        }
+        fan.passages
+    };
 
     // ------------------------------------------------------- Synthesizer --
     let synth_packet = build_synth_packet(&routed, plan.as_ref(), &mode, question, &passages, ctx);

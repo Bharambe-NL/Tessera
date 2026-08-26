@@ -583,3 +583,133 @@ fn no_enabled_retriever_fails_the_card_with_a_pointer_at_the_fix() {
     );
     assert!(error.contains("Profile"), "the failure points at the fix: {error}");
 }
+
+#[test]
+fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
+    // The point of M6. Every deep card before this was honest and empty:
+    // pipeline.rs handed the Synthesizer an empty vector and doc 06 section
+    // A10 turned it into "no sources found". This is the first one that is not.
+    use tessera_retrievers::{IndexedConfig, chunking::Chunk, chunking::ChunkLocation, index};
+
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output()))
+            .on("visualize", MockResponse::Json(visual_output())),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    // A watched folder with one document in it.
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO watched_folder (id, profile_id, root, label, created_at)
+             VALUES ('reg', ?1, 'corpus/regulatory', 'Central Authority for Prudential Oversight', 'now')",
+            rusqlite::params![core.profile_id],
+        )
+        .expect("folder");
+    index::write_document(
+        core.store.conn(),
+        "reg",
+        "reg-car3-v1.md",
+        &[Chunk::new(
+            "The capital conservation buffer for a significant institution is 2.5 %.",
+            ChunkLocation::ArticleParagraph { article: "12".into(), paragraph: 1 },
+            0,
+        )],
+        None,
+        "now",
+    )
+    .expect("index");
+
+    core.retrievers = tessera_core::retrieval::RetrieverSet {
+        indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+        embedder: None,
+    };
+
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(&board_id, "what is the capital conservation buffer?", Some("deep"))
+        .expect("the card runs");
+
+    // The passages reached the Synthesizer's packet, which is the contract
+    // doc 06 section A4 describes.
+    let synth = provider
+        .calls()
+        .into_iter()
+        .find(|c| c.stage == "synthesize")
+        .expect("the synthesizer ran");
+    assert!(
+        synth.prompt.contains("capital conservation buffer"),
+        "the passage never reached the prompt"
+    );
+
+    // And the retrieval is in the audit trail, with a real Source behind it.
+    let events: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(events.contains(&"retrieval.started.v1".to_string()), "{events:?}");
+    assert!(events.contains(&"retrieval.completed.v1".to_string()), "{events:?}");
+    assert!(events.contains(&"source.created.v1".to_string()), "{events:?}");
+
+    let sources: i64 = core
+        .store
+        .conn()
+        .query_row("SELECT count(*) FROM source", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(sources, 1, "the retrieval did not persist a source");
+}
+
+#[test]
+fn a_fast_card_never_retrieves() {
+    // Doc 06 section A8: a fast card is written from model knowledge and
+    // marked unverified. Going to the corpus for it would be a different
+    // product, and would also cost the user a retrieval they did not ask for.
+    use tessera_retrievers::{IndexedConfig, chunking::Chunk, chunking::ChunkLocation, index};
+
+    let provider = mock();
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO watched_folder (id, profile_id, root, label, created_at)
+             VALUES ('reg', ?1, 'r', 'Authority', 'now')",
+            rusqlite::params![core.profile_id],
+        )
+        .expect("folder");
+    index::write_document(
+        core.store.conn(),
+        "reg",
+        "doc.md",
+        &[Chunk::new("The buffer is 2.5 %.", ChunkLocation::Whole, 0)],
+        None,
+        "now",
+    )
+    .expect("index");
+    core.retrievers = tessera_core::retrieval::RetrieverSet {
+        indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+        embedder: None,
+    };
+
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what is the buffer?", Some("fast")).expect("runs");
+
+    let events: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(
+        !events.contains(&"retrieval.started.v1".to_string()),
+        "a fast card went to the corpus: {events:?}"
+    );
+}

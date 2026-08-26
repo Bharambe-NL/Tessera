@@ -5940,6 +5940,7 @@ dependencies = [
  "tessera-doctrine",
  "tessera-harness",
  "tessera-providers",
+ "tessera-retrievers",
  "tessera-schema",
  "tessera-store",
  "thiserror 2.0.20",

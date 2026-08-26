@@ -33,6 +33,13 @@ pub struct Core {
     /// board pins a pack version, and doc 02 section 10.1 runs evaluation on
     /// `finance-eu-synthetic` rather than on whatever ships as the default.
     pub pack_code: String,
+    /// Doc 10 section 6's work ledger. One per profile, because the limits it
+    /// holds are per profile: three runs, six retriever assignments, one
+    /// Verifier per board.
+    pub ledger: tessera_harness::Ledger,
+    /// What this profile can retrieve from. Empty until a folder is watched,
+    /// so a fresh profile answers "no sources" honestly rather than emptily.
+    pub retrievers: crate::retrieval::RetrieverSet,
     /// Agent work is async; the RPC surface is not. The core owns the runtime so
     /// a handler can block on a card run without the shell needing to know.
     runtime: tokio::runtime::Runtime,
@@ -100,6 +107,8 @@ impl Core {
             profile_id,
             source: Source::Live,
             pack_code: "general".to_string(),
+            ledger: tessera_harness::Ledger::new(),
+            retrievers: crate::retrieval::RetrieverSet::default(),
             runtime,
         })
     }
@@ -229,6 +238,8 @@ impl Core {
             policy,
             profile_id: self.profile_id.clone(),
             source: self.source,
+            ledger: &self.ledger,
+            retrievers: &self.retrievers,
         };
 
         // The runtime is owned by the core, so a handler blocks here rather than
