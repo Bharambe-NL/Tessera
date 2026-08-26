@@ -5970,6 +5970,7 @@ dependencies = [
  "tessera-core",
  "tessera-doctrine",
  "tessera-providers",
+ "tessera-retrievers",
  "tessera-schema",
  "tessera-store",
 ]

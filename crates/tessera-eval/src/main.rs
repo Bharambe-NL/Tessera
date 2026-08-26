@@ -17,6 +17,10 @@
 //! score` turns it into metrics.
 
 use std::io::Write;
+use tessera_core::retrieval::RetrieverSet;
+use tessera_providers::CompletionRequest;
+use tessera_retrievers::IndexedConfig;
+use tessera_retrievers::embed::Embedder;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -58,6 +62,18 @@ struct Args {
     /// A label for the results directory, naming the model policy under test.
     #[arg(long, default_value = "mock")]
     policy: String,
+
+    /// Leave the retrievers unconfigured, which is what every run before M6
+    /// did. Kept so a run can be compared against those, and so a failure in
+    /// indexing can be isolated from a failure in retrieval.
+    #[arg(long)]
+    no_retrievers: bool,
+
+    /// With `--mock`, answer from the retrieved passages rather than returning
+    /// garbage. Measures retrieval end to end for nothing; measures nothing
+    /// about model quality.
+    #[arg(long)]
+    grounded: bool,
 
     /// Run the breadth set (questions_breadth.jsonl) instead of the corpus
     /// question set. BN-036: these are pack independent questions with stakes
@@ -290,6 +306,17 @@ fn main() -> std::process::ExitCode {
                     return;
                 }
 
+                // Doc 02 section 10.1 fixes the roots: "local folder retriever
+                // at `corpus/internal`, regulatory retriever at
+                // `corpus/regulatory`, web retriever at the local static
+                // server". Until this was wired the eval measured a pipeline
+                // with no retrievers and reported n/a for the half of the
+                // product that had just been built.
+                if !args.no_retrievers && let Err(e) = configure_retrievers(&mut core, &args.corpus) {
+                    eprintln!("a worker could not index the corpus: {e}");
+                    return;
+                }
+
                 let mut current = String::new();
                 let mut local_failures = 0usize;
 
@@ -518,9 +545,189 @@ impl Plan {
     }
 }
 
+/// A mock that answers from the passages it was handed.
+///
+/// The garbage mock proves the pipeline fails closed, which is worth proving
+/// and is all it proves: no card is produced, so nothing downstream of routing
+/// is exercised and every metric reports n/a. That left the whole retrieval
+/// half of the product measurable only by spending money.
+///
+/// This one reads the passages out of the prompt and writes an answer that
+/// quotes them. It invents nothing: if retrieval found the fact, the answer
+/// states it, and if it did not, the answer says so. So `fact_recall` measured
+/// this way is a measurement of retrieval rather than of a model, which is
+/// exactly the thing that could not be measured before, and it costs nothing.
+///
+/// What it cannot measure is anything about model quality: phrasing, judgment,
+/// conflict resolution, or whether a real model would have cited the passage it
+/// was given. Those need a real provider and a real sweep.
+fn grounded_mock() -> Arc<dyn ModelProvider> {
+    let provider = MockProvider::new()
+        .with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(routed()),
+                "plan" => MockResponse::Json(planned(request)),
+                "synthesize" => MockResponse::Json(synthesized(request)),
+                "visualize" => MockResponse::Json(visualised(request)),
+                // Anything else is not scripted, and failing closed is the
+                // right default for a stage nobody thought about.
+                _ => MockResponse::Garbage,
+            }
+        })));
+    Arc::new(provider)
+}
+
+fn routed() -> Value {
+    json!({
+        "classification": {
+            "question_type": "factual",
+            "regulatory_stakes": true,
+            "audience_id": null,
+            "language": "en",
+            "needs_current_information": false,
+            "needs_internal_documents": true,
+            "needs_structured_data": false,
+            "entities": [],
+            "is_follow_up_of_context": false
+        }
+    })
+}
+
+fn planned(request: &CompletionRequest) -> Value {
+    // One sub-question, the request itself. The Planner's own deterministic
+    // half assigns the retrievers, so the plan only has to be well formed.
+    json!({
+        "sub_questions": [{
+            "sq_id": "sq-1",
+            "text": first_line(&prompt_of(request)),
+            "purpose": "answer the question as asked",
+            "priority": 1
+        }],
+        "scope_limits": []
+    })
+}
+
+/// Pull the passages back out of the prompt the Synthesizer built.
+///
+/// `prompts::passage_block` fences each one as `<passage n="1" ...>text</passage>`,
+/// and that fence exists so the model can tell quoted data from instruction. It
+/// serves here for the same reason: it is the one part of the prompt whose
+/// shape is guaranteed.
+fn passages_in(prompt: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut rest = prompt;
+    while let Some(start) = rest.find("<passage n=\"") {
+        let after = &rest[start + "<passage n=\"".len()..];
+        let Some(quote) = after.find('"') else { break };
+        let Ok(ordinal) = after[..quote].parse::<usize>() else {
+            rest = after;
+            continue;
+        };
+        let Some(open_end) = after.find('>') else { break };
+        let body = &after[open_end + 1..];
+        let Some(close) = body.find("</passage>") else { break };
+        out.push((ordinal, body[..close].trim().to_string()));
+        rest = &body[close..];
+    }
+    out
+}
+
+fn synthesized(request: &CompletionRequest) -> Value {
+    let prompt = prompt_of(request);
+    let passages = passages_in(&prompt);
+
+    if passages.is_empty() {
+        // Doc 06 section A10. The honest answer, and the same one the real
+        // Synthesizer gives, so the no-sources path stays measured.
+        return json!({
+            "answer": "No sources were found for this question.",
+            "findings": [],
+            "citations": [],
+            "structured_summary": { "values": [], "steps": [], "groups": [], "relations": [] },
+            "scope_statement": "No sources found for this question.",
+            "confidence": 0.0,
+            "caveats": []
+        });
+    }
+
+    // Quote each passage behind its own marker. This is what makes the answer
+    // carry whatever retrieval found: if the figure is in a passage it is in
+    // the answer, and if it is not, no amount of phrasing puts it there.
+    let mut answer = String::new();
+    let mut citations = Vec::new();
+    let mut findings = Vec::new();
+    for (ordinal, text) in passages.iter().take(6) {
+        let sentence = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        answer.push_str(&sentence);
+        answer.push_str(&format!(" [{ordinal}]"));
+        answer.push(' ');
+        citations.push(json!({ "ordinal": ordinal, "binding": "answer" }));
+        if findings.len() < 3 {
+            findings.push(json!({
+                "text": sentence.chars().take(200).collect::<String>(),
+                "citations": [ordinal]
+            }));
+        }
+    }
+
+    json!({
+        "answer": answer.trim(),
+        "findings": findings,
+        "citations": citations,
+        "structured_summary": {
+            "values": [],
+            "steps": [],
+            "groups": [],
+            "relations": []
+        },
+        "scope_statement": "Answered from the retrieved passages.",
+        "confidence": 0.6,
+        "caveats": []
+    })
+}
+
+fn visualised(_request: &CompletionRequest) -> Value {
+    // An empty summary declines a visual, which doc 06 section B10 allows and
+    // which keeps the visual metrics honest: this mock has no structure to
+    // render, so claiming one would be inventing a number.
+    json!({
+        "declined": true,
+        "reason": "no_structure",
+        "visual": null
+    })
+}
+
+fn prompt_of(request: &CompletionRequest) -> String {
+    let mut text = request.system.clone().unwrap_or_default();
+    for message in &request.messages {
+        for block in &message.content {
+            if let tessera_providers::ContentBlock::Text { text: t } = block {
+                text.push('\n');
+                text.push_str(t);
+            }
+        }
+    }
+    text
+}
+
+fn first_line(prompt: &str) -> String {
+    prompt
+        .lines()
+        .find(|l| l.starts_with("Request: "))
+        .map(|l| l.trim_start_matches("Request: ").to_string())
+        .unwrap_or_else(|| "the question".to_string())
+}
+
 fn build_plan(args: &Args, questions: &[Question], total: usize) -> Result<Plan, String> {
     if args.mock {
-        let mock: Arc<dyn ModelProvider> = Arc::new(MockProvider::new().with_default(MockResponse::Garbage));
+        // Garbage by default, which proves the pipeline fails closed at scale.
+        // `--grounded` swaps in a mock that answers from its passages, which is
+        // the only free way to measure whether retrieval found anything.
+        let mock: Arc<dyn ModelProvider> = if args.grounded {
+            grounded_mock()
+        } else {
+            Arc::new(MockProvider::new().with_default(MockResponse::Garbage))
+        };
         let leg = |provider: Arc<dyn ModelProvider>| Leg {
             name: "mock".to_string(),
             provider,
@@ -672,6 +879,101 @@ fn doctrine_must_exclude(pack_code: &str) -> Vec<String> {
     out
 }
 
+/// Point this core's retrievers at the synthetic corpus.
+///
+/// Doc 02 section 10.1: "points the retrievers at the synthetic corpus (local
+/// folder retriever at `corpus/internal`, regulatory retriever at
+/// `corpus/regulatory`, web retriever at the local static server)".
+///
+/// The web tree is indexed from disk rather than fetched from `gen serve`,
+/// because what the gate measures is extraction and ranking and doc 02 section
+/// 7 says as much: "the synthetic web is served locally, so this measures
+/// extraction and ranking". Fetching localhost to read files that are already
+/// on disk would add a moving part and measure the same thing.
+///
+/// The Sensitive folder is excluded here rather than filtered later. Doc 05
+/// section 8.2 is exact: "Excluded folders are never opened." A folder that is
+/// read and then discarded has already been read.
+fn configure_retrievers(core: &mut Core, corpus: &Path) -> Result<(), String> {
+    let profile_id = core.profile_id.clone();
+    let exclude = doctrine_exclusions(core);
+    let mut embedder: Option<Arc<dyn Embedder>> = None;
+
+    // The embedder is optional and its absence is reported rather than fatal.
+    // A machine without the model can still measure the lexical half, which is
+    // a real number, and failing the whole sweep over a download would be a
+    // poor trade.
+    match tessera_retrievers::embed::LocalEmbedder::multilingual() {
+        Ok(e) => embedder = Some(Arc::new(e)),
+        Err(e) => eprintln!("no embedding model ({e}); indexing the lexical half only"),
+    }
+
+    let roots = [
+        ("regulatory", "Central Authority for Prudential Oversight", corpus.join("corpus/regulatory")),
+        ("local", "Internal documents", corpus.join("corpus/internal")),
+        ("web", "The synthetic web", corpus.join("corpus/web")),
+    ];
+
+    let mut configured: Vec<(String, IndexedConfig)> = Vec::new();
+    for (id, label, root) in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let report = tessera_retrievers::index_folder(
+            core.store.conn(),
+            &profile_id,
+            id,
+            label,
+            &root,
+            &exclude,
+            embedder.as_deref(),
+        )
+        .map_err(|e| format!("{id}: {e}"))?;
+
+        // Doc 05 section 11 puts parse errors on the Profile's Retrievers
+        // page. Here they go to stderr, because a run that quietly indexed
+        // ninety of a hundred documents would produce a recall number nobody
+        // could explain.
+        if !report.errors.is_empty() {
+            eprintln!(
+                "  {id}: {} indexed, {} excluded, {} unreadable ({})",
+                report.indexed,
+                report.excluded,
+                report.errors.len(),
+                report
+                    .errors
+                    .iter()
+                    .map(|(p, k, _)| format!("{p} {k}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+
+        let config = match id {
+            "regulatory" => IndexedConfig::regulatory(id),
+            _ => IndexedConfig::local(vec![id.to_string()]),
+        };
+        configured.push((id.to_string(), config));
+    }
+
+    // Doc 05 section 8.5: memory is a retriever like any other, over an index
+    // that fills as cards are answered rather than from disk.
+    tessera_retrievers::boards::ensure_folder(core.store.conn(), &profile_id)
+        .map_err(|e| format!("boards: {e}"))?;
+    configured.push(("boards".to_string(), IndexedConfig::boards()));
+
+    core.retrievers = RetrieverSet { indexed: configured, embedder };
+    Ok(())
+}
+
+/// The folder names doctrine says never to open.
+fn doctrine_exclusions(core: &Core) -> Vec<String> {
+    core.packs
+        .get(&core.pack_code)
+        .map(|p| p.must_exclude())
+        .unwrap_or_default()
+}
+
 fn write_records(
     dir: &Path,
     records: &[RunRecord],
@@ -708,12 +1010,13 @@ fn write_records(
         // A scorer that read them as `supported` would report a number the
         // product has not earned.
         "support_check_enabled": false,
-        "retrievers_enabled": false,
+        "retrievers_enabled": !args.no_retrievers,
         // Doc 15 section 5's four metrics report n/a until this is true.
         // Reporting a clean zero for own_card sole support while no card has
         // ever been offered a prior card would say the rule holds when nothing
-        // has tested it.
-        "memory_enabled": false,
+        // has tested it. The boards retriever is configured with the others,
+        // so this follows them.
+        "memory_enabled": !args.no_retrievers,
         // Doc 04 section 5: the plan's must_exclude may add to the doctrine's
         // list and never remove from it. The scorer needs the floor to check
         // compliance, and the pack is loaded here, not there.

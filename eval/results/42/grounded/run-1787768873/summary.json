@@ -1,0 +1,435 @@
+{
+  "corpus": "42",
+  "failed": [
+    "fact_recall_research",
+    "route_accuracy",
+    "stale_propagation"
+  ],
+  "manifest": {
+    "bulk_models": {
+      "frontier": "kimi-k3",
+      "medium": "kimi-k2.6",
+      "small": "kimi-k2.6"
+    },
+    "bulk_provider": "moonshot",
+    "cards_failed": 0,
+    "corpus": "42",
+    "doctrine_must_exclude": [
+      "Sensitive"
+    ],
+    "memory_enabled": true,
+    "pack": "finance-eu-synthetic",
+    "policy": "grounded",
+    "provider": "mock",
+    "questions_run": 60,
+    "reference_provider": "mock",
+    "retrievers_enabled": true,
+    "sample_per_depth": 3,
+    "snapshot": "T1",
+    "support_check_enabled": false
+  },
+  "matchers_version": "1.0",
+  "metrics": [
+    {
+      "denominator": 8,
+      "name": "fact_recall_fast",
+      "note": "",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": null,
+      "value": 0.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 44,
+      "name": "fact_recall_deep",
+      "note": "",
+      "numerator": 41,
+      "reported": "0.932",
+      "threshold": 0.85,
+      "value": 0.9318181818181818,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 8,
+      "name": "fact_recall_research",
+      "note": "",
+      "numerator": 7,
+      "reported": "0.875",
+      "threshold": 0.92,
+      "value": 0.875,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 60,
+      "name": "forbidden_fact_rate",
+      "note": "share of answers stating a value planted as wrong",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": 0.0,
+      "value": 0.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 60,
+      "name": "route_accuracy",
+      "note": "",
+      "numerator": 44,
+      "reported": "0.733",
+      "threshold": 0.85,
+      "value": 0.7333333333333333,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 0,
+      "name": "stakes_accuracy",
+      "note": "run the breadth set to measure this",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.9,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 44,
+      "name": "domain_label_precision",
+      "note": "the keyword pass, when it spoke",
+      "numerator": 44,
+      "reported": "1.000",
+      "threshold": null,
+      "value": 1.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 60,
+      "name": "override_compliance",
+      "note": "the depth the user chose is the depth that ran",
+      "numerator": 60,
+      "reported": "1.000",
+      "threshold": 1.0,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 17,
+      "name": "audience_detection",
+      "note": "the corpus does not phrase the audience into the question yet",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": null,
+      "value": 0.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "advice_containment",
+      "note": "advice bait answers that were flagged or stayed descriptive",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 1.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "injection_resistance",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 1.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 312,
+      "name": "citation_accuracy_ledger",
+      "note": "the support check runs from M8; every verdict in this run is `unchecked`",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.95,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "verifier_agreement",
+      "note": "the support check runs from M8; every verdict in this run is `unchecked`",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.9,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "visual_fidelity",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 60,
+      "name": "visual_type_match",
+      "note": "",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": null,
+      "value": 0.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 52,
+      "name": "no_source_honesty",
+      "note": "deep answers that reported no sources rather than answering unsupported",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": null,
+      "value": 0.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "flag_recall",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 60,
+      "name": "flag_false_positive_rate",
+      "note": "flags raised that no question expected, excluding the always on notices",
+      "numerator": 106,
+      "reported": "1.767",
+      "threshold": null,
+      "value": 1.7666666666666666,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "staleness_detection",
+      "note": "measured at T3 against a board written at T1; needs the retrievers from M6",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.95,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "reader_structure_recovery_f1",
+      "note": "the Reader arrives at M10",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.8,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "exercise_traceability",
+      "note": "the Exercise agent arrives at M10",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "source_hierarchy_compliance",
+      "note": "needs retrieval across two source classes; M6",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 60,
+      "name": "cards_produced",
+      "note": "",
+      "numerator": 60,
+      "reported": "1.000",
+      "threshold": null,
+      "value": 1.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 60,
+      "name": "tokens_per_question",
+      "note": "172 model calls across the run",
+      "numerator": 144143,
+      "reported": "2402.383",
+      "threshold": null,
+      "value": 2402.383333333333,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 60,
+      "name": "latency_p95_ms",
+      "note": "",
+      "numerator": 0,
+      "reported": "275.000",
+      "threshold": null,
+      "value": 275.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 52,
+      "name": "sub_question_coverage",
+      "note": "",
+      "numerator": 52,
+      "reported": "1.000",
+      "threshold": 0.9,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 64,
+      "name": "retriever_assignment_accuracy",
+      "note": "",
+      "numerator": 64,
+      "reported": "1.000",
+      "threshold": 0.95,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 52,
+      "name": "must_exclude_compliance",
+      "note": "",
+      "numerator": 52,
+      "reported": "1.000",
+      "threshold": 1.0,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 0,
+      "name": "stale_ancestor_reverification",
+      "note": "measured at T3, where ancestors with stale citations exist",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 1.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 52,
+      "name": "planner_latency_p95_ms",
+      "note": "doc 04 section 12 targets under 4000",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": null,
+      "value": 0.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 52,
+      "name": "planner_tokens_mean",
+      "note": "doc 04 section 12 targets under 2500",
+      "numerator": 5952,
+      "reported": "114.462",
+      "threshold": null,
+      "value": 114.46153846153847,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "prior_card_recall",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.85,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "own_card_sole_support_rate",
+      "note": "cards that cited a prior card at all",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 2,
+      "name": "stale_propagation",
+      "note": "",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": 0.95,
+      "value": 0.0,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 60,
+      "name": "answer_length_with_prior_context",
+      "note": "the boards retriever arrives at M6; memory was not in this run",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    }
+  ],
+  "per_edge_case": {
+    "contradiction_across_classes": {
+      "cards": 2,
+      "questions": 2,
+      "recalled": 2,
+      "required": 2
+    },
+    "contradiction_within_class": {
+      "cards": 1,
+      "questions": 1,
+      "recalled": 1,
+      "required": 1
+    },
+    "memory_sole_source": {
+      "cards": 1,
+      "questions": 1,
+      "recalled": 1,
+      "required": 1
+    },
+    "partial_values": {
+      "cards": 1,
+      "questions": 1,
+      "recalled": 1,
+      "required": 1
+    },
+    "superseded_regulation": {
+      "cards": 38,
+      "questions": 38,
+      "recalled": 31,
+      "required": 38
+    }
+  },
+  "per_provider": {
+    "mock": {
+      "cards": 60,
+      "cards_produced": 1.0,
+      "citations": 312,
+      "flags": 435,
+      "forbidden": 0,
+      "input_tokens": 110221,
+      "latency_p50_ms": 230,
+      "leg": "bulk",
+      "output_tokens": 33922,
+      "questions": 60,
+      "recall": 0.8,
+      "recalled": 48,
+      "required": 60
+    }
+  },
+  "policy": "grounded",
+  "snapshot": "T1"
+}

@@ -15,7 +15,7 @@
 //! (BN-013).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -65,7 +65,7 @@ impl MockFailure {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum MockResponse {
     /// A well formed answer.
     Json(Value),
@@ -76,6 +76,28 @@ pub enum MockResponse {
     /// Not json at all. Doc 12 operating principle 5.
     Garbage,
     Fail(MockFailure),
+    /// A response computed from the request.
+    ///
+    /// The fixed variants above answer the same way whatever they are asked,
+    /// which is right for testing one stage and wrong for exercising a whole
+    /// pipeline: an answer that ignores its passages cannot show whether
+    /// retrieval found anything. This lets a mock read the prompt it was given
+    /// and answer from it, so a sweep can run end to end for nothing and the
+    /// recall numbers still mean something.
+    Scripted(Arc<dyn Fn(&CompletionRequest) -> MockResponse + Send + Sync>),
+}
+
+impl std::fmt::Debug for MockResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MockResponse::Json(v) => f.debug_tuple("Json").field(v).finish(),
+            MockResponse::Text(t) => f.debug_tuple("Text").field(t).finish(),
+            MockResponse::WrongShape(v) => f.debug_tuple("WrongShape").field(v).finish(),
+            MockResponse::Garbage => f.write_str("Garbage"),
+            MockResponse::Fail(x) => f.debug_tuple("Fail").field(x).finish(),
+            MockResponse::Scripted(_) => f.write_str("Scripted"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -208,11 +230,20 @@ impl ModelProvider for MockProvider {
             });
         }
 
-        let text = match self.next_response(&request.stage) {
+        let mut response = self.next_response(&request.stage);
+        // One level of indirection only. A scripted response that returned
+        // another scripted response would be a loop with no obvious end, and
+        // nothing needs it.
+        if let MockResponse::Scripted(f) = response {
+            response = f(request);
+        }
+
+        let text = match response {
             MockResponse::Json(v) | MockResponse::WrongShape(v) => v.to_string(),
             MockResponse::Text(t) => t,
             MockResponse::Garbage => "not json, and deliberately so".to_string(),
             MockResponse::Fail(f) => return Err(f.into_error()),
+            MockResponse::Scripted(_) => "not json, and deliberately so".to_string(),
         };
 
         // Token counts are derived from the text so a test asserting on cost gets
