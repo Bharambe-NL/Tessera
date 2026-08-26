@@ -10,10 +10,12 @@ pub mod chunking;
 pub mod contract;
 pub mod embed;
 pub mod index;
+pub mod indexed;
 pub mod parse;
 
 pub use chunking::{Chunk, ChunkLocation};
 pub use contract::{Coverage, Packet, Passage, Retrieved, Source};
 pub use embed::{Embedder, HashEmbedder, LocalEmbedder};
 pub use index::{Hit, search, write_document};
+pub use indexed::IndexedConfig;
 pub use parse::{ParseError, is_supported, parse_file};
