@@ -28,6 +28,7 @@ tessera-doctrine = { path = "crates/tessera-doctrine" }
 tessera-agents = { path = "crates/tessera-agents" }
 tessera-bundle = { path = "crates/tessera-bundle" }
 tessera-core = { path = "crates/tessera-core" }
+tessera-retrievers = { path = "crates/tessera-retrievers" }
 
 [profile.release]
 lto = "thin"

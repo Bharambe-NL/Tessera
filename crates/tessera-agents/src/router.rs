@@ -549,11 +549,6 @@ fn caveats(depth: &Value) -> Value {
 
 // ------------------------------------------------------- deterministic bits --
 
-fn string_list(v: &Value) -> Vec<String> {
-    v.as_array()
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
-        .unwrap_or_default()
-}
 
 /// Doc 03 section 8.1: a strong single match sets the domain without asking the
 /// model. Two domains matching is not a strong match, so it defers.

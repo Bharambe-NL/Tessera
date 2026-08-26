@@ -11,6 +11,8 @@ OCR noise tells you nothing about which of eight transformations did it.
 
 from __future__ import annotations
 
+import pathlib
+
 from dataclasses import dataclass
 
 from .corpus import Document, Passage
@@ -62,6 +64,10 @@ def apply(seed: int, documents: list[Document]) -> tuple[list[Document], list[Tr
     # and doc 05 section 12 sets scanned pdf recall at 0.70.
     for doc in _share(rng.derive("scanned"), pdf_like, SCANNED_SHARE):
         doc.format = "pdf"
+        # The path has to move with the format. Leaving it means writing a pdf
+        # called `.docx`, which is not the edge case this plants and which sent
+        # the real parser to the wrong reader (BN-037).
+        doc.path = str(pathlib.PurePosixPath(doc.path).with_suffix(".pdf"))
         doc.transformations.append("scanned_no_text_layer")
         log.append(
             Transformation(

@@ -525,6 +525,64 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-037 Format is decided by the bytes, not by the file name
+
+**Spec** 05 section 8.2 lists the formats the local retriever parses. It does not say how a
+file's format is determined, because on paper that is what the extension is for.
+
+**Found** on the first run of the parsers against the real corpus. One document, planted as a
+scanned pdf by doc 02 section 5.3's `scanned_no_text_layer` transformation, was sitting on disk
+as `int-model-risk-09.docx` and beginning with `%PDF-1.3`. The docx reader opened it, found no
+zip, and reported the file damaged.
+
+Two things were wrong and both are fixed.
+
+**The generator.** `mess.py` set `doc.format = "pdf"` and left `doc.path` alone, so the write
+step produced a pdf under the name the document had before it was scanned. That is not the edge
+case the transformation plants; it is a file whose name lies for no reason. The path now moves
+with the format.
+
+**The parser.** It trusted the extension, which is a reasonable thing to do exactly once, in a
+corpus you generated yourself. A watched folder belonging to a real person is full of files
+renamed by hand, exported with the wrong suffix, or saved by a tool with its own opinion, and a
+retriever that declares those unreadable is wrong about its own job. `parse_file` now reads the
+first four bytes: `%PDF` decides pdf, `PK\x03\x04` opens the archive and looks for `word/` or
+`xl/` to tell docx from xlsx, and the text formats fall back to the extension because they have
+no signature to find. The bytes win when the two disagree.
+
+The corpus bug is the smaller half of this. The parser would have been wrong on real folders
+whether or not the generator ever made a mistake, and nothing in the synthetic corpus was ever
+going to reveal that on its own.
+
+### BN-038 A rebuild starts from a clean tree
+
+**Found** immediately after BN-037. Renaming the scanned document left the old `.docx` on disk,
+because `write_corpus` created the output directory with `exist_ok=True` and wrote over it.
+
+The orphan is worse than untidy. Nothing in `documents.jsonl` mentions it, so no metric expects
+it, and the local retriever would have indexed it anyway and ranked its passages against real
+questions. A corpus that accumulates files nobody declared is a corpus whose recall numbers
+drift for reasons no diff can show.
+
+`write_corpus` now removes the tree before writing it. The determinism check already used fresh
+directories, which is why two builds agreed while an incremental rebuild was quietly wrong.
+
+### BN-039 A protected file says it is protected
+
+**Spec** 05 section 10 lists `parse_error` as "skip file, record in index errors", and doc 05
+section 11 puts those errors on the Profile's Retrievers page where a person reads them.
+
+**Decision** The pdf reader checks the document's own header for an encryption dictionary rather
+than inferring from the extractor's error text, which says only that parsing failed.
+
+**Why** The two failures need different sentences. "This file is protected and was not opened"
+is something the reader can act on. "This file is damaged" sends them looking for a corruption
+that is not there. Only the header region is scanned, so the string `/Encrypt` appearing inside
+a content stream is not mistaken for a declaration.
+
+The scanned pdf is treated the same way: `NeedsOcr` rather than a generic failure, naming the
+Reader at M10 as what it is waiting for.
+
 ### BN-036 The domain taxonomy is retired as a load bearing judgment
 
 **Spec** 03 sections 7, 8.1 and 12; 02 section 10.2; 12 phase 4. The Router classified each

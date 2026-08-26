@@ -21,6 +21,7 @@ creation date is not. Every renderer here has its timestamps pinned.
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
@@ -298,6 +299,11 @@ def write_corpus(
     verification_problems: list[str],
 ) -> dict:
     """Write the whole tree and return the summary the CLI prints."""
+    # A rebuild starts clean. When a transformation renames a file, the old
+    # name would otherwise survive as an orphan that nothing in the ledger
+    # mentions and that the retriever would still happily index (BN-037).
+    if root.exists():
+        shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
 
     write_json(root / "entities.json", manifest())
