@@ -525,6 +525,86 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-044 A fact's label now identifies the fact
+
+**Fixes** BN-041, where 506 labelled facts drawn from 49 labels left "the model inventory review
+interval" carrying 24 different true values and every question about it a coin toss.
+
+**Decision** Numeric and date facts draw a qualified label, and the pairs are drawn without
+replacement so uniqueness is guaranteed rather than hoped for. The qualifier scopes the
+requirement the way a regulation does: "the capital conservation buffer for a systemically
+important institution under the standardised approach". Eight scopes of who and six of what,
+used alone or combined, which is fifty-six qualifiers against four to six base labels per
+domain, and the pool asserts at construction that it can cover the worst case.
+
+**Left alone on purpose.** Definitions, because there a term and its meaning travel together, so
+a repeated definition is redundant and never contradictory. Supersession and false plants,
+because they copy their source fact's label deliberately. After the fix, the only numeric and
+date labels carrying more than one value are exactly those two cases: 62 of 225, every one of
+them a v1 and v2 pair or a planted misquote. That is the ambiguity the corpus is supposed to
+have, and now it is the only ambiguity it has.
+
+Distinct labels went from 49 to 255.
+
+**Measured effect on retrieval**, same index and same model, before and after:
+
+| | before | after |
+|---|---|---|
+| recall at 1 | 0.374 | 0.544 |
+| recall at 3 | 0.445 | 0.608 |
+| recall at 12 | 0.545 | 0.647 |
+
+Recall at 1 improved by nearly half, which is the number that matters most: when the retriever
+finds the passage now, it usually finds it first.
+
+**Where that leaves the gate.** Doc 05 section 12 wants 0.90 local and 0.95 regulatory. At 0.647
+the corpus is now sound and the remaining gap is genuine ranking difficulty. The ceiling at
+unlimited depth is 0.826, so about a fifth of lookups are never matched by either half and the
+rest is ordering. Doc 05 section 8.1 already names the missing stage: "a small alias rerank of
+the top 20". It was written as an optimisation and the numbers say it is load bearing.
+
+Mixed qualifier lengths were deliberate. A corpus where every label carries the same long
+qualifier makes retrieval trivially easy in a way that flatters the ranker.
+
+### BN-045 A bumped value has to actually move
+
+**Found** by `test_a_false_plant_misquotes_a_real_fact` immediately after BN-044 changed which
+values get bumped. A false plant had exactly the value of the fact it was planted to misquote.
+
+`_bump` chose `max(0.5, current - step)`, which returns the original whenever the subtraction
+would go under the floor. At a current value of 0.5 with a step of 0.5 the "wrong" value is the
+right one.
+
+Two things this quietly broke. A false plant identical to the fact it misquotes traps nobody, so
+doc 02 section 5.2's forbidden fact rate was measuring a case that could not fire. And a v2
+identical to its v1 is not detectably stale, so doc 02 section 5.4's staleness scenario had the
+same hole.
+
+The bump now goes up whenever going down would hit the floor, so the value always changes.
+
+Worth noting how it surfaced: the test was already there and already correct, and it took an
+unrelated change to shift the random draws far enough to hit the case. A latent bug in a
+generator is only as visible as the seed makes it.
+
+### BN-046 Two ranking tweaks that did not work
+
+Recorded because both are obvious enough that someone will try them again.
+
+**Stopword removal.** The theory was that OR-ing every term including "what" and "the" floods
+the candidate set. Measured: recall fell at every depth except k=1, losing 0.026 at k=25.
+FTS5's bm25 already discounts a common term by inverse document frequency, so the words cost
+nothing and removing them threw away what little signal a stopword carries in a templated
+question. It would also have added a per language word list to maintain.
+
+**Phrase matching as a third fusion list.** The theory was better founded: after BN-044 the
+corpus is full of passages sharing ten qualifier tokens and differing in two, and a phrase only
+matches where words are adjacent. Measured: identical at k=12 and slightly worse at k=1, 0.544
+against 0.529.
+
+Both reverted. Two query-side tweaks failing to move the number is itself the finding: the gap
+is not in how the query is written, and the reranker doc 05 section 8.1 specifies is where to
+look next.
+
 ### BN-041 Six hundred facts drawn from forty nine labels, and what that does to every recall gate
 
 **Spec** 05 section 12 sets retrieval recall at 0.90 local and 0.95 regulatory. Doc 02 section

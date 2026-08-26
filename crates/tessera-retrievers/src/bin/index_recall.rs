@@ -32,6 +32,8 @@ struct Question {
     required_sources: Vec<String>,
     #[serde(default)]
     depth_expected: String,
+    #[serde(default)]
+    edge_case_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +43,9 @@ struct Retrieved {
     required_facts: Vec<String>,
     required_sources: Vec<String>,
     depth_expected: String,
+    /// Doc 02 section 5.2's case tags, so the scorer can tell a retriever miss
+    /// from a question that names no subject to find.
+    edge_case_ids: Vec<String>,
     /// Which folder each passage came from, so recall can be split the way doc
     /// 05 section 12 splits its gates.
     passages: Vec<Passage>,
@@ -226,6 +231,7 @@ fn main() -> std::process::ExitCode {
             required_facts: question.required_facts.clone(),
             required_sources: question.required_sources.clone(),
             depth_expected: question.depth_expected.clone(),
+            edge_case_ids: question.edge_case_ids.clone(),
             passages: hits
                 .into_iter()
                 .map(|h| Passage {

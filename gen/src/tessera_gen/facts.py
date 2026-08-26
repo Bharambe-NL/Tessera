@@ -311,19 +311,85 @@ RELATIONSHIP_SUBJECTS = {
 }
 
 
+#: Who a requirement applies to. Real regulation scopes almost every threshold
+#: this way, and it is what makes one interval distinguishable from another.
+SCOPE_WHO = (
+    "for a significant institution",
+    "for a small and non-complex institution",
+    "for a systemically important institution",
+    "for a newly authorised firm",
+    "for a branch of a third country group",
+    "for a subsidiary in a cross-border group",
+    "for a firm under a recovery plan",
+    "for a domestically active firm",
+)
+
+#: The basis a requirement is measured on.
+SCOPE_WHAT = (
+    "under the standardised approach",
+    "under the internal ratings based approach",
+    "at consolidated level",
+    "at solo level",
+    "during the transitional period",
+    "where the exposure is unsecured",
+)
+
+
+def _scopes() -> list[str]:
+    """Every qualifier, short ones first.
+
+    Mixed lengths on purpose. A corpus where every label carries the same long
+    qualifier would make retrieval trivially easy in a way that flatters the
+    ranker; a mixture keeps some questions terse and some precise, which is what
+    real ones look like.
+    """
+    return [who for who in SCOPE_WHO] + [
+        f"{who} {what}" for who in SCOPE_WHO for what in SCOPE_WHAT
+    ]
+
+
+class LabelPool:
+    """Hands out a distinct qualified label for each numeric or date fact.
+
+    Draw without replacement, so two facts in a domain can never claim the same
+    subject with different values. That was BN-041: six labels serving a hundred
+    and fifty facts made every question about them a coin toss with a dozen
+    sides, and no retriever or Synthesizer could have chosen correctly.
+    """
+
+    def __init__(self, rng: Rng, domain: str, needed: int) -> None:
+        combinations = [
+            (label, unit, low, high, scale, scope)
+            for (label, unit, low, high, scale) in NUMERIC_SUBJECTS[domain]
+            for scope in _scopes()
+        ]
+        assert len(combinations) >= needed, (
+            f"{domain} can make {len(combinations)} distinct labels and may need "
+            f"{needed}; add scopes or subjects rather than letting them repeat"
+        )
+        self._queue = rng.shuffled(combinations)
+        self._taken = 0
+
+    def take(self) -> tuple[str, str, int, int, int]:
+        """The next label, with its unit and range."""
+        label, unit, low, high, scale, scope = self._queue[self._taken]
+        self._taken += 1
+        return f"{label} {scope}", unit, low, high, scale
+
+
 # ----------------------------------------------------------------- building --
 
 
-def _numeric(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
-    label, unit, low, high, scale = rng.choice(NUMERIC_SUBJECTS[domain])
+def _numeric(rng: Rng, domain: str, labels: LabelPool) -> tuple[str, dict, list[str]]:
+    label, unit, low, high, scale = labels.take()
     raw = rng.randint(low, high)
     amount = f"{raw / scale:g}" if scale != 1 else str(raw)
     statement = f"{label.capitalize()} is {amount} {unit}."
     return statement, {"amount": amount, "unit": unit, "label": label}, [label]
 
 
-def _date(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
-    label, _, _, _, _ = rng.choice(NUMERIC_SUBJECTS[domain])
+def _date(rng: Rng, domain: str, labels: LabelPool) -> tuple[str, dict, list[str]]:
+    label, _, _, _, _ = labels.take()
     year = rng.choice([2024, 2025, 2026, 2027])
     month = rng.randint(1, 12)
     day = rng.randint(1, 28)
@@ -332,7 +398,7 @@ def _date(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
     return statement, {"date": date, "label": label}, [label]
 
 
-def _definition(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
+def _definition(rng: Rng, domain: str, labels: LabelPool) -> tuple[str, dict, list[str]]:
     term, meaning = rng.choice(DEFINITION_SUBJECTS[domain])
     statement = f"{term.capitalize()} means {meaning}."
     return statement, {"text": meaning, "term": term, "key_phrases": _key_phrases(meaning)}, [term]
@@ -360,7 +426,7 @@ def _duty_label(duty: str) -> str:
     return "the duty to " + " ".join(words)
 
 
-def _obligation(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
+def _obligation(rng: Rng, domain: str, labels: LabelPool) -> tuple[str, dict, list[str]]:
     duty = rng.choice(OBLIGATION_SUBJECTS[domain])
     statement = f"An institution shall {duty}."
     return (
@@ -370,14 +436,14 @@ def _obligation(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
     )
 
 
-def _procedure(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
+def _procedure(rng: Rng, domain: str, labels: LabelPool) -> tuple[str, dict, list[str]]:
     goal, steps = rng.choice(PROCEDURE_SUBJECTS[domain])
     joined = ", then ".join(steps)
     statement = f"To {goal}, an institution shall {joined}."
     return statement, {"text": joined, "steps": steps, "goal": goal, "key_phrases": steps}, []
 
 
-def _relationship(rng: Rng, domain: str) -> tuple[str, dict, list[str]]:
+def _relationship(rng: Rng, domain: str, labels: LabelPool) -> tuple[str, dict, list[str]]:
     a, b, verb = rng.choice(RELATIONSHIP_SUBJECTS[domain])
     statement = f"{a.capitalize()} {verb} {b}."
     return (
@@ -411,10 +477,14 @@ def generate_facts(seed: int, total: int = TOTAL_FACTS) -> list[Fact]:
     per_domain = total // len(DOMAINS)
     for domain_index, domain in enumerate(DOMAINS):
         domain_rng = rng.derive(domain)
+        # One pool per domain, sized for the worst case where every fact in it
+        # is a numeric or a date. Its own stream, so adding it leaves every
+        # other stage's draws where they were.
+        labels = LabelPool(domain_rng.derive("labels"), domain, per_domain)
         for i in range(per_domain):
             kind: FactKind = domain_rng.weighted(KIND_WEIGHTS)
             fact_rng = domain_rng.derive(str(i))
-            statement, value, refs = BUILDERS[kind](fact_rng, domain)
+            statement, value, refs = BUILDERS[kind](fact_rng, domain, labels)
 
             number = domain_index * per_domain + i + 1
             firms = firms_for(domain)
@@ -451,7 +521,13 @@ def _bump(value: dict, rng: Rng) -> dict:
         except ValueError:
             return out
         step = rng.choice([0.5, 1, 1.5, 2, 2.5])
-        raised = current + step if rng.chance(0.7) else max(0.5, current - step)
+        # The floor used to be `max(0.5, current - step)`, which returns the
+        # original value whenever the subtraction would go under it: a false
+        # plant identical to the fact it misquotes traps nobody, and a v2
+        # identical to its v1 is not detectably stale. Going up instead is
+        # always a real change (BN-045).
+        lowered = current - step
+        raised = current + step if rng.chance(0.7) or lowered < 0.5 else lowered
         out["amount"] = f"{raised:g}"
     elif "date" in out:
         year, month, day = (int(p) for p in str(out["date"]).split("-"))

@@ -150,13 +150,13 @@ pub fn fts_query(text: &str) -> String {
 fn lexical(
     conn: &Connection,
     folder_ids: &[String],
-    query: &str,
+    match_expression: &str,
     depth: usize,
 ) -> rusqlite::Result<Vec<String>> {
-    let match_expression = fts_query(query);
     if match_expression.is_empty() || folder_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let match_expression = match_expression.to_string();
 
     let placeholders = folder_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!(
@@ -250,7 +250,7 @@ pub fn search(
     limit: usize,
 ) -> rusqlite::Result<Vec<Hit>> {
     let depth = CANDIDATE_DEPTH.max(limit);
-    let lexical_hits = lexical(conn, folder_ids, query, depth)?;
+    let lexical_hits = lexical(conn, folder_ids, &fts_query(query), depth)?;
 
     let semantic_hits = match embedder {
         Some(e) => {

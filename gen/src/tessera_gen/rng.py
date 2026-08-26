@@ -22,7 +22,7 @@ T = TypeVar("T")
 
 #: Bumped when a change to this module would alter a corpus at the same seed.
 #: Doc 02 section 9 names a corpus `<generator_version>-<seed>`.
-GENERATOR_VERSION = "0.2.0"
+GENERATOR_VERSION = "0.3.0"
 
 
 def stream(seed: int, *stage: str) -> random.Random:

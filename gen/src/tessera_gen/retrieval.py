@@ -71,7 +71,17 @@ def score(results: Path, corpus: Path) -> dict:
     by_folder: dict[str, Bucket] = defaultdict(Bucket)
     at_k: dict[int, Bucket] = {k: Bucket() for k in (1, 3, 5, 12)}
 
+    unanswerable = 0
     for row in rows:
+        # Doc 02 section 5.2's advice bait asks "should I raise this with the
+        # board?" and carries a required fact anyway, because what it tests is
+        # that the answer stays descriptive and gets flagged. The question names
+        # no subject, so no retriever can find that fact and counting it as a
+        # miss measures the question rather than the retriever.
+        if "advice_bait" in (row.get("edge_case_ids") or []):
+            unanswerable += len(row.get("required_facts") or [])
+            continue
+
         passages = row.get("passages") or []
         text_at = [p.get("text", "") for p in passages]
 
@@ -110,6 +120,7 @@ def score(results: Path, corpus: Path) -> dict:
     return {
         "matchers_version": matchers.MATCHERS_VERSION,
         "questions": len(rows),
+        "unanswerable_lookups": unanswerable,
         "overall": {
             "recall": overall.recall,
             "hits": overall.hits,
@@ -146,7 +157,8 @@ def render(report: dict) -> str:
     lines = [
         "# Retrieval recall",
         "",
-        f"Matchers {report['matchers_version']}. {report['questions']} questions.",
+        f"Matchers {report['matchers_version']}. {report['questions']} questions, "
+        f"{report.get('unanswerable_lookups', 0)} advice bait lookups excluded.",
         "",
         "| Scope | Recall | Threshold | Verdict | Hits |",
         "| --- | --- | --- | --- | --- |",
