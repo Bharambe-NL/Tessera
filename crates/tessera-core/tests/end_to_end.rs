@@ -787,3 +787,135 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
         .expect("card");
     assert!(builds_on.contains(&first), "builds_on did not name the board it came from: {builds_on}");
 }
+
+// ------------------------------------------------------ follow-up context --
+// Doc 03 section 4 hands the Router the parent card; doc 04 section 4 hands the
+// Planner up to three ancestors and section 9 puts "carrying the board context
+// into each sub-question" in the Planner's scope. Both were built with the
+// field hardcoded to null, so a follow-up reached the retrievers as a question
+// with no subject. Measured through the pipeline, retrieval recall on
+// standalone questions was 1.000 and on follow-ups 0.485.
+
+fn packet_for(core: &Core, board_id: &str, agent: &str) -> Value {
+    core.store
+        .conn()
+        .query_row(
+            "SELECT s.task_packet FROM step s JOIN run r ON r.id = s.run_id
+             WHERE r.board_id = ?1 AND s.agent_id = ?2
+             ORDER BY s.started_at DESC, s.sequence DESC LIMIT 1",
+            rusqlite::params![board_id, agent],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn a_follow_up_carries_its_parent_into_the_router_packet() {
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+    let parent = core
+        .ask(&board_id, "what are world models?", Some("deep"))
+        .expect("parent runs");
+
+    core.ask_on(&board_id, "which article says so?", Some("deep"), Some(&parent.card_id))
+        .expect("follow up runs");
+
+    let packet = packet_for(&core, &board_id, "router");
+    assert_eq!(packet["request"]["kind"], "follow", "a follow-up was routed as a root");
+    assert_eq!(packet["parent"]["card_id"], parent.card_id.as_str());
+    assert_eq!(packet["parent"]["question"], "what are world models?");
+    assert!(
+        packet["parent"]["answer"].as_str().is_some_and(|a| a.contains("world model")),
+        "the parent's answer did not reach the Router"
+    );
+}
+
+#[test]
+fn a_follow_up_carries_its_ancestors_into_the_planner_packet() {
+    // The Planner is the one that has to resolve "which article says so?" into
+    // something a retriever can match, and it cannot do that from an empty
+    // array.
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+    let parent = core
+        .ask(&board_id, "what are world models?", Some("research"))
+        .expect("parent runs");
+
+    core.ask_on(&board_id, "which article says so?", Some("research"), Some(&parent.card_id))
+        .expect("follow up runs");
+
+    let packet = packet_for(&core, &board_id, "planner");
+    let ancestors = packet["context"]["ancestors"].as_array().expect("ancestors");
+    assert_eq!(ancestors.len(), 1, "the ancestor chain was empty");
+    assert_eq!(ancestors[0]["question"], "what are world models?");
+    assert!(
+        ancestors[0]["answer_excerpt"]
+            .as_str()
+            .is_some_and(|a| a.contains("world model")),
+        "the ancestor arrived without its answer"
+    );
+}
+
+#[test]
+fn a_root_card_still_reports_no_parent() {
+    // The other half of the same promise: context is carried where it exists
+    // and never invented where it does not.
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(&board_id, "what are world models?", Some("deep")).expect("runs");
+
+    let packet = packet_for(&core, &board_id, "router");
+    assert_eq!(packet["request"]["kind"], "root");
+    assert_eq!(packet["parent"], Value::Null);
+}
+
+#[test]
+fn the_ancestor_chain_stops_at_three() {
+    // Doc 04 section 4 caps it, and the schema rejects a fourth. A deep thread
+    // must not put the whole board into a prompt.
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+
+    let mut previous = core
+        .ask(&board_id, "what are world models?", Some("research"))
+        .expect("root")
+        .card_id;
+    for i in 0..4 {
+        previous = core
+            .ask_on(&board_id, &format!("and what about {i}?"), Some("research"), Some(&previous))
+            .expect("follow up")
+            .card_id;
+    }
+
+    let packet = packet_for(&core, &board_id, "planner");
+    let ancestors = packet["context"]["ancestors"].as_array().expect("ancestors");
+    assert_eq!(ancestors.len(), 3, "the chain was not capped");
+}
+
+#[test]
+fn the_board_seed_reaches_the_planner() {
+    // Doc 04 section 9 lists the board seed alongside the parent answer. It was
+    // null while the board carried it, so a board opened from a seed answered
+    // as though it had none.
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.store
+        .conn()
+        .execute(
+            "UPDATE board SET seed_label = 'CAR3 transitional rules' WHERE id = ?1",
+            rusqlite::params![&board_id],
+        )
+        .expect("seed");
+
+    core.ask(&board_id, "what are world models?", Some("research")).expect("runs");
+
+    let packet = packet_for(&core, &board_id, "planner");
+    assert_eq!(packet["context"]["board_seed"], "CAR3 transitional rules");
+}

@@ -194,6 +194,22 @@ impl Core {
         question: &str,
         depth_override: Option<&str>,
     ) -> Result<pipeline::CardOutcome, CoreError> {
+        self.ask_on(board_id, question, depth_override, None)
+    }
+
+    /// Ask a follow-up on an existing card.
+    ///
+    /// Doc 01 section 4.4's `parent_card_id` is what makes "which article says
+    /// so?" answerable: on its own it names no subject, and the pipeline reads
+    /// the parent's question and answer back out of this chain. Asked without a
+    /// parent, such a question retrieves nothing, correctly and uselessly.
+    pub fn ask_on(
+        &mut self,
+        board_id: &str,
+        question: &str,
+        depth_override: Option<&str>,
+        parent_card_id: Option<&str>,
+    ) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
         let board_depth: String = self
             .store
@@ -209,8 +225,11 @@ impl Core {
             &mut self.store,
             repo::NewCard {
                 board_id,
-                parent_card_id: None,
-                kind: "root",
+                parent_card_id,
+                // Doc 01 section 4.4's card kinds. A card with a parent is a
+                // follow; the schema's `branch` and `read_follow` need an
+                // anchor, which arrives with the UI's highlight verb at M9.
+                kind: if parent_card_id.is_some() { "follow" } else { "root" },
                 question,
                 depth: depth_override.unwrap_or(&board_depth),
                 anchor_text: None,

@@ -44,6 +44,65 @@ pub struct RunContext<'a> {
     pub retrievers: &'a crate::retrieval::RetrieverSet,
 }
 
+/// What a card is, as opposed to what it asks.
+///
+/// Both packets carry `kind`, `anchor_text` and `anchor_block_ref`, and both
+/// had them hardcoded to `root` and null. A branch spawned from a highlighted
+/// phrase looked identical to a question typed from nothing, so doc 03 step 6,
+/// "a branch inherits the parent's depth", could never fire.
+struct CardIdentity {
+    id: String,
+    kind: String,
+    anchor_text: Option<String>,
+    anchor_block_ref: Option<String>,
+}
+
+/// What both packet builders need to know about the run in front of them.
+///
+/// Grouped rather than passed as five positional arguments, because the Router
+/// and the Planner want the same five and a builder that took them separately
+/// grew past the point where the order was obvious.
+struct Subject<'a> {
+    card: &'a CardIdentity,
+    run_id: &'a str,
+    question: &'a str,
+    /// Nearest first, capped at doc 04 section 4's three.
+    ancestors: &'a [repo::Ancestor],
+}
+
+impl CardIdentity {
+    fn read(store: &Store, card_id: &str) -> Self {
+        store
+            .conn()
+            .query_row(
+                "SELECT id, kind, anchor_text, anchor_block_ref FROM card WHERE id = ?1",
+                rusqlite::params![card_id],
+                |r| {
+                    Ok(Self {
+                        id: r.get(0)?,
+                        // The card table and the router packet schema name the
+                        // Reader's kind differently, `read` against
+                        // `read_follow`. Mapping it here keeps the schema guard
+                        // guarding rather than rejecting a card the Reader will
+                        // legitimately produce at M10.
+                        kind: match r.get::<_, String>(1)?.as_str() {
+                            "read" => "read_follow".into(),
+                            other => other.to_string(),
+                        },
+                        anchor_text: r.get(2)?,
+                        anchor_block_ref: r.get(3)?,
+                    })
+                },
+            )
+            .unwrap_or_else(|_| Self {
+                id: card_id.to_string(),
+                kind: "root".into(),
+                anchor_text: None,
+                anchor_block_ref: None,
+            })
+    }
+}
+
 pub struct CardOutcome {
     pub card_id: String,
     pub run_id: String,
@@ -89,8 +148,15 @@ pub async fn run_card(
         sequence
     };
 
+    // Doc 03 section 4 hands the Router the parent card and doc 04 section 4
+    // hands the Planner up to three ancestors. Both read the same chain, so it
+    // is walked once here rather than twice inside the builders.
+    let card = CardIdentity::read(store, card_id);
+    let ancestors = repo::ancestor_chain(store, card_id, 3).unwrap_or_default();
+    let subject = Subject { card: &card, run_id: &run_id, question, ancestors: &ancestors };
+
     // ------------------------------------------------------------ Router --
-    let router_packet = build_router_packet(&board, card_id, &run_id, question, depth_override, ctx);
+    let router_packet = build_router_packet(&board, &subject, depth_override, ctx);
     let routed = run_agent(
         &Router,
         store,
@@ -155,8 +221,7 @@ pub async fn run_card(
     // ----------------------------------------------------------- Planner --
     // Doc 04 section 3: only when the Router set plan_required, never in fast.
     let plan = if routed["plan_required"].as_bool().unwrap_or(false) {
-        let planner_packet =
-            build_planner_packet(store, &routed, card_id, &run_id, question, ctx)?;
+        let planner_packet = build_planner_packet(store, &board, &routed, &subject, ctx)?;
         let planned = run_agent(
             &Planner,
             store,
@@ -567,29 +632,58 @@ fn board_row(store: &Store, board_id: &str) -> Result<Value, Failure> {
         })
 }
 
+/// Doc 03 section 4's `parent` block, from the card's own ancestry.
+///
+/// This was `null` for every card, which made every follow-up a question with
+/// no subject. "Which article says so?" retrieves nothing on its own, and
+/// nothing is what it retrieved: recall on standalone questions measured 1.000
+/// and on follow-ups 0.485, and the whole of that gap was this field.
+fn parent_block(ancestors: &[repo::Ancestor]) -> Value {
+    let Some(parent) = ancestors.first() else { return Value::Null };
+    json!({
+        "card_id": parent.card_id,
+        "question": parent.question,
+        // Doc 03 section 6: the prompt gets the first 600 characters of the
+        // parent answer, so there is no reason to carry more than that.
+        "answer": parent.answer.as_deref().map(|a| truncate_chars(a, 600)).unwrap_or_default(),
+        "depth": parent.depth,
+        "confidence": parent.confidence,
+        "answered_at": parent.answered_at,
+        "citation_count": parent.citations.len(),
+        "stale_citations": parent.stale_citations()
+    })
+}
+
+/// Cut to a character count without splitting a character in half.
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    text.chars().take(max).collect()
+}
+
 fn build_router_packet(
     board: &Value,
-    card_id: &str,
-    run_id: &str,
-    question: &str,
+    subject: &Subject<'_>,
     depth_override: Option<&str>,
     ctx: &RunContext<'_>,
 ) -> Value {
+    let card = subject.card;
     json!({
         "schema_version": "1.0",
-        "run_id": run_id,
-        "card_id": card_id,
+        "run_id": subject.run_id,
+        "card_id": card.id,
         "request": {
-            "text": question,
-            "kind": "root",
-            "anchor_text": null,
-            "anchor_block_ref": null,
+            "text": subject.question,
+            "kind": card.kind,
+            "anchor_text": card.anchor_text,
+            "anchor_block_ref": card.anchor_block_ref,
             "depth_override": depth_override,
             "model_override": null,
             "audience_override": null
         },
         "board": board,
-        "parent": null,
+        "parent": parent_block(subject.ancestors),
         "profile": {
             "role": null,
             "default_depth": board["default_depth"].clone(),
@@ -616,14 +710,44 @@ fn build_router_packet(
 /// own defaults, because per-profile retriever configuration is an M9 Profile
 /// surface. Doc 05 v0.2 section 8.5 adds `boards` when the profile has memory
 /// on, which is doc 01 section 4.16's default.
+/// Doc 04 section 4's ancestor chain, capped at three by the schema.
+///
+/// The Planner's job, doc 04 section 9, is "carrying the board context (parent
+/// answer, seed, highlighted phrase) into each sub-question". It cannot do that
+/// from an empty array, which is what it was given.
+fn ancestor_blocks(ancestors: &[repo::Ancestor]) -> Value {
+    Value::Array(
+        ancestors
+            .iter()
+            .take(3)
+            .map(|a| {
+                json!({
+                    "card_id": a.card_id,
+                    "question": a.question,
+                    // The schema caps the excerpt at 800 characters. Sending
+                    // more would be rejected at the boundary, which is the
+                    // schema guard doing its job and not a reason to send it.
+                    "answer_excerpt": a.answer.as_deref().map(|t| truncate_chars(t, 800)).unwrap_or_default(),
+                    "citations": a.citations.iter().map(|c| json!({
+                        "ordinal": c["ordinal"],
+                        "source_title": c["source_title"],
+                        "source_class": c["source_class"],
+                        "stale": c["stale"]
+                    })).collect::<Vec<_>>()
+                })
+            })
+            .collect(),
+    )
+}
+
 fn build_planner_packet(
     store: &Store,
+    board: &Value,
     routed: &Value,
-    card_id: &str,
-    run_id: &str,
-    question: &str,
+    subject: &Subject<'_>,
     ctx: &RunContext<'_>,
 ) -> Result<Value, Failure> {
+    let card = subject.card;
     let depth = routed["depth"]["chosen"].as_str().unwrap_or("deep");
     // Doc 04 section 4: 3 sub-questions for research, 1 for deep.
     let max_sub_questions = if depth == "research" { 3 } else { 1 };
@@ -671,13 +795,13 @@ fn build_planner_packet(
 
     Ok(json!({
         "schema_version": "1.0",
-        "run_id": run_id,
-        "card_id": card_id,
+        "run_id": subject.run_id,
+        "card_id": card.id,
         "request": {
-            "text": question,
-            "kind": "root",
-            "anchor_text": null,
-            "anchor_block_ref": null
+            "text": subject.question,
+            "kind": card.kind,
+            "anchor_text": card.anchor_text,
+            "anchor_block_ref": card.anchor_block_ref
         },
         "routing": {
             "question_type": routed["classification"]["question_type"].clone(),
@@ -693,9 +817,12 @@ fn build_planner_packet(
             "early_flags": routed["early_flags"].clone()
         },
         "context": {
-            "board_seed": null,
-            "board_context": null,
-            "ancestors": [],
+            // Doc 04 section 9 puts the board seed and context in scope for the
+            // Planner. They were null while the board carried both, so a board
+            // opened with a seed answered as though it had none.
+            "board_seed": board["seed_label"].clone(),
+            "board_context": board["context"].clone(),
+            "ancestors": ancestor_blocks(subject.ancestors),
             "parent_visual_block": null
         },
         "concepts": [],

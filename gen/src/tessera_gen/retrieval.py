@@ -69,7 +69,12 @@ def score(results: Path, corpus: Path) -> dict:
 
     overall = Bucket()
     by_folder: dict[str, Bucket] = defaultdict(Bucket)
-    at_k: dict[int, Bucket] = {k: Bucket() for k in (1, 3, 5, 12)}
+    # The curve, not just the operating point. A reranker can only reorder what
+    # the candidate pass already found, so recall at the pool depth is the
+    # ceiling of any reranker over that pool, and the gap between that and
+    # recall at 12 is the most one could ever recover by reordering. Without
+    # both numbers, "build a reranker" is a guess.
+    at_k: dict[int, Bucket] = {k: Bucket() for k in (1, 3, 5, 12, 20, 30, 50)}
 
     unanswerable = 0
     for row in rows:

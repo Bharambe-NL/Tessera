@@ -16,6 +16,7 @@
 //! verified with (doc 02 section 11). This binary produces the record; `gen
 //! score` turns it into metrics.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use tessera_core::retrieval::RetrieverSet;
 use tessera_providers::CompletionRequest;
@@ -185,6 +186,9 @@ struct RunRecord {
     ok: bool,
     failure: Option<String>,
     card_id: Option<String>,
+    /// Which board this ran on. A follow-up shares its parent's board, and the
+    /// scorer needs that to tell a real ancestor chain from a coincidence.
+    board_id: Option<String>,
     answer: Option<String>,
     findings: Vec<String>,
     visual_type: Option<String>,
@@ -255,13 +259,14 @@ fn main() -> std::process::ExitCode {
     let workers = args.workers.max(1).min(total.max(1));
     println!("{workers} workers");
 
-    let queue = Arc::new(Mutex::new(
-        questions
-            .iter()
-            .take(total)
-            .cloned()
-            .collect::<std::collections::VecDeque<_>>(),
-    ));
+    // The queue hands out families, not questions.
+    //
+    // Each worker owns its own store, so a follow-up run by a different worker
+    // than its parent would look for an ancestor that does not exist there. A
+    // family is a root and everything descending from it, and it stays whole on
+    // one worker in ancestor-first order. Parallelism is unaffected: there are
+    // as many families as root questions.
+    let queue = Arc::new(Mutex::new(families(&questions, total)));
     let done = Arc::new(AtomicUsize::new(0));
     let collected: Arc<Mutex<Vec<RunRecord>>> = Arc::new(Mutex::new(Vec::with_capacity(total)));
     let plan = Arc::new(plan);
@@ -320,24 +325,37 @@ fn main() -> std::process::ExitCode {
                 let mut current = String::new();
                 let mut local_failures = 0usize;
 
-                while let Some(q) = queue.lock().ok().and_then(|mut q| q.pop_front()) {
-                    let on_reference = plan.reference_ids.contains(&q.q_id);
-                    let leg = if on_reference { &plan.reference } else { &plan.bulk };
-                    if leg.name != current {
-                        core.use_provider(Arc::clone(&leg.provider), leg.policy.clone());
-                        current = leg.name.clone();
-                    }
+                while let Some(family) = queue.lock().ok().and_then(|mut q| q.pop_front()) {
+                    // Where each question in this family was answered, so its
+                    // children can be asked on the same board as follow-ups.
+                    let mut answered: HashMap<String, Answered> = HashMap::new();
 
-                    let mut record = run_one(&mut core, &q, &mut local_failures);
-                    record.provider = leg.name.clone();
-                    record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
+                    for q in &family {
+                        let on_reference = plan.reference_ids.contains(&q.q_id);
+                        let leg = if on_reference { &plan.reference } else { &plan.bulk };
+                        if leg.name != current {
+                            core.use_provider(Arc::clone(&leg.provider), leg.policy.clone());
+                            current = leg.name.clone();
+                        }
 
-                    let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if finished.is_multiple_of(10) || finished == total {
-                        println!("  {finished}/{total}");
-                    }
-                    if let Ok(mut out) = collected.lock() {
-                        out.push(record);
+                        let parent = q.parent_q_id.as_deref().and_then(|p| answered.get(p));
+                        let mut record = run_one(&mut core, q, parent.cloned().as_ref(), &mut local_failures);
+                        record.provider = leg.name.clone();
+                        record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
+
+                        if let (Some(card_id), Some(board_id)) =
+                            (record.card_id.clone(), record.board_id.clone())
+                        {
+                            answered.insert(q.q_id.clone(), Answered { board_id, card_id });
+                        }
+
+                        let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        if finished.is_multiple_of(10) || finished == total {
+                            println!("  {finished}/{total}");
+                        }
+                        if let Ok(mut out) = collected.lock() {
+                            out.push(record);
+                        }
                     }
                 }
             });
@@ -369,23 +387,97 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
-fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
+/// Group questions into families, each a root followed by its descendants.
+///
+/// Ancestor-first within a family, so a follow-up is never asked before the
+/// card it follows exists. A question whose parent is not in the set becomes a
+/// root of its own rather than being dropped: the corpus is allowed to grow a
+/// branch whose parent was filtered out by `--limit`, and losing the question
+/// silently would shrink the denominator of every metric without saying so.
+fn families(questions: &[Question], total: usize) -> VecDeque<Vec<Question>> {
+    let taken: Vec<&Question> = questions.iter().take(total).collect();
+    let present: HashSet<&str> = taken.iter().map(|q| q.q_id.as_str()).collect();
+
+    let mut children: HashMap<&str, Vec<&Question>> = HashMap::new();
+    let mut roots: Vec<&Question> = Vec::new();
+    for q in &taken {
+        match q.parent_q_id.as_deref() {
+            Some(parent) if present.contains(parent) => {
+                children.entry(parent).or_default().push(q);
+            }
+            _ => roots.push(q),
+        }
+    }
+
+    let mut out = VecDeque::with_capacity(roots.len());
+    for root in roots {
+        let mut family = Vec::new();
+        let mut frontier = vec![root];
+        // A node is appended before its children are explored, so the family
+        // comes out ancestor first however deep it goes. A cycle in
+        // `parent_q_id` would loop here, and the visited set is what stops a
+        // malformed corpus from hanging the sweep.
+        let mut visited = HashSet::new();
+        while let Some(q) = frontier.pop() {
+            if !visited.insert(q.q_id.as_str()) {
+                continue;
+            }
+            family.push((*q).clone());
+            if let Some(kids) = children.get(q.q_id.as_str()) {
+                frontier.extend(kids.iter().copied());
+            }
+        }
+        out.push_back(family);
+    }
+    out
+}
+
+/// Where a question's parent was answered, if it had one.
+///
+/// Half the corpus is follow-ups, and a follow-up asked on a board of its own
+/// is a question with no subject: "which article says so?" names nothing to
+/// retrieve. Measured that way, retrieval recall on standalone questions was
+/// 1.000 and on follow-ups 0.485, and every point of that gap was the harness
+/// asking the question wrong rather than the retriever answering it wrong.
+#[derive(Clone)]
+struct Answered {
+    board_id: String,
+    card_id: String,
+}
+
+fn run_one(
+    core: &mut Core,
+    q: &Question,
+    parent: Option<&Answered>,
+    failures: &mut usize,
+) -> RunRecord {
     let started = std::time::Instant::now();
 
+    // A follow-up belongs on its parent's board, which is what makes the
+    // ancestor chain walkable. A root question gets a board of its own.
+    //
     // Always `fast`, never the expected depth. Seeding the board default with
     // the label hands the Router part of the answer, because the default is the
     // baseline its recommendation starts from: every earlier sweep's route
     // accuracy was measured with that leak (BN-036), so those numbers are not
     // comparable with what this measures.
-    let board_id = match core.create_board(&q.text, "fast") {
-        Ok(id) => id,
-        Err(e) => {
-            *failures += 1;
-            return empty_record(q, format!("could not create a board: {e}"), started);
-        }
+    let board_id = match parent {
+        Some(p) => p.board_id.clone(),
+        None => match core.create_board(&q.text, "fast") {
+            Ok(id) => id,
+            Err(e) => {
+                *failures += 1;
+                return empty_record(q, format!("could not create a board: {e}"), started);
+            }
+        },
     };
 
-    let outcome = core.ask(&board_id, &q.text, Some(&q.depth_expected));
+    let outcome = core.ask_on(
+        &board_id,
+        &q.text,
+        Some(&q.depth_expected),
+        parent.map(|p| p.card_id.as_str()),
+    );
 
     let plan: Option<Value> = core
         .store
@@ -401,11 +493,22 @@ fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok());
 
+    // Only this card's events. A follow-up shares its parent's board, so an
+    // unfiltered read would hand the scorer the parent's flags and citations as
+    // though this card had raised them.
+    let this_card = outcome.as_ref().ok().map(|o| o.card_id.clone());
     let events: Vec<Value> = core
         .store
         .events(Some(&board_id))
         .unwrap_or_default()
         .into_iter()
+        .filter(|e| match (&this_card, &e.card_id) {
+            (Some(want), Some(got)) => want == got,
+            // A board level event belongs to whichever card provoked it, and
+            // for a root question that is this one.
+            (_, None) => parent.is_none(),
+            _ => true,
+        })
         .map(|e| {
             json!({
                 "type": e.event_type,
@@ -421,7 +524,10 @@ fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
             let board = tessera_store::repo::read_board(&core.store, &board_id)
                 .ok()
                 .flatten();
-            let card = board.as_ref().and_then(|b| b.cards.first());
+            // By id, not the board's first card: a follow-up sits on its
+            // parent's board, and `first()` would report the parent's answer as
+            // this question's.
+            let card = board.as_ref().and_then(|b| b.cards.iter().find(|c| c.id == o.card_id));
 
             RunRecord {
                 ok: true,
@@ -472,6 +578,7 @@ fn run_one(core: &mut Core, q: &Question, failures: &mut usize) -> RunRecord {
         }
     };
 
+    record.board_id = Some(board_id.clone());
     record.cost = run_cost(core, &board_id);
     record.events = events;
     record.latency_ms = started.elapsed().as_millis();
@@ -497,6 +604,7 @@ fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> R
         ok: false,
         failure: if failure.is_empty() { None } else { Some(failure) },
         card_id: None,
+        board_id: None,
         answer: None,
         findings: Vec::new(),
         visual_type: None,
@@ -594,17 +702,39 @@ fn routed() -> Value {
 }
 
 fn planned(request: &CompletionRequest) -> Value {
-    // One sub-question, the request itself. The Planner's own deterministic
-    // half assigns the retrievers, so the plan only has to be well formed.
+    // One sub-question. The Planner's own deterministic half assigns the
+    // retrievers, so the plan only has to be well formed and retrievable.
+    //
+    // Retrievable is the part that takes work. Half the corpus is follow-ups,
+    // and "which article says so?" names nothing to look for, so a plan that
+    // repeats the request back sends the retriever a query with no subject.
+    // Prefixing the nearest ancestor question is the crudest resolution there
+    // is: it invents nothing, and it puts the subject into the query the way a
+    // real Planner would while writing something far better. What it measures
+    // is therefore a floor on retrieval, not a ceiling.
+    let prompt = prompt_of(request);
+    let text = match ancestor_question(&prompt) {
+        Some(parent) => format!("{parent} {}", first_line(&prompt)),
+        None => first_line(&prompt),
+    };
     json!({
         "sub_questions": [{
             "sq_id": "sq-1",
-            "text": first_line(&prompt_of(request)),
+            "text": text,
             "purpose": "answer the question as asked",
             "priority": 1
         }],
         "scope_limits": []
     })
+}
+
+/// The nearest ancestor question the Planner's prompt was given, if any.
+fn ancestor_question(prompt: &str) -> Option<String> {
+    prompt
+        .lines()
+        .find(|l| l.starts_with("Ancestor question: "))
+        .map(|l| l.trim_start_matches("Ancestor question: ").trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Pull the passages back out of the prompt the Synthesizer built.
