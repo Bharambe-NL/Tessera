@@ -120,6 +120,24 @@ impl Provenance {
         }
     }
 
+    /// A retriever. Doc 01 section 6.3 makes this its own emitter type, and it
+    /// earns the distinction: retrievers are the only agents that touch data
+    /// from outside the profile, so "which of these events came from something
+    /// that reached out" is a question the audit trail has to answer directly
+    /// rather than by knowing which agent ids happen to be retrievers.
+    ///
+    /// Unverified like any other agent output. What a retriever found is
+    /// evidence, and evidence is not a verdict.
+    pub fn retriever(retriever_id: impl Into<String>, run_id: impl Into<String>) -> Self {
+        Self {
+            source: Source::Live,
+            emitter_id: retriever_id.into(),
+            emitter_type: EmitterType::Retriever,
+            run_id: Some(run_id.into()),
+            trust_level: TrustLevel::Unverified,
+        }
+    }
+
     pub fn with_source(mut self, source: Source) -> Self {
         self.source = source;
         self

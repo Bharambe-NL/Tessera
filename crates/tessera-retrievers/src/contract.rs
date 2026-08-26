@@ -219,22 +219,11 @@ pub fn cap(text: &str) -> String {
     text.chars().take(MAX_PASSAGE_CHARS).collect()
 }
 
-/// Normalise a locator so two retrievals of one thing become one Source.
+/// Re-exported so a connector does not have to know which crate owns it.
 ///
-/// Doc 05 section 12 wants zero duplicate sources for mirrored pages, and doc
-/// 01 section 4.8 keys the uniqueness on this. Case, scheme, a leading `www.`,
-/// a trailing slash and a query string are all noise that would otherwise make
-/// the same page look like four.
-pub fn dedupe_key(locator: &str) -> String {
-    let lower = locator.trim().to_lowercase();
-    let without_scheme = lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))
-        .unwrap_or(&lower);
-    let without_www = without_scheme.strip_prefix("www.").unwrap_or(without_scheme);
-    let without_query = without_www.split(['?', '#']).next().unwrap_or(without_www);
-    without_query.trim_end_matches('/').replace('\\', "/")
-}
+/// The definition lives in `tessera_store::repo`, because that crate owns the
+/// uniqueness constraint the key feeds. Two copies would drift.
+pub use tessera_store::repo::normalise_locator as dedupe_key;
 
 #[cfg(test)]
 mod tests {
