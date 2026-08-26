@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/retriever.v1",
+  "title": "Retriever task packet",
+  "description": "Doc 05 section 4. One packet per Planner assignment. All five retrievers share it and differ only in connector and doctrine, which is what lets the harness fan out over a list without knowing what any of them does.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "retriever_id",
+    "query",
+    "max_passages"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "card_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "sq_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The Planner sub-question this assignment serves. Null on a card that needed no plan."
+    },
+    "retriever_id": {
+      "enum": [
+        "web",
+        "local",
+        "regulatory",
+        "structured",
+        "boards"
+      ]
+    },
+    "query": {
+      "type": "string"
+    },
+    "filters": {
+      "type": "object",
+      "description": "Narrowing the connector understands. Doc 05 section 8.3: version_ref defaults to the version in force at the run date.",
+      "properties": {
+        "corpus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "folder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "date_from": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exclude_board_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Doc 05 section 8.5: the boards retriever never recalls from the board it is asked on."
+        }
+      }
+    },
+    "max_passages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "must_exclude": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Doctrine and profile exclusions, already merged. Doc 05 section 15's exclude_paths hook enforces these before any fetch, and a violation is a hard failure rather than a caveat."
+    },
+    "doctrine": {
+      "type": "object",
+      "properties": {
+        "trust_ranks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "class": {
+                "type": "string"
+              },
+              "issuer_pattern": {
+                "type": "string"
+              },
+              "rank": {
+                "type": "integer"
+              }
+            }
+          },
+          "description": "Doc 05 section 5: trust_rank is set from doctrine, never by the retriever's own judgment."
+        },
+        "freshness_classes": {
+          "type": "object"
+        },
+        "denied_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "effort_budget": {
+      "type": "object",
+      "properties": {
+        "max_fetches": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_latency_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

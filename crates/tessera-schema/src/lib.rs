@@ -224,6 +224,7 @@ pub mod ids {
     pub const PACKET_ROUTER: &str = "tessera:packet/router.v1";
     pub const PACKET_PLANNER: &str = "tessera:packet/planner.v1";
     pub const PACKET_VERIFIER: &str = "tessera:packet/verifier.v1";
+    pub const PACKET_RETRIEVER: &str = "tessera:packet/retriever.v1";
 
     pub const OUT_ROUTER: &str = "tessera:output/router.v1";
     pub const OUT_PLANNER: &str = "tessera:output/planner.v1";
@@ -245,6 +246,7 @@ pub mod ids {
         DOCTRINE_PACK,
         BUNDLE_MANIFEST,
         PACKET_ROUTER,
+        PACKET_RETRIEVER,
         PACKET_PLANNER,
         PACKET_VERIFIER,
         OUT_ROUTER,
