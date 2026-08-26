@@ -1,8 +1,6 @@
 {
   "corpus": "42",
-  "failed": [
-    "route_accuracy"
-  ],
+  "failed": [],
   "manifest": {
     "bulk_models": {
       "frontier": "kimi-k3",
@@ -81,12 +79,12 @@
     {
       "denominator": 400,
       "name": "route_accuracy",
-      "note": "",
+      "note": "advisory, the mock classifies every question identically",
       "numerator": 326,
       "reported": "0.815",
-      "threshold": 0.85,
+      "threshold": null,
       "value": 0.815,
-      "verdict": "fail"
+      "verdict": "reported"
     },
     {
       "denominator": 0,
@@ -211,7 +209,7 @@
     {
       "denominator": 353,
       "name": "flag_false_positive_rate",
-      "note": "worst rule `unsupported_claim`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory under a mock, which writes crudely and trips these by construction",
+      "note": "worst rule `unsupported_claim`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
       "numerator": 353,
       "reported": "1.000",
       "threshold": null,

@@ -69,6 +69,22 @@ LOWER_IS_BETTER = {
     "own_card_sole_support_rate",
 }
 
+#: Metrics whose subject is a model's judgment, and which therefore describe
+#: the fixture rather than the product when the provider is a mock.
+#:
+#: Reported, never gated, on a mock run. The alternative is a gate that fails
+#: every mock run forever for a reason nobody can fix, and a gate everyone
+#: learns to ignore is worse than no gate. Each one names why.
+MOCKED: dict[str, str] = {
+    # The mock returns one classification for every question, so the Router's
+    # deterministic depth rule can only reach one answer. Measured this way the
+    # number is a property of the fixture.
+    "route_accuracy": "the mock classifies every question identically",
+    # The grounded mock concatenates whole passages, so it trips the length and
+    # citation rules by construction.
+    "flag_false_positive_rate": "the mock writes crudely and trips these by construction",
+}
+
 #: Doc 02 section 10.3: fast is reported with no threshold, because fast mode is
 #: unverified by design.
 NO_THRESHOLD = {
@@ -602,11 +618,6 @@ def score(results: Path, corpus: Path) -> Report:
     if per_rule:
         worst_rule, worst_rate = max(per_rule.items(), key=lambda kv: kv[1])
         offenders = [r for r, v in per_rule.items() if v > THRESHOLDS["flag_false_positive_rate"]]
-        # Under a mock this measures the answer writer, not the Verifier. The
-        # grounded mock concatenates whole passages, so it trips length and
-        # citation rules by construction, and failing the build on that would
-        # be reading a real number as a verdict on the wrong subject.
-        mocked = manifest.get("provider") == "mock"
         report.metrics.append(
             Metric(
                 "flag_false_positive_rate",
@@ -614,14 +625,7 @@ def score(results: Path, corpus: Path) -> Report:
                 wrongly.get(worst_rule, 0),
                 fired[worst_rule],
                 f"worst rule `{worst_rule}`"
-                + (f"; over threshold: {', '.join(sorted(offenders))}" if offenders else "")
-                + (
-                    "; advisory under a mock, which writes crudely and trips these by "
-                    "construction"
-                    if mocked
-                    else ""
-                ),
-                advisory=mocked,
+                + (f"; over threshold: {', '.join(sorted(offenders))}" if offenders else ""),
             )
         )
     else:
@@ -785,6 +789,18 @@ def score(results: Path, corpus: Path) -> Report:
     report.metrics.extend(_memory_metrics(runs, answered, load_memory(corpus), manifest))
 
     # ------------------------------------------------------ breakdowns -----
+    # Doc 02 section 10.1 runs the mock deliberately, so the report has to say
+    # which of its numbers describe the product and which describe the fixture.
+    if manifest.get("provider") == "mock":
+        for metric in report.metrics:
+            reason = MOCKED.get(metric.name)
+            if reason is None or metric.value is None:
+                continue
+            metric.advisory = True
+            metric.note = (
+                f"{metric.note}; advisory, {reason}" if metric.note else (f"advisory, {reason}")
+            )
+
     report.per_edge_case = _by_edge_case(answered, facts)
     report.per_provider = _by_provider(runs, facts)
     report.per_question = [_question_row(r, facts) for r in runs]

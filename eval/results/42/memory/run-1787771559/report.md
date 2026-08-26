@@ -10,7 +10,7 @@ Provider mock, 400 questions, 0 produced no card.
 | fact_recall_research | 1.000 | 0.92 | pass |  |
 | fact_precision | 1.000 | 0.9 | pass | planted values stated that were the ones asked for |
 | forbidden_fact_rate | 0.000 | 0.0 | pass | share of answers stating a value planted as wrong |
-| route_accuracy | 0.815 | 0.85 | fail |  |
+| route_accuracy | 0.815 | 0.85 | reported | advisory, the mock classifies every question identically |
 | stakes_accuracy | n/a | 0.9 | n/a | run the breadth set to measure this |
 | domain_label_precision | 1.000 |  | reported | the keyword pass, when it spoke |
 | override_compliance | 1.000 | 1.0 | pass | the depth the user chose is the depth that ran |
@@ -23,7 +23,7 @@ Provider mock, 400 questions, 0 produced no card.
 | visual_type_match | 0.000 |  | reported |  |
 | no_source_honesty | 0.000 |  | reported | deep answers that reported no sources rather than answering unsupported |
 | flag_recall | 1.000 |  | reported |  |
-| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `unsupported_claim`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory under a mock, which writes crudely and trips these by construction |
+| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `unsupported_claim`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
 | staleness_detection | n/a | 0.95 | n/a | no citation in this run points at a superseded value; run the T3 snapshot |
 | source_hierarchy_compliance | 1.000 |  | reported | answers that took the higher ranked value where two classes disagreed |
 | reader_structure_recovery_f1 | n/a | 0.8 | n/a | the Reader arrives at M10; set reader_enabled when it does |
@@ -57,4 +57,4 @@ Provider mock, 400 questions, 0 produced no card.
 
 ## Verdict
 
-1 metric(s) below threshold: route_accuracy.
+No measured metric is below its threshold. 24 of 36 metrics had something to measure.

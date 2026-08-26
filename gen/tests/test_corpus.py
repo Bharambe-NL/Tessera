@@ -882,3 +882,45 @@ def test_a_run_that_produced_nothing_scores_nothing(corpus: Path, tmp_path: Path
         "these scored 0.000 against a threshold from a run that produced nothing, "
         f"which reads as a failure rather than an absence: {scored_zero}"
     )
+
+
+def test_advisory_metrics_are_gated_again_on_a_real_provider(corpus: Path, tmp_path: Path) -> None:
+    """The mock exemption must be an exemption, not a retirement.
+
+    A metric that describes the fixture under a mock still has to be a gate the
+    moment a real model answers. Without this, adding a name to MOCKED silently
+    drops the gate everywhere.
+    """
+    assert harness.MOCKED, "the mock exemption list is empty; this test guards nothing"
+
+    for name, reason in harness.MOCKED.items():
+        assert name in harness.THRESHOLDS, f"{name} is exempted from a threshold it does not have"
+        assert reason.strip(), f"{name} is exempted without saying why"
+
+    mocked = harness.Metric("route_accuracy", 0.10, 1, 10, advisory=True)
+    real = harness.Metric("route_accuracy", 0.10, 1, 10)
+    assert mocked.verdict() == "reported"
+    assert real.verdict() == "fail", "the threshold stopped applying to real runs"
+    assert mocked.to_json()["threshold"] is None
+    assert real.to_json()["threshold"] == harness.THRESHOLDS["route_accuracy"]
+
+
+def test_a_mock_run_still_gates_what_the_mock_does_not_decide(corpus: Path, tmp_path: Path) -> None:
+    """A sweep where nothing is gated proves nothing.
+
+    Exempting the model-judgment metrics under a mock is right, and it stops
+    being right the moment it exempts enough that the run cannot fail.
+    """
+    results = tmp_path / "run"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text("", encoding="utf-8")
+    (results / "manifest.json").write_text(
+        json.dumps({"provider": "mock", "snapshot": "T1"}), encoding="utf-8"
+    )
+    report = harness.score(results, corpus)
+
+    exempt = set(harness.MOCKED)
+    gateable = {m.name for m in report.metrics if m.name in harness.THRESHOLDS} - exempt
+    assert (
+        len(gateable) >= 8
+    ), f"only {len(gateable)} metrics can still fail a mock run: {sorted(gateable)}"
