@@ -713,3 +713,77 @@ fn a_fast_card_never_retrieves() {
         "a fast card went to the corpus: {events:?}"
     );
 }
+
+#[test]
+fn a_verified_card_is_remembered_and_recalled_on_another_board() {
+    // Doc 15's whole point, end to end: a card answered on one board becomes
+    // context on another, and the card that uses it records builds_on. Doc 15
+    // section 2's rule is what keeps it honest, and that rule is the Verifier's
+    // job at M8; this is the retrieval half of it.
+    use tessera_retrievers::{IndexedConfig, boards};
+
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output()))
+            .on("visualize", MockResponse::Json(visual_output())),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    core.retrievers = tessera_core::retrieval::RetrieverSet {
+        indexed: vec![("boards".into(), IndexedConfig::boards())],
+        embedder: None,
+    };
+
+    // A first board answers a question at deep, which makes it eligible.
+    let first = core.create_board("First", "deep").expect("board");
+    core.ask(&first, "what is the capital conservation buffer?", Some("deep"))
+        .expect("first card");
+
+    let indexed: i64 = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM index_entry WHERE folder_id = ?1",
+            rusqlite::params![boards::BOARDS_FOLDER],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(indexed, 1, "the answered card was not remembered");
+
+    // A second board asks something related and should recall it.
+    let second = core.create_board("Second", "deep").expect("board");
+    core.ask(&second, "how does the capital conservation buffer apply?", Some("deep"))
+        .expect("second card");
+
+    let events: Vec<String> = core
+        .store
+        .events(Some(&second))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(events.contains(&"retrieval.completed.v1".to_string()), "{events:?}");
+
+    // The prior card arrived as its own source class, which is what lets the
+    // Verifier single it out at M8.
+    let own_card: i64 = core
+        .store
+        .conn()
+        .query_row("SELECT count(*) FROM source WHERE class = 'own_card'", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(own_card, 1, "the prior card did not arrive as own_card");
+
+    // And the new card records what it was built on. Doc 01 section 4.4.
+    let builds_on: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT builds_on FROM card WHERE board_id = ?1",
+            rusqlite::params![second],
+            |r| r.get(0),
+        )
+        .expect("card");
+    assert!(builds_on.contains(&first), "builds_on did not name the board it came from: {builds_on}");
+}

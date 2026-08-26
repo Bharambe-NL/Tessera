@@ -434,12 +434,25 @@ def score(results: Path, corpus: Path) -> Report:
     supported = sum(
         1 for r in answered for c in (r.get("citations") or []) if c.get("verdict") == "supported"
     )
+    # BN-019 for the fourth time. This counts verdicts equal to `supported`,
+    # and every verdict is `unchecked` until the support check lands at M8. The
+    # denominator was zero while retrieval did not exist, so it reported n/a
+    # honestly; the first run that produces citations would have turned that
+    # into 0.000 against a 0.95 threshold and called M6 a regression.
     report.metrics.append(
         _ratio(
             "citation_accuracy_ledger",
             supported,
             cited,
             "" if cited else "no citations were produced, so none could be checked",
+        )
+        if support_check
+        else Metric(
+            "citation_accuracy_ledger",
+            None,
+            supported,
+            cited,
+            "the support check runs from M8; every verdict in this run is `unchecked`",
         )
     )
     report.metrics.append(

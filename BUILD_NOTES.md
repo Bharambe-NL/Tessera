@@ -525,6 +525,64 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-047 The three defects the M6 plan predicted, closed
+
+All three were found while planning M6 and recorded before they could bite. Two had become live
+by the time retrieval worked.
+
+**`boards` was in neither shipped pack.** The Planner only assigns retrievers a pack enables, so
+memory would never have run whatever `Profile.memory_enabled` said, and all three of doc 15's
+metrics would have reported `n/a` forever while looking wired. Both packs now list it, and both
+gained the `own_card` trust rank doc 05 section 8.5 fixes at 5 in finance, below every external
+class. In the general pack `user_supplied` moved from 5 to 6 rather than sharing a rank with
+`own_card`, because a tie makes the hierarchy non-deterministic exactly where its job is to
+decide.
+
+The schema guard caught the pack change before any test did: `doctrine-pack.v1` did not admit
+`boards` as a retriever id. That is the guard doing precisely what doc 12 principle 1 asks of
+it, on a change nobody thought needed validating.
+
+**`citation_accuracy_ledger` would have called M6 a regression.** It counts verdicts equal to
+`supported`, and every verdict is `unchecked` until the support check lands at M8. The
+denominator was zero while retrieval did not exist, so it reported n/a honestly; the first run
+producing citations would have turned that into 0.000 against a 0.95 threshold. Now gated on
+`support_check_enabled`, the same way `verifier_agreement` already was.
+
+This is BN-019 for the fourth time: a metric with nothing to measure must report n/a, never
+zero. Four occurrences in one project is no longer a slip, it is the default failure mode of
+writing a scorer before the thing it scores exists.
+
+**Scanned pdf recall is deferred to M10 with the Reader.** Doc 05 section 12 asks for 0.70 and
+doc 05 section 8.2 routes scanned pdfs through "the Reader's OCR path", which doc 12 phase 9
+builds. The parser already reports `NeedsOcr` rather than a generic failure so the Profile can
+say what the file is waiting for, and the corpus's one scanned pdf is correctly classified.
+
+### BN-048 A card is remembered when it is answered, and forgotten when it stops qualifying
+
+**Spec** 05 section 8.5: the boards index is "updated on `card.answered.v1`". Doc 15 section 3:
+"Only verified cards remember: done, deep or research, no open block flags, board not trashed."
+
+**Decision** Eligibility is one SQL query rather than four Rust conditions, evaluated where the
+data is. Four clauses checked in code are four clauses that can drift apart, and three of them
+are about rows in other tables.
+
+**The half that is easy to miss.** Eligibility can stop being true after the fact. A flag is
+raised, a board is trashed. So a card that fails the check is actively removed from the index
+rather than merely not added to it, which is why `index_card` returning false also forgets. The
+test that matters is the trashed board: a user throws work away and its cards keep answering
+questions, which would be the product ignoring a deletion.
+
+**What is indexed** is a digest carrying the card's own citations, per doc 05 section 8.5 and
+for the reason doc 15 section 2 gives: a new card's numbers must cite the original passage,
+"which the boards passage carries in its digest". A digest without them is a dead end, and
+citing it is exactly the loop the memory rule exists to prevent. A card that cited nothing says
+so in its own digest.
+
+`builds_on` is collected in the fan-out rather than derived downstream. The Synthesizer's packet
+carries a trimmed source per doc 06 section A4 with no locator in it, so the only place that
+knows which prior card a passage came from is the place that fetched it. The first version read
+it downstream and silently produced an empty list.
+
 ### BN-044 A fact's label now identifies the fact
 
 **Fixes** BN-041, where 506 labelled facts drawn from 49 labels left "the model inventory review

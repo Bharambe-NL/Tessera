@@ -5,205 +5,376 @@
   "description": "Doc 01 section 4.17. Doctrine is data: packs are files, versioned, importable, editable in the Profile, and no pack content lives in code (doc 10 principle 6). A board pins a version, and a pack update never rewrites it.",
   "type": "object",
   "required": [
-    "code", "version", "audiences", "source_hierarchy", "freshness_classes",
-    "flag_rules", "retrievers", "exercise_templates"
+    "code",
+    "version",
+    "audiences",
+    "source_hierarchy",
+    "freshness_classes",
+    "flag_rules",
+    "retrievers",
+    "exercise_templates"
   ],
   "additionalProperties": false,
   "properties": {
-    "code": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "examples": ["general", "finance-eu"] },
-    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$", "description": "Semver. Boards pin a version." },
-    "name": { "type": "string" },
-    "description": { "type": "string" },
-
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "examples": [
+        "general",
+        "finance-eu"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver. Boards pin a version."
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
     "domains": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "The Router classifies into one of these or unknown."
     },
-
     "domain_vocabulary": {
       "type": "object",
-      "additionalProperties": { "type": "array", "items": { "type": "string" } },
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
       "description": "Keywords per domain. A strong single match sets the domain without asking the model (doc 03 section 8.1)."
     },
-
     "depth_hints": {
       "type": "object",
-      "additionalProperties": { "enum": ["fast", "deep", "research"] },
+      "additionalProperties": {
+        "enum": [
+          "fast",
+          "deep",
+          "research"
+        ]
+      },
       "description": "Minimum depth the doctrine suggests per domain. Doc 03 section 8.2 step 3."
     },
-
     "minimum_depth": {
       "type": "object",
-      "additionalProperties": { "enum": ["fast", "deep", "research"] },
+      "additionalProperties": {
+        "enum": [
+          "fast",
+          "deep",
+          "research"
+        ]
+      },
       "description": "Doc 03 open question 3, resolved as proposed: the pack may set a minimum the user cannot lower, and the UI shows why fast is unavailable for this question."
     },
-
     "audiences": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "name"],
+        "required": [
+          "id",
+          "name"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
-          "vocabulary_notes": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "vocabulary_notes": {
+            "type": "string"
+          },
           "avoid": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Terms the audience_vocabulary model check flags. Doc 07 section B8.5."
           }
         }
       }
     },
-
     "source_hierarchy": {
       "type": "array",
       "description": "Which sources outrank which. Finance: regulator over filing over press. Lower trust_rank is more trusted.",
       "items": {
         "type": "object",
-        "required": ["class", "trust_rank"],
+        "required": [
+          "class",
+          "trust_rank"
+        ],
         "properties": {
-          "class": { "$ref": "tessera:entity/common.v1#/$defs/source_class" },
-          "issuer_pattern": { "type": "string" },
-          "trust_rank": { "type": "integer", "minimum": 1 }
+          "class": {
+            "$ref": "tessera:entity/common.v1#/$defs/source_class"
+          },
+          "issuer_pattern": {
+            "type": "string"
+          },
+          "trust_rank": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       }
     },
-
     "freshness_classes": {
       "type": "object",
       "description": "Regulation ages differently from a product doc. Drives the freshness gate, Pattern 5.",
       "additionalProperties": {
         "type": "object",
-        "required": ["max_age_days", "on_stale"],
+        "required": [
+          "max_age_days",
+          "on_stale"
+        ],
         "properties": {
-          "max_age_days": { "type": "integer", "minimum": 1 },
-          "on_stale": { "enum": ["flag", "rerun"] }
+          "max_age_days": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "on_stale": {
+            "enum": [
+              "flag",
+              "rerun"
+            ]
+          }
         }
       }
     },
-
     "flag_rules": {
       "type": "array",
       "description": "What the Verifier must hold back. Doc 07 section B8. A rule whose false positive rate exceeds 0.10 is disabled by default and listed as an open item (doc 02 section 10.3).",
       "items": {
         "type": "object",
-        "required": ["rule_id", "severity", "description", "detector"],
+        "required": [
+          "rule_id",
+          "severity",
+          "description",
+          "detector"
+        ],
         "properties": {
-          "rule_id": { "type": "string" },
-          "severity": { "$ref": "tessera:entity/common.v1#/$defs/severity" },
-          "description": { "type": "string" },
+          "rule_id": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "tessera:entity/common.v1#/$defs/severity"
+          },
+          "description": {
+            "type": "string"
+          },
           "detector": {
             "type": "string",
             "pattern": "^(deterministic|model):[a-z0-9_]+$",
             "description": "Names a deterministic check or a model prompt id. A model detector may raise at most warn (doc 07 section B8.5)."
           },
-          "params": { "type": "object" },
-          "enabled": { "type": "boolean", "default": true },
+          "params": {
+            "type": "object"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
           "modes": {
             "type": "array",
-            "items": { "$ref": "tessera:entity/common.v1#/$defs/depth" },
+            "items": {
+              "$ref": "tessera:entity/common.v1#/$defs/depth"
+            },
             "description": "Modes the rule runs in. Absent means every mode."
           }
         }
       }
     },
-
     "sensitivity_rules": {
       "type": "array",
       "description": "Run by the Router before any retrieval spends money. Doc 03 section 8.4.",
       "items": {
         "type": "object",
-        "required": ["rule_id", "detector", "severity"],
+        "required": [
+          "rule_id",
+          "detector",
+          "severity"
+        ],
         "properties": {
-          "rule_id": { "type": "string" },
-          "detector": { "type": "string" },
-          "severity": { "$ref": "tessera:entity/common.v1#/$defs/severity" },
-          "patterns": { "type": "array", "items": { "type": "string" } }
+          "rule_id": {
+            "type": "string"
+          },
+          "detector": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "tessera:entity/common.v1#/$defs/severity"
+          },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
-
     "retrievers": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "enum": ["web", "local", "regulatory", "structured"] },
-          "enabled_by_default": { "type": "boolean" },
-          "config": { "type": "object" },
+          "id": {
+            "enum": [
+              "web",
+              "local",
+              "regulatory",
+              "structured",
+              "boards"
+            ]
+          },
+          "enabled_by_default": {
+            "type": "boolean"
+          },
+          "config": {
+            "type": "object"
+          },
           "must_exclude": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "The Planner may add to this, never remove from it. Doc 04 section 5."
           }
         }
       }
     },
-
     "visual_preferences": {
       "type": "object",
       "properties": {
-        "type_preferences": { "type": "object", "additionalProperties": { "type": "string" } },
-        "max_nodes": { "type": "integer", "minimum": 1 },
-        "max_rows": { "type": "integer", "minimum": 1 },
+        "type_preferences": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "max_nodes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_rows": {
+          "type": "integer",
+          "minimum": 1
+        },
         "generated_images": {
           "type": "boolean",
           "description": "Doc 06 section B14 open question 2, resolved as proposed: on for the general pack, off for finance."
         }
       }
     },
-
     "writing_rules": {
       "type": "object",
       "properties": {
-        "units": { "type": "string" },
-        "spelling": { "type": "string" },
-        "sentence_max_words": { "type": "integer", "minimum": 1 },
-        "dashes": { "type": "boolean" }
+        "units": {
+          "type": "string"
+        },
+        "spelling": {
+          "type": "string"
+        },
+        "sentence_max_words": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dashes": {
+          "type": "boolean"
+        }
       }
     },
-
     "exercise_templates": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "item_kinds"],
+        "required": [
+          "id",
+          "item_kinds"
+        ],
         "properties": {
-          "id": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
           "item_kinds": {
             "type": "array",
-            "items": { "enum": ["recall", "apply", "contrast", "trace"] }
+            "items": {
+              "enum": [
+                "recall",
+                "apply",
+                "contrast",
+                "trace"
+              ]
+            }
           },
-          "items_per_card_max": { "type": "integer", "minimum": 1 },
-          "options": { "type": "integer", "minimum": 2 }
+          "items_per_card_max": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "options": {
+            "type": "integer",
+            "minimum": 2
+          }
         }
       }
     },
-
     "learning_templates": {
       "type": "object",
       "description": "Doc 14 section 3.2: intake question templates per domain, curriculum shapes, mastery thresholds.",
       "properties": {
-        "intake_questions": { "type": "array", "items": { "type": "object" } },
-        "curriculum_shapes": { "type": "array", "items": { "type": "string" } },
-        "mastery_threshold": { "type": "integer", "minimum": 1 }
+        "intake_questions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "curriculum_shapes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mastery_threshold": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
-
     "rulings": {
       "type": "array",
       "description": "Accumulated decisions, written by the occupants over time. Pattern 16 team memory, scoped to a pack.",
       "items": {
         "type": "object",
-        "required": ["id", "text"],
+        "required": [
+          "id",
+          "text"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "text": { "type": "string" },
-          "cites": { "type": "array", "items": { "type": "string" } },
-          "adopted_at": { "$ref": "tessera:entity/common.v1#/$defs/timestamp" }
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "cites": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "adopted_at": {
+            "$ref": "tessera:entity/common.v1#/$defs/timestamp"
+          }
         }
       }
     }

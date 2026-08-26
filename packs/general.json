@@ -29,8 +29,12 @@
       "trust_rank": 4
     },
     {
-      "class": "user_supplied",
+      "class": "own_card",
       "trust_rank": 5
+    },
+    {
+      "class": "user_supplied",
+      "trust_rank": 6
     }
   ],
   "freshness_classes": {
@@ -154,6 +158,11 @@
       "must_exclude": [
         "Sensitive"
       ]
+    },
+    {
+      "id": "boards",
+      "enabled_by_default": true,
+      "must_exclude": []
     }
   ],
   "visual_preferences": {

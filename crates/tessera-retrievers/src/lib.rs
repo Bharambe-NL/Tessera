@@ -6,6 +6,7 @@
 //! makes the whole of this crate measurable against the synthetic corpus for
 //! nothing.
 
+pub mod boards;
 pub mod chunking;
 pub mod contract;
 pub mod embed;
@@ -13,6 +14,7 @@ pub mod index;
 pub mod indexed;
 pub mod parse;
 
+pub use boards::{BOARDS_FOLDER, index_card};
 pub use chunking::{Chunk, ChunkLocation};
 pub use contract::{Coverage, Packet, Passage, Retrieved, Source};
 pub use embed::{Embedder, HashEmbedder, LocalEmbedder};

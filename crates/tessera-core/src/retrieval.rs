@@ -106,6 +106,11 @@ fn assignments(plan: Option<&Value>, question: &str, set: &RetrieverSet) -> Vec<
 pub struct FanOut {
     /// Ordered as doc 06 section A4 promises: trust rank, then score.
     pub passages: Vec<Value>,
+    /// Doc 05 section 8.5's `builds_on`, collected here rather than derived
+    /// downstream. The Synthesizer's packet carries a trimmed source per doc 06
+    /// section A4 and has no locator in it, so the only place that knows which
+    /// prior card a passage came from is the place that fetched it.
+    pub builds_on: Vec<Value>,
     /// Doc 05 section 10: the card caveat names the exclusion category and
     /// never the excluded item.
     pub caveats: Vec<String>,
@@ -134,6 +139,7 @@ pub fn run(
 ) -> FanOut {
     let mut out = FanOut {
         passages: Vec::new(),
+        builds_on: Vec::new(),
         caveats: Vec::new(),
         assignments_run: 0,
         assignments_failed: 0,
@@ -245,6 +251,22 @@ pub fn run(
         // found by.
         let ids = retained.map(|r| r.passage_ids).unwrap_or_default();
         for (i, passage) in retrieved.passages.iter().enumerate() {
+            // A prior card's locator is `board_id/card_id`, which is exactly
+            // what doc 01 section 4.4 records and what doc 15's ground truth
+            // names a prior card by.
+            if passage.source.class == "own_card"
+                && let Some((board, card)) = passage.source.locator.split_once('/')
+            {
+                let entry = json!({
+                    "board_id": board,
+                    "card_id": card,
+                    "verified_at": tessera_store::now_iso8601(),
+                });
+                if !out.builds_on.contains(&entry) {
+                    out.builds_on.push(entry);
+                }
+            }
+
             out.passages.push(json!({
                 "passage_id": ids.get(i).cloned().unwrap_or_else(|| passage.passage_id.clone()),
                 "sq_id": assignment.sq_id,

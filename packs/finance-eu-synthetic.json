@@ -104,6 +104,10 @@
       "trust_rank": 4
     },
     {
+      "class": "own_card",
+      "trust_rank": 5
+    },
+    {
       "class": "web",
       "issuer_pattern": "ledgerline.invalid",
       "trust_rank": 6
@@ -313,6 +317,11 @@
     {
       "id": "structured",
       "enabled_by_default": false,
+      "must_exclude": []
+    },
+    {
+      "id": "boards",
+      "enabled_by_default": true,
       "must_exclude": []
     }
   ],

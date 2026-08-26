@@ -211,6 +211,7 @@ pub async fn run_card(
     // With no retriever configured this returns nothing and doc 06 section A10
     // turns that into an honest "no sources" card, which is what a profile
     // that has not been pointed at a folder yet deserves.
+    let mut builds_on: Vec<Value> = Vec::new();
     let passages: Vec<Value> = if mode == "fast" {
         Vec::new()
     } else {
@@ -254,6 +255,7 @@ pub async fn run_card(
                 .on_card(card_id),
             )?;
         }
+        builds_on = fan.builds_on;
         fan.passages
     };
 
@@ -493,11 +495,19 @@ pub async fn run_card(
         .unwrap_or_default();
 
     let confidence = verified["card_confidence"].as_f64().unwrap_or(0.0);
-    // Empty until the boards retriever lands at M6. Doc 05 section 8.5 fills
-    // this with the own_card passages the Synthesizer cited or used.
-    repo::finish_card(store, at, confidence, &verdicts, &verified["checks_run"], &[])?;
+    repo::finish_card(store, at, confidence, &verdicts, &verified["checks_run"], &builds_on)?;
     repo::end_run(store, &run_id, "done")?;
     repo::touch_board(store, board_id)?;
+
+    // Doc 05 section 8.5: the boards index is "updated on `card.answered.v1`".
+    // Eligibility is checked inside, so a card that does not qualify is simply
+    // not remembered, and one that has stopped qualifying is removed.
+    let _ = tessera_retrievers::boards::index_card(
+        store.conn(),
+        &ctx.profile_id,
+        card_id,
+        ctx.retrievers.embedder.as_deref(),
+    );
 
     let open_flags = verified["flags"].as_array().map(Vec::len).unwrap_or(0);
     Ok(CardOutcome {
