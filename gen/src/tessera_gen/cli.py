@@ -14,7 +14,7 @@ from pathlib import Path
 from . import boards as boards_mod
 from . import breadth as breadth_mod
 from . import corpus as corpus_mod
-from . import edge_cases, harness, mess, writer
+from . import edge_cases, harness, mess, retrieval, writer
 from . import memory as memory_mod
 from . import questions as questions_mod
 from . import snapshots as snapshots_mod
@@ -136,6 +136,24 @@ def score(results: Path, corpus: Path) -> int:
     return 1 if report.failed else 0
 
 
+def score_retrieval(results: Path, corpus: Path) -> int:
+    """Doc 05 section 12's recall gates, measured on the index alone."""
+    if not results.exists():
+        print(f"no results at {results}", file=sys.stderr)
+        return 2
+    if not (corpus / "facts.jsonl").exists():
+        print(f"no corpus at {corpus}. Run `gen build` first.", file=sys.stderr)
+        return 2
+
+    report = retrieval.score(results, corpus)
+    print(retrieval.render(report))
+    (results.parent / f"{results.stem}.report.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+    failed = [f for f, b in report["by_folder"].items() if b["verdict"] == "fail"]
+    return 1 if failed else 0
+
+
 def serve(seed: int, out: Path, port: int) -> int:
     """The local static server for the synthetic web. Doc 02 section 10.1 points
     the web retriever at it, so nothing in evaluation ever leaves the machine."""
@@ -182,6 +200,13 @@ def main(argv: list[str] | None = None) -> int:
     p_score.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p_score.add_argument("--out", type=Path, default=DEFAULT_OUT)
 
+    p_recall = sub.add_parser(
+        "score-retrieval", help="score what the index retrieved, doc 05 section 12"
+    )
+    p_recall.add_argument("--results", type=Path, required=True)
+    p_recall.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    p_recall.add_argument("--out", type=Path, default=DEFAULT_OUT)
+
     p_serve = sub.add_parser("serve", help="serve the synthetic web corpus")
     p_serve.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p_serve.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -199,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         return snapshot(args.seed, args.out, args.label)
     if args.command == "score":
         return score(args.results, args.out / str(args.seed))
+    if args.command == "score-retrieval":
+        return score_retrieval(args.results, args.out / str(args.seed))
     if args.command == "serve":
         return serve(args.seed, args.out, args.port)
     return 2

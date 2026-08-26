@@ -12,7 +12,6 @@ OCR noise tells you nothing about which of eight transformations did it.
 from __future__ import annotations
 
 import pathlib
-
 from dataclasses import dataclass
 
 from .corpus import Document, Passage

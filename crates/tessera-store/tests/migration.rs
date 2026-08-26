@@ -295,3 +295,106 @@ fn schema_of(conn: &Connection) -> Vec<(String, String)> {
     .collect::<Result<Vec<_>, _>>()
     .expect("rows")
 }
+
+#[test]
+fn the_vault_enum_values_are_accepted_before_anything_writes_them() {
+    // Doc 16 section 4's three CHECK widenings, landed early on purpose. The
+    // enum value costs nothing; the table rebuild it needs is what BN-028
+    // showed to be dangerous, and doing it once beats doing it twice.
+    let root = temp_root();
+    let ids = write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+    let now = now_iso8601();
+
+    // Doc 16 section 3.3: a page is a source of its own class.
+    conn.execute(
+        "INSERT INTO source (id, profile_id, class, title, locator, retrieved_at,
+             freshness_class, trust_rank, dedupe_key, created_at)
+         VALUES (?1, ?2, 'page', 'A page', 'vault/a-page.md', ?3, 'stable', 4, 'vault/a-page', ?3)",
+        params![new_id(), ids.profile, now],
+    )
+    .expect("page is accepted as a source class");
+
+    // Doc 16 section 3.5: two visual types the tree cannot express.
+    for visual_type in ["flow", "stats"] {
+        conn.execute(
+            "INSERT INTO visual (id, card_id, type, title, payload, block_index, created_at)
+             VALUES (?1, ?2, ?3, 'A visual', '{}', '{}', ?4)",
+            params![new_id(), ids.card, visual_type, now],
+        )
+        .unwrap_or_else(|e| panic!("{visual_type} was rejected: {e}"));
+    }
+
+    // Doc 16 section 3.4: notebook sessions are boards, so they inherit
+    // history, events, memory and export.
+    conn.execute(
+        "UPDATE board SET mode = 'notebook' WHERE id = ?1",
+        params![ids.board],
+    )
+    .expect("notebook is accepted as a board mode");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn the_widened_checks_still_refuse_what_they_always_refused() {
+    // A rebuild that quietly dropped a constraint would look exactly like a
+    // rebuild that widened it, right up until the first bad row.
+    let root = temp_root();
+    let ids = write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+    let now = now_iso8601();
+
+    assert!(
+        conn.execute(
+            "INSERT INTO source (id, profile_id, class, title, locator, retrieved_at,
+                 freshness_class, trust_rank, dedupe_key, created_at)
+             VALUES (?1, ?2, 'rumour', 'Nowhere', 'x', ?3, 'stable', 9, 'x', ?3)",
+            params![new_id(), ids.profile, now],
+        )
+        .is_err(),
+        "the source class check did not survive the rebuild"
+    );
+
+    assert!(
+        conn.execute(
+            "INSERT INTO visual (id, card_id, type, title, payload, block_index, created_at)
+             VALUES (?1, ?2, 'interpretive_dance', 'A visual', '{}', '{}', ?3)",
+            params![new_id(), ids.card, now],
+        )
+        .is_err(),
+        "the visual type check did not survive the rebuild"
+    );
+
+    assert!(
+        conn.execute("UPDATE board SET mode = 'freestyle' WHERE id = ?1", params![ids.board])
+            .is_err(),
+        "the board mode check did not survive the rebuild"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_rebuilt_table_keeps_the_rows_that_pointed_into_it() {
+    // Two rebuilds in one migration, and `passage.source_id` cascades. This is
+    // the failure BN-028 caught the first time and the reason it is worth
+    // catching again with every new rebuild.
+    let root = temp_root();
+    write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+
+    let count = |table: &str| -> i64 {
+        conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .expect("count")
+    };
+    assert_eq!(count("passage"), 1, "the source rebuild took the passages");
+    assert_eq!(count("citation"), 1, "the citations went with them");
+    assert_eq!(count("card"), 1, "the board rebuild took the cards");
+    assert_eq!(count("board"), 1, "the board rebuild lost the board");
+
+    std::fs::remove_dir_all(&root).ok();
+}

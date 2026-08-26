@@ -525,6 +525,81 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-041 Six hundred facts drawn from forty nine labels, and what that does to every recall gate
+
+**Spec** 05 section 12 sets retrieval recall at 0.90 local and 0.95 regulatory. Doc 02 section
+10.2 sets fact recall at 0.85 deep and 0.92 research.
+
+**Measured** on the first full retrieval probe. Hybrid retrieval returns the required fact in
+the top twelve for 0.545 of lookups. The index is not the problem: every one of the 180 required
+facts is present in some indexed chunk, so coverage is 1.000 and the whole gap is ranking.
+
+**Found while asking why ranking was that bad.** The corpus has 506 labelled facts drawn from
+**49 distinct labels**. "The model inventory review interval" carries 24 different values, all
+marked `truth: true`: 16 months, 17, 10, 18, 4, 21, 13, and so on. Seventy percent of required
+facts share their label with five or more others, and the median required label is stated in 24
+separate chunks.
+
+So the question "What is the model inventory review interval?" has twenty four equally true
+answers in the corpus, and nothing in the question says which one is meant. No retriever can
+choose, and neither can a Synthesizer downstream, which means this defect was going to surface
+at the fact recall gate too whatever happened here.
+
+This is not doc 02 section 5.2's planted contradiction. Those are deliberate, marked with an
+`edge_case_id`, and there are a handful. This is the fact generator drawing from a small pool of
+subject labels while producing six hundred independent facts, so a label identifies a topic and
+never a fact.
+
+**Consequence for the gates.** Doc 05 section 12's recall numbers are not measurable on this
+corpus as written, and neither is doc 02 section 10.2's fact recall. A retriever that returns
+every passage stating the label has done its job; picking the one the ledger happens to name is
+not a skill, it is a coin toss with twenty four sides. The deliberate contradiction cases are
+also diluted past usefulness: one planted disagreement is indistinguishable from twenty three
+accidental ones.
+
+**The fix is in the generator, not the retriever.** A fact's label has to identify the fact.
+Either the label pool grows to the order of the fact count, or a label is qualified by what
+distinguishes it, which is what a real regulation does: intervals differ by model class,
+buffers by institution tier. Until then every retrieval and recall number on this corpus is
+measuring corpus ambiguity rather than the product.
+
+Recorded before fixing, because the numbers already gathered are only interpretable against it.
+
+### BN-042 A fixed candidate depth is a ceiling that looks like a result
+
+**Found** while reading the recall curve. Recall climbed with the requested window and then
+stopped dead at 0.697 from k=100 onward, which reads as the ranker running out of relevant
+passages.
+
+It was `CANDIDATE_DEPTH`, a constant of 60 in the search path, capping how many candidates each
+half of the hybrid produced before fusion. Every request above sixty returned sixty. The
+plateau was the constant.
+
+Two things wrong, one measurement and one product. The measurement drew a ceiling that was an
+artifact. The product silently truncated: a caller asking for a hundred passages had no way to
+know it got sixty, and doc 05 section 4's packet lets a caller ask for whatever it needs.
+
+The depth is now the floor or the caller's limit, whichever is larger. With the cap gone the
+true lexical ceiling is 0.795 and hybrid reaches 0.832, so the vector half is finding passages
+the lexical half never matches, which is the thing the two halves exist to do for each other.
+
+`asking_for_more_than_the_candidate_floor_actually_returns_more` is the guard.
+
+### BN-043 Removing stopwords made retrieval worse
+
+**Tried** on the theory that OR-ing every term, including "what" and "the", floods the candidate
+set with passages matching on nothing.
+
+**Measured** against the same corpus and question set: recall fell at every depth except k=1.
+At k=25 it lost 0.026.
+
+**Reverted.** FTS5's bm25 already discounts a common term by its inverse document frequency, so
+the words were costing nothing, and removing them threw away the small amount of signal a
+stopword still carries in a templated question. The change would also have added a per language
+word list to maintain, for a measurable regression.
+
+Recorded because the idea is obvious enough that someone will have it again.
+
 ### BN-040 The embedding model runs on candle, not on an ONNX runtime
 
 **Spec** 10 section 3: "Local small model (e.g. a bge or nomic class model via candle) by

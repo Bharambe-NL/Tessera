@@ -25,9 +25,13 @@ use crate::embed::{Embedder, cosine, from_blob, to_blob};
 /// cannot dominate on confidence alone.
 const RRF_K: f64 = 60.0;
 
-/// How deep each half looks before fusion. Wider than any caller's
-/// `max_passages`, because a passage that fusion would promote has to survive
-/// long enough to be fused.
+/// How deep each half looks before fusion, as a floor.
+///
+/// The real depth is this or the caller's limit, whichever is larger. A fixed
+/// cap silently truncates: asked for a hundred passages it returned sixty, and
+/// while measuring recall it produced a plateau that looked like the ranker's
+/// ceiling and was this constant all along. Fusion needs the headroom too,
+/// because a passage it would promote has to survive both halves to be fused.
 const CANDIDATE_DEPTH: usize = 60;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -245,7 +249,8 @@ pub fn search(
     embedder: Option<&dyn Embedder>,
     limit: usize,
 ) -> rusqlite::Result<Vec<Hit>> {
-    let lexical_hits = lexical(conn, folder_ids, query, CANDIDATE_DEPTH)?;
+    let depth = CANDIDATE_DEPTH.max(limit);
+    let lexical_hits = lexical(conn, folder_ids, query, depth)?;
 
     let semantic_hits = match embedder {
         Some(e) => {
@@ -254,7 +259,7 @@ pub fn search(
             // silently.
             match e.embed(&[format!("query: {query}")]) {
                 Ok(vectors) if !vectors.is_empty() => {
-                    semantic(conn, folder_ids, &vectors[0], CANDIDATE_DEPTH)?
+                    semantic(conn, folder_ids, &vectors[0], depth)?
                 }
                 _ => Vec::new(),
             }
@@ -470,6 +475,23 @@ mod tests {
         write_document(s.conn(), "f1", "doc", &[chunk("Something.", 0)], None, "now").expect("write");
         write_document(s.conn(), "f1", "doc", &[], None, "now").expect("write empty");
         assert!(search(s.conn(), &["f1".into()], "Something", None, 5).expect("search").is_empty());
+    }
+
+    #[test]
+    fn asking_for_more_than_the_candidate_floor_actually_returns_more() {
+        // The bug this guards: a fixed candidate depth silently truncated every
+        // request above it, and while measuring recall it produced a plateau
+        // that looked like the ranker's ceiling and was the constant.
+        let s = store();
+        folder(s.conn(), "f1");
+        let many: Vec<Chunk> = (0..120)
+            .map(|i| chunk(&format!("Paragraph {i} concerns the capital buffer requirement."), i))
+            .collect();
+        write_document(s.conn(), "f1", "doc", &many, None, "now").expect("write");
+
+        let hits = search(s.conn(), &["f1".into()], "capital buffer requirement", None, 100)
+            .expect("search");
+        assert!(hits.len() > 60, "returned {} for a request of 100", hits.len());
     }
 
     #[test]

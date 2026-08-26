@@ -14,19 +14,53 @@
       "format": "date-time",
       "description": "ISO 8601 with offset."
     },
-    "depth": { "enum": ["fast", "deep", "research"] },
-    "severity": { "enum": ["info", "warn", "block"] },
+    "depth": {
+      "enum": [
+        "fast",
+        "deep",
+        "research"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "warn",
+        "block"
+      ]
+    },
     "source_class": {
-      "enum": ["web", "regulatory", "local_document", "structured_query", "user_supplied", "own_card"],
-      "description": "own_card is a prior card of this profile's own, recalled by the boards retriever. Doc 15 section 2: context, never evidence. The Verifier blocks it as sole support for a numeric or regulatory claim."
+      "enum": [
+        "web",
+        "regulatory",
+        "local_document",
+        "structured_query",
+        "user_supplied",
+        "own_card",
+        "page"
+      ],
+      "description": "own_card is a prior card of this profile's own, recalled by the boards retriever. Doc 15 section 2: context, never evidence. The Verifier blocks it as sole support for a numeric or regulatory claim. page is a vault note the user wrote, doc 16 section 3.3: also context, with the citations it carried from the card it was saved from as the evidence."
     },
     "visual_type": {
-      "enum": ["tree", "table", "list", "steps", "figure", "image", "chart", "widget"],
-      "description": "chart and widget are reserved for v1.1; doc 01 section 9 keeps their stubs so the block index and citation binding do not need redesign."
+      "enum": [
+        "tree",
+        "table",
+        "list",
+        "steps",
+        "figure",
+        "image",
+        "chart",
+        "widget",
+        "flow",
+        "stats"
+      ],
+      "description": "chart and widget are reserved for v1.1; doc 01 section 9 keeps their stubs so the block index and citation binding do not need redesign. flow and stats arrive with the Vault layer, doc 16 section 3.5: flow is nodes plus edges, which a tree cannot express because it has no cycles and no cross links, and stats is at most six large numerals, each one cited."
     },
     "citation_ordinals": {
       "type": "array",
-      "items": { "type": "integer", "minimum": 1 },
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
       "description": "References Citation.ordinal, the [n] shown in the answer."
     },
     "block_ref": {
@@ -36,31 +70,80 @@
     },
     "produced_by": {
       "type": "object",
-      "required": ["agent_id", "model_alias"],
+      "required": [
+        "agent_id",
+        "model_alias"
+      ],
       "properties": {
-        "agent_id": { "type": "string" },
-        "model_alias": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
-        "provider": { "oneOf": [{ "type": "string" }, { "type": "null" }] }
+        "agent_id": {
+          "type": "string"
+        },
+        "model_alias": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       }
     },
     "effort_budget": {
       "type": "object",
       "description": "Amendment A1: the harness sets the budget, the agent does not pick its own.",
       "properties": {
-        "max_tokens": { "type": "integer", "minimum": 1 },
-        "max_latency_ms": { "type": "integer", "minimum": 1 }
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_latency_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "agent_envelope": {
       "type": "object",
       "description": "Every agent output carries these. Pattern 7 plus Pattern 13 at the storage layer.",
-      "required": ["schema_version", "agent_id", "run_id"],
+      "required": [
+        "schema_version",
+        "agent_id",
+        "run_id"
+      ],
       "properties": {
-        "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
-        "agent_id": { "type": "string" },
-        "run_id": { "$ref": "#/$defs/ulid" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "caveats": { "type": "array", "items": { "type": "string" } }
+        "schema_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "$ref": "#/$defs/ulid"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "caveats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     }
   }
