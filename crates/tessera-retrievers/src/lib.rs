@@ -7,7 +7,9 @@
 //! nothing.
 
 pub mod chunking;
+pub mod embed;
 pub mod parse;
 
 pub use chunking::{Chunk, ChunkLocation};
+pub use embed::{Embedder, HashEmbedder, LocalEmbedder};
 pub use parse::{ParseError, is_supported, parse_file};

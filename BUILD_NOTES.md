@@ -525,6 +525,41 @@ on `retrievers_enabled`.
 
 ## Measured findings
 
+### BN-040 The embedding model runs on candle, not on an ONNX runtime
+
+**Spec** 10 section 3: "Local small model (e.g. a bge or nomic class model via candle) by
+default". Doc 10 section 17 question 2 leaves the model itself to be settled on the synthetic
+recall numbers, which this milestone measures.
+
+**Decision** `candle`, with `intfloat/multilingual-e5-small` behind an `Embedder` trait.
+
+**Why not the easier option.** `fastembed` is one call where candle is about a hundred and
+fifty lines of model plumbing, so it was tried first. It builds. Nothing that links it does:
+every executable failed at the linker with `unresolved external symbol __std_find_trivial_8`,
+which is a Microsoft standard library symbol that the prebuilt ONNX Runtime binary expects and
+the Visual Studio 2019 build tools on this machine do not provide. The library compiled and the
+test binary did not, which is the kind of failure that looks like a fluke until you try to ship.
+
+The three ways out were to make the user install a newer Visual Studio, to load the runtime
+dynamically and ship a DLL beside the app, or to use a pure Rust model runner. The third is
+what doc 10 already named, needs no native toolchain at all, and leaves nothing extra to sign
+or notarise at M13, where doc 12 phase 11 has to produce a signed msi and a notarised dmg.
+
+**Multilingual on purpose.** The corpus carries Dutch documents and a real user's folder is
+under no obligation to be in English. An English only model does not fail on Dutch text, which
+would at least be visible. It embeds it into a region of the space that means nothing, and the
+only symptom is a recall number that is slightly worse than expected for reasons no breakdown
+shows.
+
+**Two details that decide whether the vectors mean anything.** The e5 family is trained with
+`passage:` on the indexed side and `query:` on the asking side, and without those prefixes the
+neighbourhoods are simply wrong rather than absent. And pooling averages only the unmasked
+tokens: counting padding drags every short passage toward one point, which is worst for exactly
+the short factual passages this corpus is made of.
+
+Weights are read rather than memory mapped, because the mmap constructor is `unsafe` and the
+workspace forbids unsafe outright. It costs one copy at startup and nothing afterwards.
+
 ### BN-037 Format is decided by the bytes, not by the file name
 
 **Spec** 05 section 8.2 lists the formats the local retriever parses. It does not say how a
