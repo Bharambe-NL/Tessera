@@ -8,8 +8,10 @@
 
 pub mod chunking;
 pub mod embed;
+pub mod index;
 pub mod parse;
 
 pub use chunking::{Chunk, ChunkLocation};
 pub use embed::{Embedder, HashEmbedder, LocalEmbedder};
+pub use index::{Hit, search, write_document};
 pub use parse::{ParseError, is_supported, parse_file};

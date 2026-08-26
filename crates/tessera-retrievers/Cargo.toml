@@ -28,3 +28,6 @@ candle-nn = "0.11.0"
 candle-transformers = "0.11.0"
 tokenizers = "0.23.1"
 hf-hub = { version = "0.4", default-features = false, features = ["ureq"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+sha2 = "0.11.0"
+hex = "0.4.3"
