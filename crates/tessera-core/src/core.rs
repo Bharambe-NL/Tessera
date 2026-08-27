@@ -248,6 +248,41 @@ impl Core {
         self.ask_on(board_id, question, depth_override, Anchor::default())
     }
 
+    /// Run one Tutor turn. Doc 14 section 3.3.
+    pub fn tutor_turn(
+        &mut self,
+        board_id: &str,
+        stage: &str,
+        learner_message: Option<&str>,
+        target_card_id: Option<&str>,
+    ) -> Result<Value, CoreError> {
+        let policy = self.resolved()?;
+        let pack = self.packs.get(&self.pack_code)?.clone();
+        let ctx = RunContext {
+            registry: &self.registry,
+            provider: self.provider.as_ref(),
+            pack: &pack,
+            policy,
+            profile_id: self.profile_id.clone(),
+            source: self.source,
+            ledger: &self.ledger,
+            retrievers: &self.retrievers,
+        };
+
+        self.runtime
+            .handle()
+            .clone()
+            .block_on(pipeline::run_tutor_turn(
+                &mut self.store,
+                &ctx,
+                board_id,
+                stage,
+                learner_message,
+                target_card_id,
+            ))
+            .map_err(|f| CoreError::Runtime(f.to_string()))
+    }
+
     /// Read an image into a card. Doc 07 part A.
     pub fn read_image(
         &mut self,
@@ -729,6 +764,137 @@ pub fn build_router() -> Router<Core> {
         let sources = repo::list_sources(&core.store, &core.profile_id, p.limit.clamp(1, 1000))
             .map_err(store_error)?;
         Ok(json!({ "sources": sources }))
+    });
+
+    // Doc 14 section 3.3's triggers, as the surface the panel drives.
+    //
+    // One method per trigger rather than one that infers the stage, because doc
+    // 14 section 3.4's machine moves on what the learner did and a turn that
+    // guessed which move it was would be guessing at the learner.
+    r.register("learn.start", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Start {
+            board_id: String,
+            topic: String,
+        }
+        let p: Start = params(p)?;
+        if p.topic.trim().is_empty() {
+            return Err(RpcError::core(
+                "empty_topic",
+                "Say what you want to learn about first.",
+            ));
+        }
+        let session_id = repo::start_learn_session(&mut core.store, &p.board_id, p.topic.trim())
+            .map_err(store_error)?;
+        let turn = core
+            .tutor_turn(&p.board_id, "intake", None, None)
+            .map_err(core_error)?;
+        Ok(json!({ "session_id": session_id, "turn": turn }))
+    });
+
+    r.register("learn.get", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        let session = repo::read_learn_session(&core.store, &p.board_id).map_err(store_error)?;
+        Ok(json!({ "session": session }))
+    });
+
+    // Doc 14 section 3.4: the learner may skip intake with "just build it", so
+    // answering is optional and building is its own call.
+    r.register("learn.answer_intake", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Answer {
+            board_id: String,
+            q: String,
+            a: String,
+        }
+        let p: Answer = params(p)?;
+        let session = repo::read_learn_session(&core.store, &p.board_id)
+            .map_err(store_error)?
+            .ok_or_else(|| RpcError::core("no_session", "This board has no learn session."))?;
+
+        let mut intake = session["intake"].as_array().cloned().unwrap_or_default();
+        intake.push(json!({ "q": p.q, "a": p.a }));
+        let session_id = session["session_id"].as_str().unwrap_or_default().to_string();
+
+        repo::update_learn_session(
+            &mut core.store,
+            repo::LearnUpdate {
+                actor: repo::Actor::Learner,
+                session_id: &session_id,
+                board_id: &p.board_id,
+                status: None,
+                set: vec![("intake", Value::Array(intake))],
+                event: "learn.intake_answered.v1",
+                payload: json!({ "session_id": session_id, "q": p.q, "a": p.a }),
+            },
+        )
+        .map_err(store_error)?;
+        Ok(json!({ "recorded": true }))
+    });
+
+    r.register("learn.build", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        let turn = core
+            .tutor_turn(&p.board_id, "building", None, None)
+            .map_err(core_error)?;
+        Ok(json!({ "turn": turn }))
+    });
+
+    r.register("learn.check", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Check {
+            board_id: String,
+            #[serde(default)]
+            card_id: Option<String>,
+        }
+        let p: Check = params(p)?;
+        let turn = core
+            .tutor_turn(&p.board_id, "checking", None, p.card_id.as_deref())
+            .map_err(core_error)?;
+        Ok(json!({ "turn": turn }))
+    });
+
+    // Doc 14 section 3.6. No agent: grading one multiple choice answer needs
+    // none, the same reason doc 08 section 7 has the UI record an attempt.
+    r.register("learn.answer_check", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Answered {
+            board_id: String,
+            item: Value,
+            picked: String,
+            #[serde(default)]
+            concept_ids: Vec<String>,
+        }
+        let p: Answered = params(p)?;
+        let correct = pipeline::record_check(
+            &mut core.store,
+            &p.board_id,
+            &p.item,
+            &p.picked,
+            &p.concept_ids,
+        )
+        .map_err(|f| RpcError::core("learn", f.to_string()))?;
+        Ok(json!({ "correct": correct }))
+    });
+
+    r.register("learn.say", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Say {
+            board_id: String,
+            message: String,
+        }
+        let p: Say = params(p)?;
+        let turn = core
+            .tutor_turn(&p.board_id, "reading", Some(&p.message), None)
+            .map_err(core_error)?;
+        Ok(json!({ "turn": turn }))
+    });
+
+    r.register("learn.end", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        let summary = pipeline::end_learn_session(&mut core.store, &p.board_id)
+            .map_err(|f| RpcError::core("learn", f.to_string()))?;
+        Ok(summary)
     });
 
     // Doc 01 section 4.6. The bytes arrive base64 because the boundary is

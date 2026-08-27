@@ -262,6 +262,293 @@ pub async fn run_verify_only(
     })
 }
 
+/// Run one Tutor turn. Doc 14 section 3.3.
+///
+/// A turn, not a session: doc 14 section 3.4's machine is a row that outlives
+/// any one run, and each trigger is one decision inside it. The session is read
+/// here, the agent decides, and what it decided is written back with the
+/// `learn.*` event for the stage that ran.
+pub async fn run_tutor_turn(
+    store: &mut Store,
+    ctx: &RunContext<'_>,
+    board_id: &str,
+    stage: &str,
+    learner_message: Option<&str>,
+    target_card_id: Option<&str>,
+) -> Result<Value, Failure> {
+    let session = repo::read_learn_session(store, board_id)
+        .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
+        .ok_or_else(|| {
+            Failure::new("no_session", "this board has no learn session", Recovery::Failed)
+        })?;
+
+    let policy_snapshot = serde_json::to_value(&ctx.policy).unwrap_or(Value::Null);
+    let run_id = repo::start_run(
+        store,
+        repo::NewRun {
+            board_id,
+            card_id: None,
+            kind: "card",
+            depth: None,
+            policy_snapshot: &policy_snapshot,
+            pack_version: &ctx.pack.version,
+        },
+    )?;
+
+    let cards = repo::cards_for_tutor(store, board_id).unwrap_or_default();
+    let concepts = repo::concepts_for_packet(store, &ctx.profile_id, 20).unwrap_or_default();
+    let mastery = session["mastery"].clone();
+
+    // Doc 14 section 3.5's card budget, counted from what the session already
+    // opened rather than from a number this turn carries.
+    let requested = session["opened"].as_array().map(Vec::len).unwrap_or(0);
+
+    let templates = &ctx.pack.learning_templates;
+    let packet = json!({
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "board_id": board_id,
+        "stage": stage,
+        "session": session,
+        "cards": cards,
+        "concepts": concepts.into_iter().map(|c| {
+            let id = c["concept_id"].as_str().unwrap_or_default().to_string();
+            json!({
+                "concept_id": c["concept_id"],
+                "term": c["term"],
+                "definition": c["definition"],
+                "mastery": mastery[&id].as_i64().unwrap_or(0),
+            })
+        }).collect::<Vec<_>>(),
+        "target_card_id": target_card_id,
+        "learner_message": learner_message,
+        // Doc 14 section 6 question 2, resolved as proposed. The profile has no
+        // role field yet, so this is null and intake asks for it; the day the
+        // Profile page writes one, intake stops asking.
+        "profile": { "role": Value::Null },
+        "doctrine": {
+            "curriculum_shapes": templates.curriculum_shapes,
+            "mastery_threshold": templates.mastery_threshold,
+            "intake_questions": templates.intake_questions,
+        },
+        "budget": { "cards_requested": requested, "cards_max": TUTOR_CARDS_PER_SESSION },
+        "effort_budget": { "max_tokens": 1500 }
+    });
+
+    let turn = run_agent(
+        &tessera_agents::Tutor,
+        store,
+        RunAgent {
+            registry: ctx.registry,
+            provider: ctx.provider,
+            run_id: run_id.clone(),
+            card_id: None,
+            board_id: Some(board_id.to_string()),
+            sequence: 1,
+            source: ctx.source,
+            policy: ctx.policy.clone(),
+        },
+        packet,
+    )
+    .await;
+
+    let out = match turn {
+        Ok(o) => o.output,
+        Err(f) => {
+            // Doc 14 section 3.8: the panel says so and the session pauses. The
+            // board remains usable, which is why nothing here touches the cards.
+            repo::end_run(store, &run_id, "failed")?;
+            return Err(f);
+        }
+    };
+
+    let session_id = session["session_id"].as_str().unwrap_or_default().to_string();
+    record_turn(store, board_id, &session_id, stage, &session, &out, &run_id)?;
+
+    repo::end_run(store, &run_id, "done")?;
+    Ok(out)
+}
+
+/// Doc 14 section 3.5's per session card budget.
+const TUTOR_CARDS_PER_SESSION: usize = 8;
+
+/// Write what a turn decided, with the `learn.*` event doc 14 section 2 names
+/// for that stage.
+///
+/// Two of the five stages record nothing and say so by returning early. Asking
+/// the intake questions changes no session state, because the answer is what
+/// changes it and `learn.intake_answered.v1` already carries that; a reply with
+/// no card to open changes none either. The first version of this reached for
+/// the nearest declared event and wrote `learn.check_asked.v1` for both, which
+/// put two checks that were never asked into an append-only log, where anything
+/// counting checks would have believed them and nothing could take them back.
+fn record_turn(
+    store: &mut Store,
+    board_id: &str,
+    session_id: &str,
+    stage: &str,
+    session: &Value,
+    out: &Value,
+    run_id: &str,
+) -> Result<(), Failure> {
+    let update = match stage {
+        "intake" => return Ok(()),
+        "building" => repo::LearnUpdate {
+            actor: repo::Actor::Agent("tutor", run_id),
+            session_id,
+            board_id,
+            status: Some("building"),
+            set: vec![("plan", out["plan"]["cards"].clone())],
+            event: "learn.planned.v1",
+            payload: json!({
+                "session_id": session_id,
+                "title": out["plan"]["title"].clone(),
+                "cards": out["plan"]["cards"].as_array().map(Vec::len).unwrap_or(0),
+            }),
+        },
+        "checking" => repo::LearnUpdate {
+            actor: repo::Actor::Agent("tutor", run_id),
+            session_id,
+            board_id,
+            status: Some("checking"),
+            set: vec![],
+            event: "learn.check_asked.v1",
+            payload: json!({
+                "session_id": session_id,
+                "item_id": out["check"]["item"]["id"].clone(),
+                "card_id": out["check"]["item"]["source_card_id"].clone(),
+            }),
+        },
+        _ => {
+            // A reply, and possibly a card to open. Doc 14 section 3.4: the
+            // learner can type at any time and the session stays where it was.
+            let Some(question) = out["open"].as_str() else {
+                return Ok(());
+            };
+            let mut opened = session["opened"].as_array().cloned().unwrap_or_default();
+            opened.push(json!({ "question": question, "reason": "asked" }));
+            repo::LearnUpdate {
+                actor: repo::Actor::Agent("tutor", run_id),
+                session_id,
+                board_id,
+                status: None,
+                set: vec![("opened", Value::Array(opened))],
+                event: "learn.card_opened.v1",
+                payload: json!({
+                    "session_id": session_id,
+                    "reason": "asked",
+                    "open": question,
+                }),
+            }
+        }
+    };
+
+    // Doc 12's walkthrough asks for every act in board history with the right
+    // actor, and these are the tutor's acts rather than the learner's: it chose
+    // the plan, it wrote the check, it decided the card to open. The learner's
+    // own acts keep `Provenance::user`, which is where they were already.
+    repo::update_learn_session(store, update)
+        .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))
+}
+
+/// Record what a learner answered. Doc 14 sections 3.3 and 3.6.
+///
+/// No agent: grading one multiple choice answer needs none, the same reason doc
+/// 08 section 7 has the UI record an attempt.
+pub fn record_check(
+    store: &mut Store,
+    board_id: &str,
+    item: &Value,
+    picked: &str,
+    concept_ids: &[String],
+) -> Result<bool, Failure> {
+    let session = repo::read_learn_session(store, board_id)
+        .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
+        .ok_or_else(|| {
+            Failure::new("no_session", "this board has no learn session", Recovery::Failed)
+        })?;
+
+    let correct = item["answer_id"].as_str() == Some(picked);
+    let session_id = session["session_id"].as_str().unwrap_or_default().to_string();
+
+    let mut checks = session["checks"].as_array().cloned().unwrap_or_default();
+    checks.push(json!({
+        "item_id": item["id"].clone(),
+        "card_id": item["source_card_id"].clone(),
+        "picked": picked,
+        "correct": correct,
+        "at": tessera_store::now_iso8601(),
+    }));
+
+    let mastery = repo::score_mastery(&session["mastery"], concept_ids, correct);
+
+    repo::update_learn_session(
+        store,
+        repo::LearnUpdate {
+            actor: repo::Actor::Learner,
+            session_id: &session_id,
+            board_id,
+            status: Some("checking"),
+            set: vec![("checks", Value::Array(checks)), ("mastery", mastery)],
+            event: "learn.check_answered.v1",
+            payload: json!({
+                "session_id": session_id,
+                "item_id": item["id"].clone(),
+                "correct": correct,
+            }),
+        },
+    )
+    .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?;
+
+    Ok(correct)
+}
+
+/// End a session. Doc 14 section 3.4: the board stays in explore mode with the
+/// session attached, so everything the learner made survives.
+pub fn end_learn_session(store: &mut Store, board_id: &str) -> Result<Value, Failure> {
+    let session = repo::read_learn_session(store, board_id)
+        .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
+        .ok_or_else(|| {
+            Failure::new("no_session", "this board has no learn session", Recovery::Failed)
+        })?;
+
+    let checks = session["checks"].as_array().cloned().unwrap_or_default();
+    let correct = checks.iter().filter(|c| c["correct"] == true).count();
+    let session_id = session["session_id"].as_str().unwrap_or_default().to_string();
+
+    repo::update_learn_session(
+        store,
+        repo::LearnUpdate {
+            actor: repo::Actor::Learner,
+            session_id: &session_id,
+            board_id,
+            status: Some("ended"),
+            set: vec![],
+            event: "learn.ended.v1",
+            payload: json!({
+                "session_id": session_id,
+                "checks": checks.len(),
+                "correct": correct,
+            }),
+        },
+    )
+    .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?;
+
+    store
+        .conn()
+        .execute(
+            "UPDATE board SET mode = 'explore' WHERE id = ?1",
+            rusqlite::params![board_id],
+        )
+        .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?;
+
+    Ok(json!({
+        "checks": checks.len(),
+        "correct": correct,
+        "mastery": session["mastery"].clone(),
+    }))
+}
+
 /// Read an image into a card. Doc 07 part A.
 ///
 /// Doc 07 section A8 point 5: the harness runs the Visualizer on the summary,

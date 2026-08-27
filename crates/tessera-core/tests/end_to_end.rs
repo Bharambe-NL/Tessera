@@ -724,6 +724,307 @@ fn the_planner_packet_carries_the_concepts_the_profile_knows() {
     );
 }
 
+/// A tutor mock that answers each stage from what its prompt carries.
+///
+/// Like the others, it quotes rather than judges: the check's correct option is
+/// lifted from the card, and the next questions reuse the card's own words, so
+/// doc 14 section 3.5's four rules pass for a reason rather than by luck. What a
+/// real tutor would choose to ask is not measured here and cannot be.
+fn tutor_mock() -> Arc<MockProvider> {
+    Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            let mut prompt = String::new();
+            for message in &request.messages {
+                for block in &message.content {
+                    if let tessera_providers::ContentBlock::Text { text } = block {
+                        prompt.push('\n');
+                        prompt.push_str(text);
+                    }
+                }
+            }
+
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "synthesize" => MockResponse::Json(synth_output()),
+                "visualize" => MockResponse::Json(visual_output()),
+                "verify" => verify_scripted_response(request),
+                "tutor" => {
+                    // Intake asks; building plans; checking quotes the card.
+                    if prompt.contains("tappable options") {
+                        return MockResponse::Json(json!({
+                            "questions": [
+                                { "q": "How much do you already know?",
+                                  "options": ["Nothing", "The basics", "A fair amount"] },
+                                { "q": "What do you need it for?",
+                                  "options": ["Curiosity", "Work", "An exam"] }
+                            ]
+                        }));
+                    }
+                    if prompt.contains("Plan three to five cards") {
+                        return MockResponse::Json(json!({
+                            "plan": {
+                                "title": "World models",
+                                "cards": [
+                                    { "question": "what are world models?", "why": "the foundation" },
+                                    { "question": "how does a world model predict?", "why": "the mechanism" },
+                                    { "question": "where are world models used?", "why": "the landscape" }
+                                ]
+                            }
+                        }));
+                    }
+                    if prompt.contains("multiple choice question") {
+                        let card_id = prompt
+                            .lines()
+                            .find_map(|l| l.trim().strip_prefix("card_id: "))
+                            .unwrap_or_default()
+                            .to_string();
+                        let answer = prompt
+                            .lines()
+                            .find_map(|l| l.trim().strip_prefix("answer: "))
+                            .unwrap_or_default();
+                        let claim = answer
+                            .split_once(". ")
+                            .map(|(f, _)| f.to_string())
+                            .unwrap_or_else(|| answer.to_string());
+                        return MockResponse::Json(json!({
+                            "check": {
+                                "item": {
+                                    "id": "c1",
+                                    "kind": "recall",
+                                    "prompt": "What does the card say?",
+                                    "options": [
+                                        { "id": "a", "text": claim },
+                                        { "id": "b", "text": "The card does not say." },
+                                        { "id": "c", "text": "The card defers to a later source." }
+                                    ],
+                                    "answer_id": "a",
+                                    "explanation": "The card opens with it.",
+                                    "source_card_id": card_id
+                                },
+                                "next_if_right": "How does a world model predict the next state?",
+                                "next_if_wrong": "What is a world model made of?"
+                            }
+                        }));
+                    }
+                    MockResponse::Json(json!({
+                        "reply": "The card says a world model predicts how a situation changes.",
+                        "open": null
+                    }))
+                }
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    )
+}
+
+#[test]
+fn a_learn_session_runs_intake_a_plan_a_check_and_an_ending() {
+    // Doc 14 section 5's acceptance, minus the cards the plan asks for, which
+    // are ordinary cards through the ordinary pipeline and are covered by every
+    // other test in this file.
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let started = call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "world models" }),
+    );
+    assert!(started["session_id"].as_str().is_some());
+    assert_eq!(started["turn"]["questions"].as_array().map(Vec::len), Some(2));
+
+    // Doc 14 section 2: the board's mode is what the Router reads, so it moves
+    // with the session rather than being inferred.
+    let mode: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT mode FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| r.get(0),
+        )
+        .expect("mode");
+    assert_eq!(mode, "learn");
+
+    call(
+        &router,
+        &mut core,
+        "learn.answer_intake",
+        json!({ "board_id": board_id, "q": "How much do you already know?", "a": "Nothing" }),
+    );
+
+    let built = call(&router, &mut core, "learn.build", json!({ "board_id": board_id }));
+    let planned = built["turn"]["plan"]["cards"].as_array().expect("cards");
+    assert_eq!(planned.len(), 3, "doc 14 section 3.4 plans three to five");
+
+    // The plan is on the session, so a panel reopened tomorrow finds it.
+    let session = call(&router, &mut core, "learn.get", json!({ "board_id": board_id }))["session"]
+        .clone();
+    assert_eq!(session["status"], "building");
+    assert_eq!(session["plan"].as_array().map(Vec::len), Some(3));
+    assert_eq!(session["intake"].as_array().map(Vec::len), Some(1));
+
+    // A card, so there is something to check understanding of.
+    let card = call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+    let card_id = card["card_id"].as_str().expect("card").to_string();
+
+    let check = call(
+        &router,
+        &mut core,
+        "learn.check",
+        json!({ "board_id": board_id, "card_id": card_id }),
+    );
+    let item = check["turn"]["check"]["item"].clone();
+    assert_eq!(item["source_card_id"].as_str(), Some(card_id.as_str()));
+    // Doc 14 section 3.5: both next questions survived the overlap rule.
+    assert!(check["turn"]["check"]["next_if_right"].is_string());
+    assert!(check["turn"]["check"]["next_if_wrong"].is_string());
+
+    // Doc 14 section 3.6: mastery moves on the answer, not on the question.
+    let wrong = call(
+        &router,
+        &mut core,
+        "learn.answer_check",
+        json!({
+            "board_id": board_id, "item": item, "picked": "b",
+            "concept_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        }),
+    );
+    assert_eq!(wrong["correct"], false);
+
+    let right = call(
+        &router,
+        &mut core,
+        "learn.answer_check",
+        json!({
+            "board_id": board_id, "item": item, "picked": "a",
+            "concept_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        }),
+    );
+    assert_eq!(right["correct"], true);
+
+    let ended = call(&router, &mut core, "learn.end", json!({ "board_id": board_id }));
+    assert_eq!(ended["checks"], 2);
+    assert_eq!(ended["correct"], 1);
+    // Floored at zero, then plus one: a wrong answer cannot put a learner in
+    // debt for a concept they have never seen.
+    assert_eq!(ended["mastery"]["01ARZ3NDEKTSV4RRFFQ69G5FAV"], 1);
+
+    // Doc 14 section 3.4: the board stays in explore mode with the session
+    // attached, so everything the learner made survives.
+    let mode: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT mode FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| r.get(0),
+        )
+        .expect("mode");
+    assert_eq!(mode, "explore");
+
+    // Doc 14 section 5: every step appears in board history.
+    let history = core.store.events(Some(&board_id)).expect("events");
+    let types: Vec<String> = history.iter().map(|e| e.event_type.clone()).collect();
+    for expected in [
+        "learn.started.v1",
+        "learn.intake_answered.v1",
+        "learn.planned.v1",
+        "learn.check_asked.v1",
+        "learn.check_answered.v1",
+        "learn.ended.v1",
+    ] {
+        assert!(types.contains(&expected.to_string()), "{expected} is not in board history");
+    }
+
+    // Doc 12's walkthrough asks for the right actor, and a Learn session is the
+    // one feature where two of them take turns. The learner named the topic,
+    // answered the intake and answered the check; the tutor made the plan and
+    // wrote the question. An event attributed to the wrong one would read as the
+    // learner having written their own exam.
+    for (event, actor) in [
+        ("learn.started.v1", "user"),
+        ("learn.intake_answered.v1", "user"),
+        ("learn.planned.v1", "tutor"),
+        ("learn.check_asked.v1", "tutor"),
+        ("learn.check_answered.v1", "user"),
+        ("learn.ended.v1", "user"),
+    ] {
+        let found = history
+            .iter()
+            .find(|e| e.event_type == event)
+            .unwrap_or_else(|| panic!("{event} is not in board history"));
+        assert_eq!(
+            found.provenance.emitter_id, actor,
+            "{event} is attributed to {}",
+            found.provenance.emitter_id
+        );
+    }
+
+    // And nothing claims a check was asked that was not. One `learn.check` call
+    // ran above, so one check was asked; the intake turn and the tutor's replies
+    // used to borrow the same event, which put checks nobody asked into a log
+    // that cannot take them back.
+    assert_eq!(
+        types.iter().filter(|t| *t == "learn.check_asked.v1").count(),
+        1,
+        "board history claims a check nobody asked: {types:?}"
+    );
+}
+
+#[test]
+fn a_tutor_reply_carrying_a_citation_marker_never_reaches_the_learner() {
+    // Doc 14 section 3.5's load bearing rule, end to end. A marker means the
+    // Verifier stood behind the sentence, and nothing checked this one.
+    let liar = Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "tutor" => MockResponse::Json(json!({
+                    "reply": "The buffer is 2.5 per cent [1].",
+                    "open": null
+                })),
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    );
+
+    let router = build_router();
+    let mut core = core_with(liar);
+    let board_id = core.create_board("Board", "fast").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "capital rules" }),
+    );
+
+    let said = call(
+        &router,
+        &mut core,
+        "learn.say",
+        json!({ "board_id": board_id, "message": "how big is it?" }),
+    );
+    assert!(
+        said["turn"]["reply"].is_null(),
+        "a cited reply reached the learner: {:?}",
+        said["turn"]["reply"]
+    );
+    // And the learner is told why rather than seeing an empty panel.
+    assert!(
+        said["turn"]["caveats"]
+            .as_array()
+            .is_some_and(|c| !c.is_empty()),
+        "the reply vanished with no explanation"
+    );
+}
+
 /// A vision mock that answers the read stage with a fixed table.
 ///
 /// It cannot see: a mock has no eyes and no fixture can give it any. What it
