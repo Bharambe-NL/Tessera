@@ -3,8 +3,6 @@
   "failed": [
     "forbidden_fact_rate",
     "route_accuracy",
-    "citation_accuracy_ledger",
-    "verifier_agreement",
     "visual_type_match",
     "flag_false_positive_rate"
   ],
@@ -168,24 +166,44 @@
       "verdict": "pass"
     },
     {
-      "denominator": 96,
+      "denominator": 0,
       "name": "citation_accuracy_ledger",
-      "note": "citations whose passage states a value the question required",
-      "numerator": 35,
-      "reported": "0.365",
+      "note": "the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them",
+      "numerator": 0,
+      "reported": "n/a",
       "threshold": 0.95,
-      "value": 0.3645833333333333,
-      "verdict": "fail"
+      "value": null,
+      "verdict": "n/a"
     },
     {
       "denominator": 96,
+      "name": "citations_the_ledger_can_judge",
+      "note": "the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
       "name": "verifier_agreement",
-      "note": "citations where the Verifier and the fact ledger reached the same answer",
-      "numerator": 52,
-      "reported": "0.542",
+      "note": "the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them",
+      "numerator": 0,
+      "reported": "n/a",
       "threshold": 0.9,
-      "value": 0.5416666666666666,
-      "verdict": "fail"
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "verifier_missed_support",
+      "note": "the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
     },
     {
       "denominator": 10,

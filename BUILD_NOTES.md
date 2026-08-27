@@ -2266,6 +2266,113 @@ bundle round trip.
 
 ---
 
+### BN-110 What the two failing gates were actually measuring
+
+**Spec** 02 sections 10.2 and 10.3; 06 sections B8 and B10.
+
+**Diagnosed** 2026-08-27, M14.5, from the committed record at
+`eval/results/42/live/run-1787823689`. No money spent: everything below is a re-read of a run
+already paid for, plus free runs on the grounded mock.
+
+The rule this step exists to follow: split a surprising number by every dimension the record
+carries before building the fix it seems to call for.
+
+#### visual_type_match 0.083
+
+| Dimension | What the record says |
+|---|---|
+| Expected type | 10 of 12 questions expected `table`, 1 `tree`, 1 no visual |
+| Router's hint | `table` on every one of those 10, from the pack's `type_preferences` |
+| Produced type | `tree` on 9, none at all on 2, `tree` correctly on 1 |
+| Blocks per visual | 1, on all ten. Always the root, `citation_ordinals` empty, `no_claim` true |
+
+So the corpus expectation and the doctrine agree, and the Router passed the right hint. What
+the card got was a diagram with a single box in it.
+
+Doc 06 section B8 point 1 selects the type from the shape of the Synthesizer's summary and
+consults the hint only when nothing in the summary decides, which is what the code does. The
+summary had relations and the rule stopped there. **The record cannot say how many**, because
+`card.synthesized.v1` carried counts of citations, conflicts and unsupported statements and
+nothing about the structure the type is chosen from. That is now recorded as `summary_shape`,
+so the next run answers the question this one could not without a second paid run.
+
+**Fixed here, because the record proves it:** a tree with no children is declined rather than
+drawn. It reached the card by two routes, a model returning a bare root and a model whose
+children were pruned as untraceable under it, and only the second was checked, after pruning.
+The check now runs before indexing as well.
+
+**Not fixed, because the record does not prove it:** whether the type rule should reach the
+doctrine hint sooner. The one-line change that would make these ten cards tables is to demote
+the `relations >= 1` branch, which is a rule doc 06 does not list, but with no `summary_shape`
+in the record there is no evidence about which branch fired. Wait for a run that carries it.
+
+**Worth noting:** the fix does not raise the gate. A declined visual counts as a miss the same
+way a wrong type does, so `visual_type_match` stays failed until a value question produces a
+summary with values in it. What the fix removes is a diagram that said nothing.
+
+**And a gate that could not see it:** `visual_fidelity` passed at 1.000 over those ten
+one-block visuals, because a block with `no_claim` true is bound by definition. A rule that
+every block is cited or marked `no_claim` cannot notice that there is only one block and it is
+the title.
+
+#### verifier_agreement 0.542 and citation_accuracy_ledger 0.365
+
+Split by verdict, over 96 citations:
+
+| Verifier verdict | Passage states a required value | Count | Counted as |
+|---|---|---|---|
+| supported | no | 35 | disagreement |
+| supported | yes | 26 | agreement |
+| weak | no | 24 | agreement |
+| weak | yes | 4 | disagreement |
+| unsupported | no | 2 | agreement |
+| unsupported | yes | 5 | disagreement |
+
+And by position: citations at ordinals 1 and 2, the ones carrying the headline claim, state a
+required value 15 times out of 19. From ordinal 6 on, 17 out of 60.
+
+Every question in this run required exactly one fact, and the cards cited between 5 and 13
+passages each. The ledger check asked of every one of them "does this passage state the value
+the question required", so a card that cites the rule, its version history, its scope and its
+dates scores one hit out of nine while being exactly right. The threshold of 0.95 over that
+denominator is unreachable by any answer that cites more than one passage per fact.
+
+Doc 02 section 10.2 says something narrower: "citations whose passage supports the claim
+span". The ledger can only judge a span that asserts a value it holds, and the record carried
+no claim spans, so the scorer asked a different question and called the gap disagreement. The
+comment on `read_citations` had already reasoned its way to half of this when it added the
+passage text; the claim span is the other half and it is added now.
+
+**Fixed here:** `read_citations` carries `claim_span` and `binding`; the scorer resolves the
+span against the answer and judges only the citations bound to a claim that states a value the
+ledger holds. Two readouts land beside the gates so the narrowed numbers stay readable:
+`citations_the_ledger_can_judge` (how much of the run the ledger has an opinion on) and
+`verifier_missed_support` (disagreements in the direction that loses a citation the card had
+every right to keep).
+
+On the grounded sweep the narrowing moves `citation_accuracy_ledger` from 0.491 to 0.954 and
+`verifier_agreement` from 0.593 to 0.987, with 0.277 of citations judgeable and
+`verifier_missed_support` at 0.013. Both stay advisory on a mock, so no gate was made green by
+this: what changed is that the number now measures what its name says.
+
+The committed live run reports both as n/a naming what they wait for, since its citations
+carry no spans. That is the governing rule working as intended, and it is more honest than the
+0.365 it reported before.
+
+**The nine that matter.** Of the 44 disagreements, 35 are the metric asking a different
+question. The other 9, five `unsupported` and four `weak` over passages that do state the
+required value, are genuine Verifier misses. Reacting to 0.542 by tuning the Verifier would
+have spent the effort on the 35 and the component that was mostly right.
+
+#### Noticed while splitting, not in this step's scope
+
+`route_accuracy` 0.750 is three questions: two research-shaped ones the Router recommended
+`deep` for (both of the run's two research questions) and one definitional one it recommended
+`fast` for. With two research questions in the sample the research half of that metric is 0 of
+2, which is a sample too thin to conclude from and a hint worth carrying into the next run.
+
+---
+
 ---
 
 ## Measured findings

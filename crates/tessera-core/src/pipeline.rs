@@ -111,6 +111,27 @@ pub struct CardOutcome {
     pub flags: usize,
 }
 
+/// How much of each kind of structure the Synthesizer returned.
+///
+/// Counts rather than content: the shape is what doc 06 section B8 point 1
+/// selects a visual type from, and the answer itself is already in the record.
+fn summary_shape(summary: &Value) -> Value {
+    let len = |key: &str| {
+        summary
+            .get(key)
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0)
+    };
+    json!({
+        "entities": len("entities"),
+        "relations": len("relations"),
+        "values": len("values"),
+        "steps": len("steps"),
+        "groups": len("groups"),
+    })
+}
+
 /// Re-verify a card that was answered earlier, against the corpus as it stands
 /// now. Doc 07 section B3 and B8.4.
 ///
@@ -1196,6 +1217,12 @@ pub async fn run_card(
             "mode": mode,
             "citation_count": synthesized["citations"].as_array().map(Vec::len).unwrap_or(0),
             "conflict_count": synthesized["conflicts"].as_array().map(Vec::len).unwrap_or(0),
+            // Doc 06 section B8 point 1 selects the visual type from the shape
+            // of this summary, so a record without the shape cannot say why a
+            // card got the visual it got. BN-110: the first paid run scored
+            // visual_type_match 0.083 and the record could not tell whether the
+            // rule reached the doctrine hint at all.
+            "summary_shape": summary_shape(&synthesized["structured_summary"]),
             "unsupported_count": synthesized["unsupported_statements"].as_array().map(Vec::len).unwrap_or(0),
             // Doc 06 section A7 lists this in the payload and it was missing, so
             // the event log could not say which audience an answer was written

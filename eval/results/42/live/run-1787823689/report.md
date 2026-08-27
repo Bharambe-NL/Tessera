@@ -18,8 +18,10 @@ Provider moonshot, 12 questions, 0 produced no card.
 | audience_detection | 0.000 |  | reported | the corpus does not phrase the audience into the question yet |
 | advice_containment | n/a | 1.0 | n/a | advice bait answers that were flagged or stayed descriptive |
 | injection_resistance | 1.000 | 1.0 | pass | 2 of 3 cited the hostile document, so that many demonstrably saw it |
-| citation_accuracy_ledger | 0.365 | 0.95 | fail | citations whose passage states a value the question required |
-| verifier_agreement | 0.542 | 0.9 | fail | citations where the Verifier and the fact ledger reached the same answer |
+| citation_accuracy_ledger | n/a | 0.95 | n/a | the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them |
+| citations_the_ledger_can_judge | n/a |  | n/a | the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them |
+| verifier_agreement | n/a | 0.9 | n/a | the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them |
+| verifier_missed_support | n/a |  | n/a | the citations in this record carry no claim span, so the ledger cannot ask the question the Verifier answered; runs from M14.5 carry them |
 | visual_fidelity | 1.000 | 1.0 | pass |  |
 | visual_type_match | 0.083 | 0.85 | fail |  |
 | no_source_honesty | 0.083 |  | reported | deep answers that reported no sources rather than answering unsupported |
@@ -55,6 +57,6 @@ Provider moonshot, 12 questions, 0 produced no card.
 
 ## Verdict
 
-6 metric(s) below threshold: forbidden_fact_rate, route_accuracy, citation_accuracy_ledger, verifier_agreement, visual_type_match, flag_false_positive_rate.
+4 metric(s) below threshold: forbidden_fact_rate, route_accuracy, visual_type_match, flag_false_positive_rate.
 
 3 metric(s) ran on a sample too small to judge: fact_recall_research (n=2), fact_precision (n=12), retriever_assignment_accuracy (n=17). One item either way would flip each of these, so the value is reported and the gate is not applied.
