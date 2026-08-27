@@ -2303,6 +2303,179 @@ fn the_second_check_in_a_lesson_opens_one_rung_above_the_first() {
     assert_eq!(levels, vec![1, 2, 3], "the ladder did not move: {levels:?}");
 }
 
+/// Doc 17 section 2.2: "a card that links the concept is read" moves a concept
+/// from unseen to exposed, and doc 17 section 9 makes the event the only writer.
+///
+/// The shell decides what reading is, which is doc 17 open question 2's three
+/// second dwell. What this covers is the half the core owns: the event exists,
+/// the fold happens, and a concept nothing links is left alone.
+#[test]
+fn reading_a_card_exposes_the_concepts_it_covers_and_nothing_else() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    let card = core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    let now = tessera_store::now_iso8601();
+    for (id, term) in [
+        ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "world model"),
+        ("01BX5ZZKBKACTAV9WEVGEMMVRZ", "planning horizon"),
+    ] {
+        core.store
+            .conn()
+            .execute(
+                "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                     created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'confirmed', ?5, ?5)",
+                rusqlite::params![id, profile_id, term, pack_id, now],
+            )
+            .expect("concept");
+    }
+    // Only the first is what the card covers.
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept_link (id, concept_id, target_type, target_ref, relation,
+                 proposed_by, status, created_at)
+             VALUES ('01M0000000000000000000000C', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'card', ?1,
+                     'explains', 'librarian', 'confirmed', ?2)",
+            rusqlite::params![card.card_id, now],
+        )
+        .expect("link");
+
+    call(
+        &router,
+        &mut core,
+        "card.viewed",
+        json!({ "board_id": board_id, "card_id": card.card_id }),
+    );
+
+    let state = |id: &str, core: &Core| -> (Option<String>, Option<f64>) {
+        core.store
+            .conn()
+            .query_row(
+                "SELECT learning_state, mastery FROM concept WHERE id = ?1",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("concept")
+    };
+    let (covered, mastery) = state("01ARZ3NDEKTSV4RRFFQ69G5FAV", &core);
+    assert_eq!(covered.as_deref(), Some("exposed"));
+    // Doc 17 section 2.4: "exposure adds 0.02 up to 0.2". Small on purpose:
+    // reading is not evidence, and a state a check has not touched must not
+    // look like one that has.
+    assert!(
+        mastery.is_some_and(|m| m > 0.0 && m <= 0.2),
+        "exposure moved a score like a check would: {mastery:?}"
+    );
+
+    let (untouched, _) = state("01BX5ZZKBKACTAV9WEVGEMMVRZ", &core);
+    assert_eq!(
+        untouched, None,
+        "a concept the card does not cover was marked read"
+    );
+
+    // Doc 17 section 9: the transition is in the log, so a replay says why.
+    let viewed = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.event_type == "card.viewed.v1")
+        .count();
+    assert_eq!(viewed, 1);
+
+    // And a card that is not on the board is refused rather than folded into
+    // somebody else's map.
+    let refused = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "card.viewed",
+                json!({ "board_id": board_id, "card_id": "01M0000000000000000000000X" }),
+                1,
+            ),
+        )
+        .expect("a reply");
+    assert!(!refused.is_ok(), "a card nobody has was marked read");
+}
+
+/// Doc 17 section 6's last line: "Home shows, per mission, the fraction of
+/// concepts at checked or better and the current frontier concept".
+#[test]
+fn home_says_how_far_the_mission_has_got_and_what_is_next() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+
+    // No mission, no summary, and a fraction of nothing rather than a zero
+    // that reads as no progress.
+    let empty = call(&router, &mut core, "mission.summary", json!({}));
+    assert_eq!(empty["concepts"], 0, "{empty}");
+    assert_eq!(empty["frontier"], json!([]), "{empty}");
+
+    call(
+        &router,
+        &mut core,
+        "mission.create",
+        json!({ "statement": "Understand world models" }),
+    );
+
+    let profile_id = core.profile_id.clone();
+    let pack_id: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT id FROM doctrine_pack ORDER BY created_at LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("pack");
+    let now = tessera_store::now_iso8601();
+    // Three concepts: one checked, one claimed and unchecked, one untouched.
+    // Doc 17 section 3 puts the frontier on the second.
+    for (id, term, state, rating, difficulty) in [
+        ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "state space", "checked", 3, Some(2)),
+        ("01BX5ZZKBKACTAV9WEVGEMMVRZ", "world model", "rated", 3, None),
+        (
+            "01M0000000000000000000000C",
+            "planning horizon",
+            "unseen",
+            0,
+            None,
+        ),
+    ] {
+        core.store
+            .conn()
+            .execute(
+                "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                     learning_state, self_rating, difficulty_level, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'confirmed', ?5, ?6, ?7, ?8, ?8)",
+                rusqlite::params![id, profile_id, term, pack_id, state, rating, difficulty, now],
+            )
+            .expect("concept");
+    }
+
+    let summary = call(&router, &mut core, "mission.summary", json!({}));
+    assert_eq!(summary["mission"]["statement"], "Understand world models");
+    assert_eq!(summary["concepts"], 3, "{summary}");
+    assert_eq!(summary["checked_or_better"], 1, "{summary}");
+    assert_eq!(
+        summary["frontier"],
+        json!(["world model"]),
+        "the frontier is not the concept waiting on a check: {summary}"
+    );
+}
+
 /// Doc 17 section 3: "the first lesson checks the frontier before teaching
 /// anything, so an overconfident rating is caught within the first two
 /// questions".

@@ -14,6 +14,7 @@ import './styles/chrome.css';
 import './styles/pages.css';
 
 import { blockAnchor, selectionAnchor } from './canvas/anchor.js';
+import { watchExposure } from './exposure.js';
 import { trailFor, trailHTML } from './canvas/built.js';
 import { CARD_W, boundsOf, layout } from './canvas/layout.js';
 import { readingHTML } from './canvas/reading.js';
@@ -155,6 +156,20 @@ const router = new Router(
   },
 );
 router.attach();
+
+// Doc 17 section 2.2: a card the learner dwelt on is a card they read, and the
+// concepts it links move from unseen to exposed. Started once, for the life of
+// the shell: the watcher rebuilds what it observes as the board redraws.
+watchExposure({
+  cards: cardsEl,
+  report: (cardId) => {
+    if (!boardId) return;
+    // Nothing is shown and nothing is retried. Exposure is a side note about
+    // reading, and a toast about one failing would be the app talking about
+    // itself while somebody is trying to read.
+    void rpc.cardViewed(boardId, cardId).catch(() => {});
+  },
+});
 
 let heights = new Map<string, number>();
 const heightOf = (id: string) => heights.get(id) ?? 320;

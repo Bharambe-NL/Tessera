@@ -293,6 +293,19 @@ export class Rpc {
   }
 
   /** Doc 17 section 2.1: a rating is a claim, and the learner makes it. */
+  /** Doc 17 section 2.2: a card that links a concept was read. */
+  cardViewed(boardId: string, cardId: string) {
+    return this.call<{ card_id: string }>('card.viewed', {
+      board_id: boardId,
+      card_id: cardId,
+    });
+  }
+
+  /** Doc 17 section 6's last line, for Home. */
+  missionSummary() {
+    return this.call<MissionSummary>('mission.summary', {});
+  }
+
   rateConcept(conceptId: string, rating: number) {
     return this.call<{ concept_id: string; rating: number }>('concept.rate', {
       concept_id: conceptId,
@@ -833,3 +846,13 @@ export type Notification =
   | { kind: 'flag_resolved'; card_id: string }
   | { kind: 'board_updated'; board_id: string }
   | { kind: 'toast'; level: 'info' | 'warn' | 'error'; message: string };
+
+/** Doc 17 section 6's last line: what Home says about the mission. */
+export interface MissionSummary {
+  mission: { mission_id: string; statement: string } | null;
+  /** How many concepts the mission covers, which is all of them when it names none. */
+  concepts: number;
+  checked_or_better: number;
+  /** The frontier as terms, because Home names the next concept rather than its id. */
+  frontier: string[];
+}

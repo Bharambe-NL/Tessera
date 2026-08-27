@@ -13,7 +13,7 @@
 //! check is asked, and reading them here would be holding the answer sheet
 //! while marking the paper.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,10 @@ pub struct SessionRecord {
     /// section 4's "no item is ever generated from unverified text" is checked
     /// against this rather than against the product's own idea of eligibility.
     pub verified_cards: Vec<String>,
+    /// Doc 17 section 10's map state consistency, as two readings of the same
+    /// thing: the state the map shows per concept, and what the event log says
+    /// happened to it. The scorer compares them.
+    pub map_states: Vec<Value>,
     /// Doc 17 section 5's learning record, as the event recorded it: one entry
     /// per line of the page, naming the row that line came from. Null when the
     /// lesson wrote none.
@@ -114,6 +118,7 @@ pub fn place(
         rated_only: Vec::new(),
         checks: Vec::new(),
         verified_cards: Vec::new(),
+        map_states: Vec::new(),
         record: None,
         note: String::new(),
     };
@@ -403,6 +408,93 @@ pub fn teach(
 
     let _ = call(router, core, "learn.end", json!({ "board_id": board_id }));
     record.record = saved_record(core, board_id);
+
+    // Doc 17 section 2.2: reading a card is what moves a concept from unseen to
+    // exposed. One card of the lesson's, so the run carries the evidence a
+    // learner reading produces and the consistency check has it to account for.
+    if let Some(card_id) = record.verified_cards.first() {
+        let _ = call(
+            router,
+            core,
+            "card.viewed",
+            json!({ "board_id": board_id, "card_id": card_id }),
+        );
+    }
+
+    record.map_states = map_states(core, router);
+}
+
+/// Doc 17 section 10: "map state consistency with the event log 1.00".
+///
+/// Two readings, written side by side. The state is what the map shows, which
+/// is the projection's answer; the evidence is what the log holds, read here
+/// without touching the concept columns at all. A scorer that has both can ask
+/// whether the picture the learner sees is the one their own history supports,
+/// which is the only version of that question worth asking: the projection
+/// checking itself would agree with itself.
+fn map_states(core: &mut Core, router: &Router<Core>) -> Vec<Value> {
+    let map = call(router, core, "map.read", json!({})).unwrap_or_else(|_| json!({}));
+    let events = core.store.events(None).unwrap_or_default();
+
+    // Which cards cover which concept, so a view of a card is evidence about
+    // the concepts it links. The same join the projection folds over.
+    let mut covers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if let Ok(mut stmt) = core.store.conn().prepare(
+        "SELECT l.target_ref, l.concept_id FROM concept_link l
+         WHERE l.target_type = 'card' AND l.status = 'confirmed'",
+    ) && let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+    {
+        for (card_id, concept_id) in rows.flatten() {
+            covers.entry(card_id).or_default().push(concept_id);
+        }
+    }
+
+    let mut rated: BTreeSet<String> = Default::default();
+    let mut checked: BTreeSet<String> = Default::default();
+    let mut viewed: BTreeSet<String> = Default::default();
+    for event in &events {
+        match event.event_type.as_str() {
+            "concept.rated.v1" => {
+                if let Some(id) = event.payload["concept_id"].as_str() {
+                    rated.insert(id.to_string());
+                }
+            }
+            // Doc 17 section 2.3: `checked` is "at least one passed check".
+            "learn.check_answered.v1" if event.payload["correct"] == true => {
+                for id in event.payload["concept_ids"].as_array().into_iter().flatten() {
+                    if let Some(id) = id.as_str() {
+                        checked.insert(id.to_string());
+                    }
+                }
+            }
+            "card.viewed.v1" => {
+                if let Some(card_id) = event.payload["card_id"].as_str() {
+                    for id in covers.get(card_id).into_iter().flatten() {
+                        viewed.insert(id.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    map["concepts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            let id = c["concept_id"].as_str()?.to_string();
+            Some(json!({
+                "concept_id": id,
+                "state": c["learning_state"].clone(),
+                "evidence": {
+                    "rated": rated.contains(&id),
+                    "checked": checked.contains(&id),
+                    "viewed": viewed.contains(&id),
+                },
+            }))
+        })
+        .collect()
 }
 
 /// The learning record this lesson wrote, read back off the event log.

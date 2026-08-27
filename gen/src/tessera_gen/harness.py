@@ -106,6 +106,10 @@ THRESHOLDS: dict[str, float] = {
     # for: a claim is tested at the top of the lesson rather than after a
     # lesson has been taught on the strength of it.
     "overconfident_rating_caught": 0.95,
+    # Doc 17 section 10: "map state consistency with the event log 1.00". The
+    # map is a projection of the log, so anything less than agreement is the
+    # picture and the history saying different things about the same learner.
+    "map_state_consistency": 1.00,
     # Doc 17 section 10: "learning record traceability 1.00". The record is
     # generated from rows rather than written by a model, so the gate is
     # absolute: one line the session cannot account for is a note telling a
@@ -587,6 +591,7 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
         "checks_from_verified_cards",
         "learning_record_traceability",
         "overconfident_rating_caught",
+        "map_state_consistency",
     )
     if not manifest.get("learning_enabled"):
         waiting = "no learner walked the path; run the eval with --learner"
@@ -646,6 +651,12 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
     # Deliberately a second implementation of `next_level`: the product runs the
     # rule and the rule decides what it asks next, so measuring its output with
     # its own code would report 1.000 whatever the rule did.
+    # Before the checks below, because a map is a thing a placement leaves
+    # behind whether or not a lesson followed it: doc 17 section 2.2 fills the
+    # map from ratings and reading, and gating that on a check having been
+    # asked would report n/a for a learner who has one.
+    out.append(_map_consistency(sessions))
+
     checks = [(s, c) for s in sessions for c in (s.get("checks") or [])]
     steps = 0
     followed = 0
@@ -694,6 +705,53 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
     out.append(_record_traceability(sessions))
     out.append(_overconfidence_caught(sessions))
     return out
+
+
+#: Doc 17 section 2.3's six states, in the order evidence moves them.
+_ORDER = ["unseen", "exposed", "rated", "checked", "mastered", "decayed"]
+
+
+def _map_consistency(sessions: list[dict]) -> Metric:
+    """Doc 17 section 10: "map state consistency with the event log 1.00".
+
+    The leg writes two readings of every concept: the state the map shows, and
+    what the log holds about it. This re-derives the state from the second and
+    compares. `mastered` and `decayed` both sit past `checked` on doc 17 section
+    2.3's line and rest on the same evidence, so either satisfies a check; the
+    rest is exact, because a concept the log says was rated and the map calls
+    unseen is the picture and the history disagreeing about one learner.
+    """
+    agreed = 0
+    rows = 0
+    for session in sessions:
+        for row in session.get("map_states") or []:
+            rows += 1
+            evidence = row.get("evidence") or {}
+            state = row.get("state") or "unseen"
+            if evidence.get("checked"):
+                expected = {"checked", "mastered", "decayed"}
+            elif evidence.get("rated"):
+                expected = {"rated"}
+            elif evidence.get("viewed"):
+                expected = {"exposed"}
+            else:
+                expected = {"unseen"}
+            if state in expected:
+                agreed += 1
+    if not rows:
+        return Metric(
+            "map_state_consistency",
+            None,
+            0,
+            0,
+            "no learner walked a map; run the eval with --learner",
+        )
+    return _ratio(
+        "map_state_consistency",
+        agreed,
+        rows,
+        "concepts whose state on the map is the one the event log accounts for",
+    )
 
 
 def _overconfidence_caught(sessions: list[dict]) -> Metric:

@@ -270,6 +270,12 @@ fn with_learning(core: &mut Core) {
         repo::rate_concept(&mut core.store, id, 3).expect("a rating");
     }
     repo::rate_concept(&mut core.store, &ids[2], 2).expect("a rating");
+
+    // Doc 17 section 3: placement happens "when a mission is created or a path
+    // is loaded", and doc 17 section 6's last line has Home report against one.
+    // A map with no mission behind it is a map nobody is working on.
+    repo::create_mission(&mut core.store, &profile_id, "Understand world models", &ids, &[])
+        .expect("a mission");
 }
 
 fn tutor_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {

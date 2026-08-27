@@ -126,7 +126,11 @@ export class Router {
           title.textContent = COPY.railHome;
           tools.innerHTML = homeToolsHTML(this.homeFilter);
           const { boards } = await this.rpc.listBoards(this.homeFilter);
-          body.innerHTML = homeHTML(boards, this.homeFilter);
+          // Doc 17 section 6's last line. A profile with no mission has no
+          // summary rather than an empty one, and a read that failed is not
+          // worth taking Home down for.
+          const mission = await this.rpc.missionSummary().catch(() => null);
+          body.innerHTML = homeHTML(boards, this.homeFilter, mission);
           break;
         }
         case 'flags': {

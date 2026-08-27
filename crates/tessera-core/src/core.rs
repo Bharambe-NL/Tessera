@@ -1755,6 +1755,115 @@ pub fn build_router() -> Router<Core> {
         Ok(json!({ "sources": sources }))
     });
 
+    // Doc 17 section 2.2: "a card that links the concept is read" moves it from
+    // unseen to exposed, and doc 17 section 2.4 gives that reading its own
+    // small, capped evidence.
+    //
+    // The shell decides what reading is, because only the shell can see it: doc
+    // 17 open question 2 settles on a dwell of `EXPOSURE_MS`, which is a guess
+    // written down as a named constant rather than a rule the core can check.
+    // What the core owns is the rest: the event is the only writer of the
+    // learning columns, so the fold happens where every other one does.
+    r.register("card.viewed", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Viewed {
+            board_id: String,
+            card_id: String,
+        }
+        let p: Viewed = params(p)?;
+        // A card of this profile's, because the payload names a card and an
+        // event naming somebody else's would fold into their map.
+        let exists: i64 = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM card WHERE id = ?1 AND board_id = ?2",
+                rusqlite::params![p.card_id, p.board_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists == 0 {
+            return Err(RpcError::core("no_such_card", "That card is not on this board."));
+        }
+        core.store
+            .append(
+                tessera_store::event::NewEvent::new(
+                    "card.viewed.v1",
+                    json!({ "card_id": p.card_id }),
+                    tessera_store::event::Provenance::user(),
+                )
+                .on_board(&p.board_id)
+                .on_card(&p.card_id),
+            )
+            .map_err(store_error)?;
+        Ok(json!({ "card_id": p.card_id }))
+    });
+
+    // Doc 17 section 6's last line: "Home shows, per mission, the fraction of
+    // concepts at checked or better and the current frontier concept".
+    //
+    // Both are rules rather than counts, so they are answered here: what counts
+    // as "checked or better" is doc 17 section 2.3's ordering, and the frontier
+    // is section 3's. Home draws the answer.
+    r.register("mission.summary", |core: &mut Core, _| {
+        let mission = repo::active_mission(&core.store, &core.profile_id).map_err(store_error)?;
+        let (concepts, edges) = repo::read_map(&core.store, &core.profile_id).map_err(store_error)?;
+        let mastered_at = core
+            .packs
+            .get(&core.pack_code)
+            .map(|p| p.learning_templates.mastered_at)
+            .unwrap_or(0.8);
+
+        // A mission that named targets is about those; one that named none is
+        // about everything the learner has on the map, which is what a mission
+        // with no targets yet means rather than a mission about nothing.
+        let targets: Vec<String> = mission["target_concept_ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        let mine: Vec<Value> = concepts
+            .iter()
+            .filter(|c| {
+                targets.is_empty()
+                    || c["concept_id"]
+                        .as_str()
+                        .is_some_and(|id| targets.iter().any(|t| t == id))
+            })
+            .cloned()
+            .collect();
+
+        let rules = tessera_agents::learning::concepts_from(&mine);
+        let checked = rules
+            .iter()
+            .filter(|c| tessera_agents::learning::at_least_checked(c))
+            .count();
+
+        // The frontier is read over the whole map rather than over the
+        // mission's slice, because a prerequisite outside the mission still has
+        // to come first and a frontier that ignored it would send the learner
+        // at something they are not ready for.
+        let all = tessera_agents::learning::concepts_from(&concepts);
+        let frontier = tessera_agents::learning::frontier(
+            &all,
+            &tessera_agents::learning::edges_from(&edges),
+            mastered_at,
+        );
+        let terms: Vec<String> = frontier
+            .iter()
+            .filter_map(|id| all.iter().find(|c| &c.id == id))
+            .map(|c| c.term.clone())
+            .collect();
+
+        Ok(json!({
+            "mission": mission,
+            "concepts": mine.len(),
+            "checked_or_better": checked,
+            "frontier": terms,
+        }))
+    });
+
     // Doc 14 section 3.3's triggers, as the surface the panel drives.
     //
     // One method per trigger rather than one that infers the stage, because doc

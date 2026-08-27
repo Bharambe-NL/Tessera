@@ -8,11 +8,33 @@
  */
 
 import { esc } from '../canvas/visual.js';
-import type { BoardSummary } from '../rpc.js';
+import type { BoardSummary, MissionSummary } from '../rpc.js';
 import { COPY } from '../strings.js';
 import { ago, emptyState } from './shared.js';
 
 export type HomeFilter = 'active' | 'trashed';
+
+/**
+ * Doc 17 section 6's last line: "Home shows, per mission, the fraction of
+ * concepts at checked or better and the current frontier concept".
+ *
+ * A fraction rather than a percentage, because two of five is a thing a person
+ * can hold and 40 percent of an unnamed total is not. The frontier is named,
+ * not counted: what a learner wants from this line is what to do next.
+ */
+function missionHTML(summary: MissionSummary): string {
+  if (!summary.mission || summary.concepts === 0) return '';
+  const frontier = summary.frontier.length
+    ? `${COPY.homeFrontier} ${esc(summary.frontier.join(', '))}`
+    : COPY.homeNoFrontier;
+  return (
+    `<section class="mission">` +
+    `<h2>${esc(summary.mission.statement)}</h2>` +
+    `<p class="meta">${summary.checked_or_better} ${COPY.homeOf} ${summary.concepts} ` +
+    `${COPY.homeChecked}. ${frontier}</p>` +
+    `</section>`
+  );
+}
 
 function card(board: BoardSummary, filter: HomeFilter): string {
   const flags =
@@ -37,11 +59,19 @@ function card(board: BoardSummary, filter: HomeFilter): string {
   );
 }
 
-export function homeHTML(boards: BoardSummary[], filter: HomeFilter): string {
+export function homeHTML(
+  boards: BoardSummary[],
+  filter: HomeFilter,
+  mission: MissionSummary | null,
+): string {
+  // The mission line only belongs over the boards a learner is working on.
+  const summary = filter === 'active' && mission ? missionHTML(mission) : '';
   if (boards.length === 0) {
-    return emptyState(filter === 'active' ? COPY.homeNoBoards : COPY.homeNoTrash);
+    return summary + emptyState(filter === 'active' ? COPY.homeNoBoards : COPY.homeNoTrash);
   }
-  return `<div class="board-grid">${boards.map((b) => card(b, filter)).join('')}</div>`;
+  return (
+    summary + `<div class="board-grid">${boards.map((b) => card(b, filter)).join('')}</div>`
+  );
 }
 
 /** The filter toggle and the create button, which live in the page header. */

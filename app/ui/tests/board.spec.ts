@@ -382,3 +382,27 @@ test('a card is kept as a page and says so afterwards', async ({ page }) => {
   await page.reload();
   await expect(page.locator('#cards .card .chip.page')).toBeVisible({ timeout: 30_000 });
 });
+
+test('a card the reader dwells on is reported as read, once', async ({ page }) => {
+  // Doc 17 section 2.2: "a card that links the concept is read" is what moves
+  // a concept from unseen to exposed, and only the shell can see reading. Doc
+  // 17 open question 2 settles what reading means at a three second dwell.
+  const viewed: string[] = [];
+  page.on('request', (request) => {
+    if (!request.url().endsWith('/rpc')) return;
+    const body = request.postData() ?? '';
+    if (body.includes('"card.viewed"')) viewed.push(body);
+  });
+
+  await askFirst(page);
+  // Nothing yet: a card that has just appeared has not been read.
+  expect(viewed).toHaveLength(0);
+
+  // Past the dwell, and then well past it, because the report happens once per
+  // card and a second one would be the log filling up with scrolling.
+  await expect(async () => {
+    expect(viewed).toHaveLength(1);
+  }).toPass({ timeout: 15_000 });
+  await page.waitForTimeout(4_000);
+  expect(viewed).toHaveLength(1);
+});

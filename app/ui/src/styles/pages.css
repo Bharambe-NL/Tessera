@@ -1232,3 +1232,22 @@ button.wait {
   font: inherit;
   text-decoration: underline;
 }
+
+/* Doc 17 section 6's last line: the mission, above the boards on Home. */
+.mission {
+  margin: 0 0 var(--s7);
+  padding: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+
+.mission h2 {
+  margin: 0 0 var(--s2);
+  font-size: 15px;
+}
+
+.mission .meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}

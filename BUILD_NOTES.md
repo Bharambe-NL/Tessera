@@ -3956,7 +3956,49 @@ trip whole.
 
 ---
 
+### BN-146 Home, exposure, and the failed check that was reading as a pass
 
+**Spec** Doc 17 sections 2.2, 2.3, 6 and 10, phase 13g-ii.
+
+**What landed.** Doc 17 section 6's last line, on Home: per mission, the fraction of concepts at
+checked or better and the current frontier concept, named rather than counted, because what a
+learner wants from that line is what to do next. Both are rules, so `mission.summary` answers them
+and Home draws the answer. The frontier is read over the whole map rather than the mission's slice:
+a prerequisite outside the mission still has to come first.
+
+**Exposure has a producer at last.** `card.viewed.v1` has been in the vocabulary and in the
+projection since 13a-ii with nothing writing it. The shell writes it now, because only the shell
+can see reading: an `IntersectionObserver` starts a clock when a card is more than half in view and
+`card.viewed` fires when the clock reaches `EXPOSURE_MS`. Doc 17 open question 2 says three seconds
+is a guess, so it is one named constant rather than a number spread through handlers.
+
+**Dwell rather than appearance.** Reporting every card on screen would mark a whole board read at a
+glance, and a map filled that way says the learner has met twenty ideas when they have seen a wall.
+Once per card per shell, too: exposure is capped at 0.2 anyway, and a log carrying a line every time
+a card scrolled past would be a log about scrolling.
+
+**The gate found a real one.** Map state consistency read 0.988 on its first run. Split by learner
+and concept, the single disagreeing row was the random learner: six failed checks, no pass, and the
+map showing `checked`. Doc 17 section 2.3 gives that state one meaning, "at least one passed check
+at level 1 or 2", so `state_after_check` was promoting a claim the check had just contradicted.
+Worse than a wrong colour: `verified` reads that state, so one wrong answer took the concept off the
+frontier and moved the learner on from the thing they had just got wrong. A failed check now
+demotes `mastered` to `checked` and leaves everything below where it was.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --grounded --learner`. Eighty
+concept rows across four learners.
+
+| Metric | Threshold | Result |
+|---|---|---|
+| `map_state_consistency` | 1.00 | 1.000 |
+
+**Verified** Full battery green: workspace tests including two new end to end ones over exposure and
+the Home summary, clippy at `-D warnings`, fmt, style lint, 93 generator guards with the new gate
+broken three ways, 76 Playwright tests including the dwell and the mission line, a 40 question
+grounded sweep with nothing below threshold and 29 of 55 metrics measured, and the 20 board bundle
+round trip whole.
+
+---
 
 ---
 
