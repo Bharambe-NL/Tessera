@@ -20,6 +20,7 @@ from tessera_gen import corpus as corpus_mod
 from tessera_gen import edge_cases, harness, matchers, mess
 from tessera_gen import questions as questions_mod
 from tessera_gen import snapshots as snapshots_mod
+from tessera_gen import vault as vault_mod
 from tessera_gen.cli import build
 from tessera_gen.facts import generate_facts
 from tessera_gen.rng import Rng, stream
@@ -179,6 +180,118 @@ def test_the_question_set_has_its_shape(corpus: Path) -> None:
     # A tenth advice bait, a tenth empty corpus.
     assert sum(1 for r in rows if "advice_request" in r["expected_flags"]) == 20
     assert sum(1 for r in rows if "empty_corpus" in r["edge_case_ids"]) == 20
+
+
+def test_the_vault_holds_forty_pages_of_three_kinds(corpus: Path) -> None:
+    """Doc 16 section 5: "40 pages with planted facts and carried citations"."""
+    rows = [
+        json.loads(line)
+        for line in (corpus / "vault.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert len(rows) == 40
+    kinds = {k: sum(1 for r in rows if r["kind"] == k) for k in ("saved", "documented", "page_only")}
+    assert kinds == {"saved": 24, "documented": 8, "page_only": 8}
+
+    # Doc 16 section 3.2: a page saved from a card carries the card's citations
+    # as {ordinal, passage_id}. Doc 16 section 2.2 is why: the citation has to
+    # reach the passage, not stop at the note.
+    saved = [r for r in rows if r["kind"] == "saved"]
+    assert all(r["source_card_id"] for r in saved)
+    assert all(r["citations_carried"] for r in saved)
+    for row in saved:
+        for citation in row["citations_carried"]:
+            assert citation["passage_id"], f"{row['page_id']} carries a citation to nothing"
+
+    # A page written by hand carries none, because nobody cited anything.
+    assert all(not r["citations_carried"] for r in rows if r["kind"] != "saved")
+
+    # And every page is a file on disk, which is what doc 16 section 3.1 means
+    # by the file being the export.
+    for row in rows:
+        path = corpus / row["file_path"]
+        assert path.exists(), f"{row['file_path']} is a row with no file"
+        assert path.read_text(encoding="utf-8") == row["body"]
+
+
+def test_a_page_only_fact_is_in_no_document(corpus: Path) -> None:
+    """The family only measures anything while this holds.
+
+    A page-only question is how a sweep finds out whether the vault was read at
+    all. If the same value sits in a document, an answer that never opened the
+    vault scores just as well and the metric measures nothing.
+    """
+    facts = {
+        json.loads(line)["fact_id"]: json.loads(line)
+        for line in (corpus / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    }
+    # From the build rather than from `documents.jsonl`, which carries the
+    # passage ids and not their text: the text is in the files on disk, and
+    # several of them are pdfs and spreadsheets.
+    documents = _documents(SEED)
+    vault_facts = [f for fid, f in facts.items() if fid.startswith("VF-")]
+    assert len(vault_facts) == 8
+
+    for fact in vault_facts:
+        for document in documents:
+            for passage in document.passages:
+                assert not matchers.matches(fact["kind"], fact["value"], passage.text), (
+                    f"{fact['fact_id']} is in {document.doc_id}, so the vault is not the "
+                    "only place it is written down"
+                )
+        # And it says where it does live.
+        assert fact["planted_in"], f"{fact['fact_id']} is planted nowhere at all"
+        assert all(p["doc_id"].startswith("vault/") for p in fact["planted_in"])
+
+
+def test_the_vault_questions_are_their_own_set(corpus: Path) -> None:
+    """Doc 16 section 5's two families, beside doc 02 section 6's four hundred
+    rather than mixed into them."""
+    rows = [
+        json.loads(line)
+        for line in (corpus / "questions_vault.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    page_only = [r for r in rows if "page_only" in r["edge_case_ids"]]
+    no_vault = [r for r in rows if "no_vault_match" in r["edge_case_ids"]]
+    assert len(page_only) == 8
+    assert len(no_vault) == 8
+
+    pages = {
+        json.loads(line)["file_path"]
+        for line in (corpus / "vault.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    }
+    for row in page_only:
+        assert row["required_sources"], "a page-only question names the page that answers it"
+        assert set(row["required_sources"]) <= pages
+
+    # The other family is answerable from the corpus, so its sources are
+    # documents and the vault has nothing to do with it.
+    for row in no_vault:
+        assert not set(row["required_sources"]) & pages
+
+
+def test_every_wikilink_names_a_page_or_is_meant_to_dangle(corpus: Path) -> None:
+    """Doc 16 section 3.1. The dangling ones are deliberate: an unresolved link
+    is kept and creates the page on click, and a vault with none of them would
+    leave that state untested."""
+    rows = [
+        json.loads(line)
+        for line in (corpus / "vault.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    titles = {r["title"] for r in rows}
+    dangling = 0
+    for row in rows:
+        for target in row["links_to"]:
+            if target not in titles:
+                assert target in vault_mod.DANGLING_TITLES, f"{target} names nothing by accident"
+                dangling += 1
+            # The body has to actually carry the link the row claims.
+            assert f"[[{target}" in row["body"]
+    assert dangling >= 2, "no unresolved link, so the state nobody tested is untested here too"
 
 
 def test_a_branch_question_carries_the_anchor_it_came_from(corpus: Path) -> None:
@@ -1072,6 +1185,91 @@ def _empty_report(tmp_path: Path, corpus: Path, manifest: dict) -> object:
     (results / "runs.jsonl").write_text("", encoding="utf-8")
     (results / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return harness.score(results, corpus)
+
+
+def _vault_report(tmp_path: Path, corpus: Path, links: list[dict]) -> object:
+    results = tmp_path / "run"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text("", encoding="utf-8")
+    (results / "manifest.json").write_text(
+        json.dumps({"provider": "mock", "snapshot": "T1"}), encoding="utf-8"
+    )
+    (results / "vault_links.jsonl").write_text(
+        "\n".join(json.dumps(link) for link in links), encoding="utf-8"
+    )
+    return harness.score(results, corpus)
+
+
+def _named(report: object, name: str):
+    """One metric out of a report, by name."""
+    return next(m for m in report.metrics if m.name == name)
+
+
+def test_backlink_completeness_counts_the_links_that_never_arrived(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 16 section 5 gates this at 1.00, and the denominator is what the
+    corpus planted rather than what the store kept.
+
+    A link that never reached the store cannot fail a backlink check, because
+    there is nothing to check. Scoring only what arrived would report 1.00 on a
+    vault that lost half its links, which is the failure this metric exists to
+    catch.
+    """
+    pages = [
+        json.loads(line)
+        for line in (corpus / "vault.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    titles = {p["title"].lower() for p in pages}
+    planted = [
+        {
+            "from_title": page["title"],
+            "target_title": target,
+            "target_kind": "page",
+            "in_backlinks": True,
+        }
+        for page in pages
+        for target in page["links_to"]
+        if target.lower() in titles
+    ]
+
+    # Everything arrives and every link is found: the gate passes.
+    whole = _named(_vault_report(tmp_path / "whole", corpus, planted), "backlink_completeness")
+    assert whole.value == 1.0
+    assert whole.denominator == len(planted)
+
+    # One link is dropped on the floor. The gate has to notice, and it can only
+    # notice because it counts against the corpus.
+    short = _named(
+        _vault_report(tmp_path / "short", corpus, planted[:-1]), "backlink_completeness"
+    )
+    assert short.value is not None and short.value < 1.0
+    assert short.denominator == len(planted)
+    assert "took" in short.note
+
+    # One link arrives and the target cannot find it: also a failure, and a
+    # different one.
+    broken = list(planted)
+    broken[0] = dict(broken[0], in_backlinks=False)
+    lost = _named(_vault_report(tmp_path / "lost", corpus, broken), "backlink_completeness")
+    assert lost.value is not None and lost.value < 1.0
+    assert lost.denominator == len(planted)
+
+
+def test_a_run_with_no_backlink_check_says_what_it_waits_for(
+    corpus: Path, tmp_path: Path
+) -> None:
+    report = _vault_report(tmp_path, corpus, [])
+    metric = _named(report, "backlink_completeness")
+    assert metric.value is None
+    assert "record" in metric.note
+
+    # And doc 16's other two say which phase produces them.
+    for name in ("grounding_state_accuracy", "page_sole_support_rate"):
+        waiting = _named(report, name)
+        assert waiting.value is None
+        assert "12d" in waiting.note
 
 
 def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:

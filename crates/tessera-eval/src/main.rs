@@ -19,6 +19,7 @@
 mod boards;
 mod bundles;
 mod reverify;
+mod vault;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
@@ -443,7 +444,7 @@ fn main() -> std::process::ExitCode {
             .join(corpus_name(&args.corpus))
             .join(&args.policy)
             .join(stamp());
-        if let Err(e) = write_records(&dir, &records, &[], &args, &pack, records.len(), failures) {
+        if let Err(e) = write_records(&dir, &records, &[], &[], &args, &pack, records.len(), failures) {
             eprintln!("could not write the results: {e}");
             return std::process::ExitCode::from(2);
         }
@@ -611,7 +612,24 @@ fn main() -> std::process::ExitCode {
         .lock()
         .map(|mut e| std::mem::take(&mut *e))
         .unwrap_or_default();
-    if let Err(e) = write_records(&dir, &records, &exercises, &args, &pack, total, failures) {
+    // The vault's own check, run once outside the workers.
+    let vault_links = match vault::load(&args.corpus).and_then(|p| vault::audit(&args.corpus, &p)) {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("the vault could not be audited: {e}");
+            Vec::new()
+        }
+    };
+    if let Err(e) = write_records(
+        &dir,
+        &records,
+        &exercises,
+        &vault_links,
+        &args,
+        &pack,
+        total,
+        failures,
+    ) {
         eprintln!("could not write the results: {e}");
         return std::process::ExitCode::from(2);
     }
@@ -1910,6 +1928,40 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
         report.boards, report.cards, report.indexed
     );
 
+    // Doc 16 section 3.3: the vault is a folder like any other and its pages
+    // are a class of their own. Seeded after the boards, because two dozen of
+    // them are pages saved from cards on those boards.
+    let pages = vault::load(corpus)?;
+    if !pages.is_empty() {
+        let report = vault::seed(
+            &mut core.store,
+            &profile_id,
+            &pack_id,
+            corpus,
+            &pages,
+            embedder.as_deref(),
+        )?;
+        if !report.disagreements.is_empty() {
+            // The corpus writes the file and the row from one page. A
+            // difference is a generator bug, and quietly trusting one of them
+            // would score the product against a vault nobody wrote.
+            eprintln!(
+                "  vault: {} pages disagree with their files: {}",
+                report.disagreements.len(),
+                report.disagreements.join(", ")
+            );
+        }
+        println!(
+            "  vault: {} pages ({} saved from cards, {} said nowhere else), {} links, \
+             {} unresolved",
+            report.pages, report.saved_from_cards, report.page_only, report.links, report.unresolved
+        );
+        configured.push((
+            "vault".to_string(),
+            IndexedConfig::pages(vec![tessera_retrievers::VAULT_FOLDER.to_string()]),
+        ));
+    }
+
     core.retrievers = RetrieverSet {
         indexed: configured,
         embedder,
@@ -1925,16 +1977,29 @@ fn doctrine_exclusions(core: &Core) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_records(
     dir: &Path,
     records: &[RunRecord],
     exercises: &[ExerciseRecord],
+    vault_links: &[vault::LinkRow],
     args: &Args,
     pack: &str,
     total: usize,
     failures: usize,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
+
+    // Doc 16 phase 12c: backlinks are a query over PageLink. The rows say what
+    // the query answered for every link the corpus planted, and the scorer does
+    // the arithmetic, because measuring a query with itself reports 1.00
+    // whatever it does.
+    if !vault_links.is_empty() {
+        let mut file = std::fs::File::create(dir.join("vault_links.jsonl"))?;
+        for link in vault_links {
+            writeln!(file, "{}", serde_json::to_string(link).unwrap_or_default())?;
+        }
+    }
 
     let mut file = std::fs::File::create(dir.join("runs.jsonl"))?;
     for r in records {

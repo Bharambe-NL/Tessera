@@ -2585,6 +2585,52 @@ asserts a citation whose source class is `page`.
 
 ---
 
+### BN-115 Forty pages that say what a vault says, and one that says nothing else does
+
+**Spec** 16 section 5's eval line; 02 section 6.
+
+**Built** 2026-08-27, M15 12a-iv, eval half.
+
+**Three kinds of page, because they test three rules.** Twenty four saved from cards, carrying
+the card's citations as `{ordinal, passage_id}`: doc 16 section 2.2's whole point, since the
+assessed package pointed the next citation at the note and lost the regulation two hops later.
+Eight written by hand about something a document also says, which is what a numeric claim must
+not rest on alone. Eight written by hand about something **no document says**, which is what a
+page-only question needs.
+
+**"Only in the vault" is checked, not asserted.** A label pool shared with the documented facts
+can hand out a value some document already states, and a page-only question whose answer is also
+in the corpus measures nothing: an answer that never opened the vault would score just as well.
+The generator moves the value by hundredths until no passage in the corpus states it, and a
+guard test re-checks every one of the eight against every passage.
+
+**The vault's questions are their own set.** Doc 02 section 6 fixes the main set at 400 with a
+shape the guards check, so the two vault families live in `questions_vault.jsonl` beside
+`questions_breadth.jsonl`. Merging them broke two guards immediately, which is the guards working.
+The facts do join the ledger, so a page-only answer is scored by the same matchers as any other.
+
+**The bug the output caught.** The page-only titles named a different subject from the one their
+bodies stated: the title was computed from `fact`, which was still bound to the previous loop's
+value, and Python was happy to read it. Printing forty pages and reading them is what found it.
+
+**backlink_completeness, gated at 1.00 and absolute.** The eval seeds a throwaway profile,
+queries the backlinks of every page the corpus linked to, and writes what the query answered.
+The scorer does the arithmetic against the corpus's own `links_to`, because measuring a query
+with itself reports 1.00 whatever it does. The denominator is what the corpus planted rather
+than what the store kept: a link that never arrived cannot fail a backlink check, and scoring
+only what arrived would report 1.00 on a vault that lost half its links. Three guard tests cover
+the whole set, one lost link, and one link the target cannot find.
+
+**Two metrics that wait.** `grounding_state_accuracy` and `page_sole_support_rate` report n/a
+naming 12d, where the notebook produces the states they measure. Registered now with their
+thresholds so the day a run sets them the number is judged rather than reported.
+
+**Verified** Full battery green, 80 generator guards, 50 Playwright tests, the grounded sweep
+(34 of 43 metrics measurable, `backlink_completeness` 1.000 over 60 links) and the bundle round
+trip.
+
+---
+
 ---
 
 ## Measured findings
