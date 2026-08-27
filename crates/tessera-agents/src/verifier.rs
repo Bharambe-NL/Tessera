@@ -1080,10 +1080,20 @@ fn below_threshold(mode: &str) -> Option<Vec<Value>> {
     if mode == "fast" {
         return Some(vec![]);
     }
+    // Doc 07 section B9: while a pack has not reached 0.90 agreement with the
+    // ledger check, every deep and research card carries this, which turns the
+    // product back into draft mode without changing any other agent. No pack
+    // has been measured against a live provider yet, so it fires on all of them.
+    //
+    // The wording was "the support check is not enabled yet", which stopped
+    // being true at M8 when that check was built. A person reading it would
+    // conclude nothing had checked their card, when what is actually pending is
+    // the measurement that would let the checking run unsupervised.
     Some(vec![hit(
         "whole_card",
         None,
-        "The support check is not enabled yet, so a spot check is advised.",
+        "This pack's Verifier has not been measured against a live provider yet, so a spot check \
+         is advised.",
         json!({}),
     )])
 }
