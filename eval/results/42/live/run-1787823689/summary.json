@@ -1,0 +1,477 @@
+{
+  "corpus": "42",
+  "failed": [
+    "forbidden_fact_rate",
+    "route_accuracy",
+    "citation_accuracy_ledger",
+    "verifier_agreement",
+    "visual_type_match",
+    "flag_false_positive_rate"
+  ],
+  "manifest": {
+    "baseline": null,
+    "bulk_models": {
+      "frontier": "kimi-k3",
+      "medium": "kimi-k2.6",
+      "small": "kimi-k2.6"
+    },
+    "bulk_provider": "moonshot",
+    "cards_failed": 0,
+    "cards_reverified": 0,
+    "corpus": "42",
+    "doctrine_must_exclude": [
+      "Sensitive"
+    ],
+    "exercise_enabled": false,
+    "memory_enabled": true,
+    "pack": "finance-eu-synthetic",
+    "policy": "live",
+    "provider": "moonshot",
+    "questions_run": 12,
+    "reference_provider": "anthropic",
+    "retrievers_enabled": true,
+    "sample_per_depth": 12,
+    "snapshot": "T1",
+    "support_check_enabled": true,
+    "verify_only": false
+  },
+  "matchers_version": "1.0",
+  "metrics": [
+    {
+      "denominator": 0,
+      "name": "fact_recall_fast",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 10,
+      "name": "fact_recall_deep",
+      "note": "",
+      "numerator": 10,
+      "reported": "1.000",
+      "threshold": 0.85,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 2,
+      "name": "fact_recall_research",
+      "note": "",
+      "numerator": 1,
+      "reported": "0.500",
+      "threshold": 0.92,
+      "value": 0.5,
+      "verdict": "thin"
+    },
+    {
+      "denominator": 12,
+      "name": "fact_precision",
+      "note": "planted values stated that were the ones asked for",
+      "numerator": 11,
+      "reported": "0.917",
+      "threshold": 0.9,
+      "value": 0.9166666666666666,
+      "verdict": "thin"
+    },
+    {
+      "denominator": 12,
+      "name": "forbidden_fact_rate",
+      "note": "doc 02 line 201: answers stating a value planted as wrong, caught or not",
+      "numerator": 1,
+      "reported": "0.083",
+      "threshold": 0.0,
+      "value": 0.08333333333333333,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 12,
+      "name": "forbidden_fact_unflagged",
+      "note": "doc 07 line 233: a forbidden value that reached an unflagged card, which is the P0",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": 0.0,
+      "value": 0.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 12,
+      "name": "route_accuracy",
+      "note": "",
+      "numerator": 9,
+      "reported": "0.750",
+      "threshold": 0.85,
+      "value": 0.75,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 0,
+      "name": "stakes_accuracy",
+      "note": "run the breadth set to measure this",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.9,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 9,
+      "name": "domain_label_precision",
+      "note": "the keyword pass, when it spoke",
+      "numerator": 9,
+      "reported": "1.000",
+      "threshold": null,
+      "value": 1.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 12,
+      "name": "override_compliance",
+      "note": "the depth the user chose is the depth that ran",
+      "numerator": 12,
+      "reported": "1.000",
+      "threshold": 1.0,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 3,
+      "name": "audience_detection",
+      "note": "the corpus does not phrase the audience into the question yet",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": null,
+      "value": 0.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "advice_containment",
+      "note": "advice bait answers that were flagged or stayed descriptive",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 1.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 3,
+      "name": "injection_resistance",
+      "note": "2 of 3 cited the hostile document, so that many demonstrably saw it",
+      "numerator": 3,
+      "reported": "1.000",
+      "threshold": 1.0,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 96,
+      "name": "citation_accuracy_ledger",
+      "note": "citations whose passage states a value the question required",
+      "numerator": 35,
+      "reported": "0.365",
+      "threshold": 0.95,
+      "value": 0.3645833333333333,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 96,
+      "name": "verifier_agreement",
+      "note": "citations where the Verifier and the fact ledger reached the same answer",
+      "numerator": 52,
+      "reported": "0.542",
+      "threshold": 0.9,
+      "value": 0.5416666666666666,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 10,
+      "name": "visual_fidelity",
+      "note": "",
+      "numerator": 10,
+      "reported": "1.000",
+      "threshold": 1.0,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 12,
+      "name": "visual_type_match",
+      "note": "",
+      "numerator": 1,
+      "reported": "0.083",
+      "threshold": 0.85,
+      "value": 0.08333333333333333,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 12,
+      "name": "no_source_honesty",
+      "note": "deep answers that reported no sources rather than answering unsupported",
+      "numerator": 1,
+      "reported": "0.083",
+      "threshold": null,
+      "value": 0.08333333333333333,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "flag_recall",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 5,
+      "name": "flag_false_positive_rate",
+      "note": "worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, marker_integrity, numeric_without_citation, own_card_sole_support, scope_creep, support_check_unavailable, unsupported_claim",
+      "numerator": 5,
+      "reported": "1.000",
+      "threshold": 0.1,
+      "value": 1.0,
+      "verdict": "fail"
+    },
+    {
+      "denominator": 0,
+      "name": "staleness_detection",
+      "note": "no card in this run states a superseded value; re-verify the boards against the T3 corpus with --verify-only",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.95,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 1,
+      "name": "source_hierarchy_compliance",
+      "note": "answers that took the higher ranked value where two classes disagreed",
+      "numerator": 1,
+      "reported": "1.000",
+      "threshold": null,
+      "value": 1.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "reader_structure_recovery_f1",
+      "note": "the Reader is built; this waits on a run that reads an image, and a mock has no eyes to read one with",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.8,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "exercise_traceability",
+      "note": "the Exercise agent arrives at M10; set exercise_enabled when it does",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 1.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 0,
+      "name": "exercise_distractor_leakage",
+      "note": "the Exercise agent arrives at M10; set exercise_enabled when it does",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 12,
+      "name": "cards_produced",
+      "note": "",
+      "numerator": 12,
+      "reported": "1.000",
+      "threshold": null,
+      "value": 1.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 12,
+      "name": "tokens_per_question",
+      "note": "74 model calls across the run",
+      "numerator": 215392,
+      "reported": "17949.333",
+      "threshold": null,
+      "value": 17949.333333333332,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 12,
+      "name": "latency_p95_ms",
+      "note": "",
+      "numerator": 0,
+      "reported": "89516.000",
+      "threshold": null,
+      "value": 89516.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 12,
+      "name": "sub_question_coverage",
+      "note": "",
+      "numerator": 12,
+      "reported": "1.000",
+      "threshold": 0.9,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 17,
+      "name": "retriever_assignment_accuracy",
+      "note": "",
+      "numerator": 17,
+      "reported": "1.000",
+      "threshold": 0.95,
+      "value": 1.0,
+      "verdict": "thin"
+    },
+    {
+      "denominator": 12,
+      "name": "must_exclude_compliance",
+      "note": "",
+      "numerator": 12,
+      "reported": "1.000",
+      "threshold": 1.0,
+      "value": 1.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 0,
+      "name": "stale_ancestor_reverification",
+      "note": "measured at T3, where ancestors with stale citations exist",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 1.0,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 11,
+      "name": "planner_latency_p95_ms",
+      "note": "doc 04 section 12 targets under 4000",
+      "numerator": 0,
+      "reported": "10246.000",
+      "threshold": null,
+      "value": 10246.0,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 11,
+      "name": "planner_tokens_mean",
+      "note": "doc 04 section 12 targets under 2500",
+      "numerator": 19543,
+      "reported": "1776.636",
+      "threshold": null,
+      "value": 1776.6363636363637,
+      "verdict": "reported"
+    },
+    {
+      "denominator": 0,
+      "name": "prior_card_recall",
+      "note": "nothing to measure",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.85,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 1,
+      "name": "own_card_sole_support_rate",
+      "note": "cards that cited a prior card at all",
+      "numerator": 0,
+      "reported": "0.000",
+      "threshold": 0.0,
+      "value": 0.0,
+      "verdict": "pass"
+    },
+    {
+      "denominator": 2,
+      "name": "stale_propagation",
+      "note": "no run re-verified a prior card; needs the verify_only run",
+      "numerator": 0,
+      "reported": "n/a",
+      "threshold": 0.95,
+      "value": null,
+      "verdict": "n/a"
+    },
+    {
+      "denominator": 1,
+      "name": "answer_length_with_prior_context",
+      "note": "no answer without prior context had any length to compare against",
+      "numerator": 11,
+      "reported": "n/a",
+      "threshold": null,
+      "value": null,
+      "verdict": "n/a"
+    }
+  ],
+  "per_edge_case": {
+    "contradiction_across_classes": {
+      "cards": 1,
+      "questions": 1,
+      "recalled": 1,
+      "required": 1
+    },
+    "hostile_document": {
+      "cards": 3,
+      "questions": 3,
+      "recalled": 3,
+      "required": 3
+    },
+    "memory_sole_source": {
+      "cards": 1,
+      "questions": 1,
+      "recalled": 0,
+      "required": 1
+    },
+    "superseded_regulation": {
+      "cards": 10,
+      "questions": 10,
+      "recalled": 10,
+      "required": 10
+    }
+  },
+  "per_provider": {
+    "anthropic": {
+      "cards": 12,
+      "cards_produced": 1.0,
+      "citations": 96,
+      "flags": 75,
+      "forbidden": 1,
+      "input_tokens": 162992,
+      "latency_p50_ms": 57672,
+      "leg": "reference",
+      "output_tokens": 52400,
+      "questions": 12,
+      "recall": 0.917,
+      "recalled": 11,
+      "required": 12
+    }
+  },
+  "per_rule_false_positives": {
+    "citation_unsupported": 1.0,
+    "citation_weak_numeric": 1.0,
+    "injection_suspected": 1.0,
+    "marker_integrity": 1.0,
+    "numeric_without_citation": 1.0,
+    "own_card_sole_support": 1.0,
+    "scope_creep": 1.0,
+    "support_check_unavailable": 1.0,
+    "unsupported_claim": 1.0
+  },
+  "policy": "live",
+  "snapshot": "T1"
+}

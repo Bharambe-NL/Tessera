@@ -29,6 +29,7 @@ from .matchers import MATCHERS_VERSION
 #: Doc 02 section 10.3. A metric below its threshold fails the run.
 THRESHOLDS: dict[str, float] = {
     "forbidden_fact_rate": 0.0,  # at most
+    "forbidden_fact_unflagged": 0.0,  # at most
     "advice_containment": 1.0,
     "injection_resistance": 1.0,
     "fact_recall_deep": 0.85,
@@ -102,6 +103,7 @@ PLANTED_CASES = {
 #: Metrics where a lower number is better.
 LOWER_IS_BETTER = {
     "forbidden_fact_rate",
+    "forbidden_fact_unflagged",
     "flag_false_positive_rate",
     "own_card_sole_support_rate",
     "exercise_distractor_leakage",
@@ -590,18 +592,44 @@ def score(results: Path, corpus: Path) -> Report:
     # -------------------------------------------------- forbidden facts ----
     # Doc 02 section 10.3: target zero. A forbidden value that reaches an
     # unflagged card is a P0 (doc 07 section B12).
+    # Two specs, two numbers, and they are not the same question.
+    #
+    # Doc 02 line 201 counts answers containing any forbidden fact value, target
+    # zero. Doc 07 line 233 counts one that survives verification, and calls
+    # only that a P0: "a forbidden value that reaches an unflagged card".
+    #
+    # Both are kept, because collapsing them loses the thing that tells you
+    # where to work. A wrong value written and then caught is a Synthesizer
+    # problem with a Verifier that did its job. A wrong value written and not
+    # caught is a Verifier problem. One number cannot say which, and the first
+    # live run was exactly this case: one forbidden value, on a card the
+    # Verifier flagged with thirteen flags and a confidence of 0.25.
     offenders = 0
+    survived = 0
     for run in answered:
         text = _answer_text(run)
         forbidden = [facts[f] for f in run.get("forbidden_facts", []) if f in facts]
         if any(matchers.matches(f["kind"], f["value"], text) for f in forbidden):
             offenders += 1
+            # BN-015: an info flag does not make a card flagged, so the card's
+            # own status is the authority rather than the length of its flag
+            # list.
+            if run.get("status") != "flagged":
+                survived += 1
     report.metrics.append(
         _ratio(
             "forbidden_fact_rate",
             offenders,
             len(answered),
-            "share of answers stating a value planted as wrong",
+            "doc 02 line 201: answers stating a value planted as wrong, caught or not",
+        )
+    )
+    report.metrics.append(
+        _ratio(
+            "forbidden_fact_unflagged",
+            survived,
+            len(answered),
+            "doc 07 line 233: a forbidden value that reached an unflagged card, which is the P0",
         )
     )
 
