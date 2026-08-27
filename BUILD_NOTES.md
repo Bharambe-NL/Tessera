@@ -1485,6 +1485,90 @@ were wrong in a way that only mattered at the boundary the ULIDs exist for.
 
 ---
 
+### BN-089 The memory rule did not exist, and the plan was wrong about where it lived
+
+**Spec** 05 v0.2 line 106, 12 principle 4, HANDOFF section 2.
+
+**The plan said** `own_card_sole_support` was doctrine living in code, firing from a hardcoded
+`rule_id` in the boards retriever. It was not. That line is a test fixture asserting that a card
+carrying such a flag is never remembered, which is the eligibility rule and a different thing. The
+name appears twice more in the build, both times in a comment. **The Verifier had no such rule at
+all**, so the gate doc 05 v0.2 states in as many words had never once been evaluated.
+
+**Decision** The detector is written, both packs carry the rule as data at block severity, and the
+new `finance-eu` pack carries it too. A figure covered only by citations to `own_card` or `page`
+passages is blocked. A figure covered by no citation belongs to `numeric_without_citation`; two
+rules firing on one absence would put two flags on one span and read as two faults.
+
+**Scoped to figures, not to every claim**, because a prior card summarising what a rule is about is
+the context memory exists to supply. It is the numbers and the citations to instruments that have to
+rest on the thing itself. Doc 16 line 69 extends the same rule to `page` sources when the vault
+lands, so both classes are listed now and that arrival is a pack edit rather than a code edit.
+
+**Doc 05 v0.2 also asks that own_card passages reach the Synthesizer "marked prior work, context
+only".** The prompt carried `class="own_card"`, which says what a passage is and never what to do
+with it. The sentence is there now, asserted end to end.
+
+**Reason** Recorded because the plan asserted a defect that was one step milder than the truth, and
+the check that found the difference was reading the line the plan cited.
+
+---
+
+### BN-090 Every percentage in the corpus escaped the citation rules
+
+**Spec** 07 section B8.1.
+
+**Found** while writing a fixture for BN-089's rule. The fixture said `2.5 %` and the detector found
+nothing in it.
+
+**`numeric_spans` ended its pattern in `\b`**, which cannot follow `%`: a word boundary needs a word
+character on one side, and `%` is not one. So `2.5 %`, `2.5%` and `2.5 %.` matched nothing, and every
+rule built on that helper skipped them without a word. That is `numeric_without_citation`, block
+severity, doc 07 section B8.1's rule that a figure carries a source.
+
+**Split before fixing, and the split is the finding.** The synthetic corpus writes all 147 of its
+percentages with the symbol and none as "per cent". The unit tests wrote theirs as `percent`, which
+the pattern matches. So the gate passed every test and measured nothing across the whole corpus, and
+neither side of the build ever met the other.
+
+**Measured after the fix**: no metric moved on the grounded sweep. That is the right outcome and it
+is worth saying why rather than treating it as nothing happening. The grounded mock quotes each
+passage behind its own marker and spans the citation over it, so every figure it writes is already
+inside a cited span. The rule now sees the figures it always should have seen and finds them cited.
+What changed is that a real model writing `2.5 %` outside a cited span will be caught, and until now
+it would not have been.
+
+**Reason** The same shape as BN-019's rule seen from the other end: a metric can have nothing to
+measure, and so can a gate. This one had a denominator of 147 and a matcher that could not see any
+of them.
+
+---
+
+### BN-091 Finance ships, and the twin has to keep agreeing with it
+
+**Spec** 12 phase 10, 11 mission, 02 section 4.
+
+**Decision** `packs/finance-eu.json` ships beside `general` and `finance-eu-synthetic`, which is doc
+12 phase 10's three. It is the twin with real bodies in the source hierarchy and real instruments in
+the vocabulary: EBA, ECB and EUR-Lex at trust rank 1, ESMA at 2, then structured, local, own_card,
+web, user supplied. CRR and CRD, PSD2, DORA.
+
+**The rules are identical and a test says so.** Doc 02 section 4 says the twin exists "so a score on
+the corpus is comparable with the shipped pack", and that only holds while the two agree on every
+rule id, severity and detector. What may differ is who the issuers are and what the words are, which
+name the domain rather than decide whether a card passes. Dropping one rule from the shipped pack
+fails that test.
+
+**The hierarchy is a first draft and is recorded as one.** Saying that EBA guidance outranks a
+national circular is a domain judgment, and nothing in this build verifies it. The rules underneath
+are measured; the ranking of real issuers is not, and it wants a review from someone who works in the
+field before it reaches one.
+
+**Reason** Doc 11's mission makes finance the first doctrine pack rather than an optional one, and
+two of three shipping meant the sentence was not true yet.
+
+---
+
 ---
 
 ## Measured findings
