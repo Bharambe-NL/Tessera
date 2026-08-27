@@ -112,7 +112,7 @@ fn a_page_written_by_hand_says_so_in_the_log() {
     assert_eq!(row.body, "The rule is in article 12.");
     assert_eq!(row.file_path, "vault/liquidity-risk.md");
     assert_eq!(row.source_card_id, None);
-    assert!(!row.content_hash.is_empty(), "the mirror compares by hash");
+    assert!(!row.synced_hash.is_empty(), "the mirror compares by hash");
 
     let types = event_types(&f);
     assert!(types.contains(&"page.created.v1".to_string()), "{types:?}");
@@ -223,23 +223,33 @@ fn a_rename_keeps_the_id_a_wikilink_resolves_to() {
 }
 
 #[test]
-fn an_edit_moves_the_hash_the_mirror_compares_by() {
-    // Doc 16 section 7 point 2's conflict rule turns on comparing content, and
-    // a hash that lagged its body would make the mirror decide the file was the
-    // newer of the two.
+fn an_edit_leaves_the_hash_that_records_the_last_agreement() {
+    // Doc 16 section 7 point 2 wants last write wins with a conflict copy, and
+    // deciding which copy moved needs three values: what the row says, what the
+    // file says, and what they last agreed on. An edit is exactly the event
+    // that makes the first two disagree, so moving the third would erase the
+    // evidence the mirror reads.
     let mut f = fixture();
     let id = page(&mut f, "Liquidity risk", "one");
-    let before = repo::read_page(&f.store, &id)
+    let agreed = repo::read_page(&f.store, &id)
         .expect("read")
         .expect("page")
-        .content_hash;
+        .synced_hash;
 
     repo::edit_page(&mut f.store, &id, "one, with a correction").expect("edit");
 
     let after = repo::read_page(&f.store, &id).expect("read").expect("page");
     assert_eq!(after.body, "one, with a correction");
-    assert_ne!(after.content_hash, before);
+    assert_eq!(
+        after.synced_hash, agreed,
+        "the edit moved the record of what the file and the row agreed on"
+    );
     assert!(event_types(&f).contains(&"page.edited.v1".to_string()));
+
+    // And the mirror is what records the new agreement, once it has written it.
+    repo::mark_page_synced(&f.store, &id, "one, with a correction").expect("synced");
+    let synced = repo::read_page(&f.store, &id).expect("read").expect("page");
+    assert_ne!(synced.synced_hash, agreed);
 }
 
 #[test]

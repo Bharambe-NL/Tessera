@@ -26,7 +26,7 @@ pub use crate::event::{
 ///
 /// Public because the diagnostics export reports it and because a test that
 /// hard codes the number has to be edited by every migration that follows.
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 const MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
@@ -34,6 +34,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (3, include_str!("../migrations/0003_index_vectors.sql")),
     (4, include_str!("../migrations/0004_vault_enums.sql")),
     (5, include_str!("../migrations/0005_pages.sql")),
+    (6, include_str!("../migrations/0006_synced_hash.sql")),
 ];
 
 pub struct Store {

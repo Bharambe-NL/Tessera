@@ -2424,6 +2424,71 @@ claim spans made the two citation metrics computable.
 
 ---
 
+### BN-112 The vault mirror, and the third value a two way sync needs
+
+**Spec** 16 sections 3.1 and 7 point 2.
+
+**Built** 2026-08-27, M15 12a-ii. Schema version 6.
+
+**The shape.** `plan(rows, files) -> Vec<Action>` is a pure function: no clock, no disk, no
+store. `sync` reads the directory, calls it, and applies what it decided. Two way sync is a
+correctness swamp and this is the way out: the decisions are a table that tests can be written
+against without a filesystem, and there are eighteen of them.
+
+**Comparison is by content, never by mtime.** A file restored from a backup, a folder synced by
+another tool, a clock that moved: each produces an mtime that lies, and none of them changes
+what the text says.
+
+**A two way sync needs three values, and 0005 stored two.** `page.content_hash` held the hash of
+the row's body, which the body already tells you. Deciding which copy moved needs what the row
+says, what the file says, and what the two last agreed on. Migration 0006 renames the column
+`synced_hash` and the meaning follows: an edit leaves it alone, because an edit is precisely the
+event that makes the two disagree, and the mirror writes it when it reconciles them. A rename
+rather than a second column, because two hash columns where one is derivable is how a later
+reader compares the wrong one.
+
+**The decision table.**
+
+| Row moved | File moved | What happens |
+|---|---|---|
+| no | no | The agreement is recorded and nothing is written |
+| yes | no | The file is written from the row |
+| no | yes | The row takes the file's text, as `page.edited.v1` with `edited_in: vault` |
+| yes | yes | The file wins the page; the row's text is kept as `<slug> (conflict).md` |
+| any | file missing | The file is written back |
+| no row | file present | The file becomes a page, titled by its first heading or its file name |
+
+**Two judgement calls, recorded rather than assumed.** A missing file is rewritten rather than
+taken as a deletion, because an unmounted folder, a sync tool mid pass and a deliberate deletion
+look identical from here and only one of them wants the page gone; deleting happens in the app,
+where the person is asked. And on a double edit the file wins the page, because doc 16 says
+last write wins and there is no trustworthy "last": a person who edited the file outside the app
+meant to, and the row's text is kept beside it rather than dropped.
+
+**A title that is taken is named, not forced.** Two files whose titles differ only in case, or a
+file titled like an existing page, leave one page and one `Skipped` with its reason. Guessing
+which should win would be a coin toss with somebody's notes.
+
+**The one race, and the bug it caught.** A sync without a lock can have a file edited between
+the listing and the write, so every write re-reads first and stands down if what it finds is not
+what the plan believed. The first version passed `None` for that expectation on every write,
+meaning "the plan believed there was no file", so an ordinary app edit refused to reach its own
+file: the file existed, held the agreed text, and did not match the new body. The end to end test
+caught it, and `WriteFile` now carries what the plan believed the file held.
+
+**No watcher.** `sync` is the unit, called at app start and from the `vault.sync` RPC, and after
+a page write once 12b and 12c write pages. A watcher is additive later and would buy nothing
+here except timing that fails in CI.
+
+**Subpaths from day one.** `file_path("learning/a-mission", "2026-08-27")` gives
+`vault/learning/a-mission/2026-08-27.md`, because doc 17 section 5 writes learning records there
+and retrofitting a folder into a path function is a change to every caller.
+
+**Verified** Full battery green, 18 vault tests, 50 Playwright tests, the grounded sweep and the
+bundle round trip.
+
+---
+
 ---
 
 ## Measured findings

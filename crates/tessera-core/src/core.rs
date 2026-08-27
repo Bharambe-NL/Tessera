@@ -175,7 +175,30 @@ impl Core {
         // hides longest, because an honest "no sources found" card is exactly
         // what a working retriever over an empty index looks like.
         core.rebuild_retrievers()?;
+
+        // Doc 16 section 3.1: the file is the export and the row is the index,
+        // and either can have moved while the app was closed. No watcher: this
+        // call is the unit, here at start, after a page write and from an RPC.
+        // A vault nobody has written to reads as an empty folder and costs one
+        // failed directory read.
+        let report = core.sync_vault()?;
+        if report != crate::vault::SyncReport::default() {
+            tracing::info!(
+                written = report.written,
+                adopted = report.adopted,
+                created = report.created,
+                conflicts = report.conflicts,
+                "reconciled the vault with the pages"
+            );
+        }
         Ok(core)
+    }
+
+    /// Reconcile the vault folder with the page rows. Doc 16 section 3.1.
+    pub fn sync_vault(&mut self) -> Result<crate::vault::SyncReport, CoreError> {
+        let pack_id = self.active_pack_id()?;
+        let profile_id = self.profile_id.clone();
+        Ok(crate::vault::sync(&mut self.store, &profile_id, Some(&pack_id))?)
     }
 
     /// Rebuild what this profile can retrieve from.
@@ -1484,6 +1507,27 @@ pub fn build_router() -> Router<Core> {
             .collect();
         let latest = events.last().map(|e| e.monotonic_index).unwrap_or(p.after);
         Ok(json!({ "notifications": notifications, "index": latest }))
+    });
+
+    // Doc 16 section 3.1's two way mirror, on demand. The shell calls it when
+    // the window regains focus, which is when a person is most likely to have
+    // just edited a page in another app.
+    r.register("vault.sync", |core: &mut Core, _| {
+        let report = core.sync_vault().map_err(core_error)?;
+        Ok(json!({
+            "written": report.written,
+            "adopted": report.adopted,
+            "created": report.created,
+            "conflicts": report.conflicts,
+            "agreed": report.agreed,
+            // Doc 05 section 11's posture, for files rather than documents: a
+            // thing that could not be taken in is named where it can be fixed.
+            "skipped": report
+                .skipped
+                .iter()
+                .map(|(path, reason)| json!({ "path": path, "reason": reason }))
+                .collect::<Vec<_>>(),
+        }))
     });
 
     r.register("profile.get", |core: &mut Core, _| {

@@ -15,6 +15,7 @@ pub mod pipeline;
 pub mod raster;
 pub mod retrieval;
 pub mod rpc;
+pub mod vault;
 
 pub use bridge::{Notification, ToastLevel, translate, translate_all};
 pub use core::{Anchor, Core, CoreError, build_router};
