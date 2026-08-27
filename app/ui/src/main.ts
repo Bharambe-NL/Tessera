@@ -10,6 +10,7 @@
 import './styles/tokens.css';
 import './styles/board.css';
 import './styles/chrome.css';
+import './styles/pages.css';
 
 import { blockAnchor, selectionAnchor } from './canvas/anchor.js';
 import { trailFor, trailHTML } from './canvas/built.js';
@@ -19,6 +20,7 @@ import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
+import { Router } from './pages/router.js';
 import { AnchorPopover } from './popover.js';
 import { Rpc, RpcError, type AskAnchor, type Notification } from './rpc.js';
 import { COPY, PRODUCT_NAME } from './strings.js';
@@ -62,6 +64,43 @@ const popover = new AnchorPopover(
   },
 );
 popover.attach();
+
+/**
+ * The rail and the four pages. Doc 11 section 5.
+ *
+ * The page layer covers the canvas rather than replacing it, so the board keeps
+ * its camera, its cards and any in flight run while a page is open.
+ */
+const router = new Router(
+  {
+    rail: el<HTMLElement>('rail'),
+    board: main,
+    page: el<HTMLElement>('page'),
+    title: el<HTMLElement>('page-title'),
+    tools: el<HTMLElement>('page-tools'),
+    body: el<HTMLElement>('page-body'),
+    flagCount: el<HTMLElement>('rail-flags'),
+  },
+  rpc,
+  {
+    openBoard: async (id) => {
+      boardId = id;
+      lastEventIndex = 0;
+      await reload();
+      await router.go('board');
+    },
+    createBoard: async () => {
+      const { board_id } = await rpc.createBoard();
+      boardId = board_id;
+      lastEventIndex = 0;
+      await reload();
+      await router.go('board');
+    },
+    ask: (question) => void submit(question),
+    toast: (message, level) => toast(message, level),
+  },
+);
+router.attach();
 
 let heights = new Map<string, number>();
 const heightOf = (id: string) => heights.get(id) ?? 320;
@@ -149,6 +188,8 @@ function placeholderCard(id: string, question: string, anchor: AskAnchor): void 
  * event said. Re-reading the board is what turns the announcement into content.
  */
 let staleRead = false;
+/** Set when a notification changed how many flags are open. */
+let flagCountStale = false;
 
 function applyNotification(n: Notification): void {
   if (!board) return;
@@ -193,6 +234,9 @@ function applyNotification(n: Notification): void {
     case 'flag_raised':
     case 'flag_resolved': {
       staleRead = true;
+      // The rail badge is the only part of the Flags queue visible from the
+      // board, so it follows a flag the moment one is raised or cleared.
+      flagCountStale = true;
       break;
     }
   }
@@ -211,6 +255,10 @@ async function drainNotifications(allowReload = true): Promise<void> {
     const { notifications, index } = await rpc.notifications(boardId, lastEventIndex);
     lastEventIndex = index;
     for (const n of notifications) applyNotification(n);
+    if (flagCountStale) {
+      flagCountStale = false;
+      void router.refreshFlagCount();
+    }
     if (staleRead && allowReload) {
       staleRead = false;
       await reload();
@@ -430,6 +478,20 @@ function wireTitle(): void {
   });
 }
 
+/** Doc 11 section 5: the rail is 56px collapsed and 240px open. */
+function wireRailToggle(): void {
+  const rail = el<HTMLElement>('rail');
+  const toggle = el<HTMLButtonElement>('rail-toggle');
+  toggle.addEventListener('click', () => {
+    // The class goes on `body` rather than on the rail, because the rail's
+    // width, the board's left padding and the page's left edge all read one
+    // custom property and it has to be set where all three inherit it.
+    const open = document.body.classList.toggle('rail-open');
+    rail.classList.toggle('open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+}
+
 function wireComposer(): void {
   composer.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -553,6 +615,7 @@ async function boot(): Promise<void> {
     return;
   }
 
+  wireRailToggle();
   wireComposer();
   wireCardActions();
   wireBranching();
@@ -579,6 +642,7 @@ async function boot(): Promise<void> {
     boardId = boards[0]?.id ?? (await rpc.createBoard()).board_id;
     await reload();
     setMode(COPY.modeLive, 'live');
+    void router.refreshFlagCount();
     ask.focus();
   } catch (e) {
     const message = e instanceof RpcError ? e.message : COPY.coreSilent;

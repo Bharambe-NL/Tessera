@@ -105,6 +105,111 @@ export const COPY = {
   modeWorking: 'Working',
   modeOffline: 'Offline',
 
+  // ------------------------------------------------- the rail, doc 11 section 5 --
+
+  railHome: 'Home',
+  railFlags: 'Flags',
+  railLibrary: 'Library',
+  railProfile: 'Profile',
+
+  // ------------------------------------------------------ ages on queue rows --
+
+  agoNow: 'just now',
+  agoMinutes: 'm',
+  agoHours: 'h',
+  agoDays: 'd',
+  agoMonths: 'mo',
+  agoUnknown: 'unknown',
+
+  // -------------------------------------------------------- Home, doc 09.3 --
+
+  homeFilterLabel: 'Which boards',
+  homeActive: 'Boards',
+  /** Doc 09 open question 1, adopted by doc 11: Trash is a filter, not a page. */
+  homeTrashed: 'Trash',
+  homeCreate: 'New board',
+  homeOpen: 'Open',
+  homeTrash: 'Move to Trash',
+  homeRestore: 'Restore',
+  homePurge: 'Delete for good',
+  homeCards: 'cards',
+  homeOpenFlags: 'Open flags on this board',
+  homeNoBoards: 'No boards yet. Ask a question to start one.',
+  homeNoTrash: 'Trash is empty.',
+
+  // ------------------------------------------------------- Flags, doc 09.6 --
+
+  flagsNone: 'No open flags. Every card on this profile has been read or cleared.',
+  flagsOpen: 'Open',
+  flagsAccept: 'Accept',
+  flagsDismiss: 'Dismiss',
+  flagsRerun: 'Rerun',
+  flagsSelectRow: 'Select this flag',
+  flagsSelectBoard: 'Select all on this board',
+  flagsBulkLabel: 'Decide the selected flags',
+  flagsSelected: 'selected',
+  flagsClear: 'Clear',
+  /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
+  flagsDismissConfirm: 'Dismiss',
+  flagsFailed: 'That decision was not recorded.',
+
+  // ----------------------------------------------------- Library, doc 09.9 --
+
+  libraryTabsLabel: 'Library tabs',
+  librarySources: 'Sources',
+  libraryConcepts: 'Concepts',
+  libraryOpen: 'Open',
+  libraryAsk: 'Ask about this',
+  libraryAccept: 'Accept',
+  libraryDismiss: 'Dismiss',
+  libraryRemove: 'Remove',
+  libraryCitedOn: 'cards cite it',
+  libraryVerified: 'checked',
+  libraryNeverVerified: 'never',
+  libraryTrustRank: 'Trust rank from the doctrine pack',
+  libraryNoIssuer: 'no issuer recorded',
+  libraryLinks: 'links',
+  libraryNoDefinition: 'No definition yet.',
+  libraryNoSources: 'No sources yet. A deep question retrieves the first ones.',
+  libraryNoConcepts: 'No concepts yet. They are proposed from the entities a card names.',
+
+  // ---------------------------------------------------- Profile, doc 11.6 --
+
+  profileTabsLabel: 'Profile pages',
+  profileContext: 'Context',
+  profileModels: 'Models',
+  profileRetrievers: 'Retrievers',
+  profileDoctrine: 'Doctrine',
+  profileDiagnostics: 'Diagnostics',
+  profileId: 'Profile',
+  profileProvider: 'Provider',
+  profileActivePack: 'Active pack',
+  profileAvailablePacks: 'Installed packs',
+  profileKeyRef: 'key',
+  profileKeySaved: 'key saved',
+  profileKeyMissing: 'no key',
+  profileKeyAdd: 'Add key',
+  profileKeyReplace: 'Replace key',
+  profileKeyPrompt: 'Paste the key for',
+  profileKeySavedToast: 'The key went to the keychain.',
+  profileKeyFailed: 'The keychain would not take that key.',
+  /** Doc 10 section 8, said where a person is about to paste a secret. */
+  profileKeyNotice: 'Keys are held by the operating system keychain. Nothing writes one to a file, a log or a bundle.',
+  profileConfigured: 'configured',
+  profileUnconfigured: 'not configured',
+  profileOnByDefault: 'on by default',
+  profileBoards: 'Boards',
+  profileTrashed: 'In Trash',
+  profileCards: 'Cards',
+  profileOpenFlags: 'Open flags',
+  profileSources: 'Sources',
+  profileConcepts: 'Concepts',
+  profileEvents: 'Events',
+  profileNoAliases: 'This policy names no model aliases.',
+  profileNoRetrievers: 'The active pack lists no retrievers.',
+  profileNoDiagnostics: 'The core reported no counts.',
+  profileUnread: 'The profile could not be read.',
+
   // -------------------------------------------------------------- failures --
 
   /** Doc 11 section 9: say what happened and how to fix it. */
@@ -112,4 +217,6 @@ export const COPY = {
   coreSilent: 'The core did not answer.',
   rerunFailed: 'That card could not be checked again.',
   renameFailed: 'That board could not be renamed.',
+  boardVerbFailed: 'That board could not be changed.',
+  pageUnread: 'That page could not be read.',
 } as const;

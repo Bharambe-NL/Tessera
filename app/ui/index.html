@@ -12,6 +12,31 @@
     <title>Tessera</title>
   </head>
   <body>
+    <!-- Doc 11 section 5: left rail 56px collapsed, 240px open. Doc 09 open
+         question 1, adopted by doc 11: Trash is a filter on Home, so it is
+         absent here and present as a toggle on the Home page. -->
+    <nav id="rail" aria-label="Sections" data-no-pan>
+      <button class="rail-item on" data-view="board" aria-current="page">
+        <span class="glyph" aria-hidden="true">▣</span><span class="label">Board</span>
+      </button>
+      <button class="rail-item" data-view="home">
+        <span class="glyph" aria-hidden="true">▤</span><span class="label">Home</span>
+      </button>
+      <button class="rail-item" data-view="flags">
+        <span class="glyph" aria-hidden="true">▲</span><span class="label">Flags</span>
+        <span class="count" id="rail-flags" hidden></span>
+      </button>
+      <button class="rail-item" data-view="library">
+        <span class="glyph" aria-hidden="true">▥</span><span class="label">Library</span>
+      </button>
+      <button class="rail-item" data-view="profile">
+        <span class="glyph" aria-hidden="true">◍</span><span class="label">Profile</span>
+      </button>
+      <button id="rail-toggle" class="rail-item wide" aria-expanded="false">
+        <span class="glyph" aria-hidden="true">»</span><span class="label">Collapse</span>
+      </button>
+    </nav>
+
     <main id="main" aria-label="Board">
       <div id="grid" aria-hidden="true"></div>
 
@@ -73,6 +98,17 @@
       <div id="toasts" role="status" aria-live="polite"></div>
       <pre id="gate" hidden></pre>
     </main>
+
+    <!-- The pages doc 11 section 6 lists, over the canvas rather than beside it,
+         so the board keeps its own camera while a page is open. -->
+    <section id="page" aria-live="polite" hidden>
+      <header class="page-head">
+        <h1 id="page-title"></h1>
+        <div id="page-tools"></div>
+      </header>
+      <div id="page-body"></div>
+    </section>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
