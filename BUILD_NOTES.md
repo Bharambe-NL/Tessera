@@ -1885,6 +1885,52 @@ found on a paid run rather than a free one if the hook had not caught the diff.
 
 ---
 
+### BN-101 The environment keystore could never have fetched a key
+
+**Spec** 12 phase 11, and BN-096 which introduced the thing this breaks.
+
+**Found** by a two question smoke test against a real provider, the first time
+that path had ever run. It reported `No key stored under moonshot-default` with
+the key sitting in the environment beside it.
+
+**`keystore` honoured `TESSERA_CI` and `build_plan` did not.** The helper handed
+back an `EnvKeyStore`, and the two places that build a Core used it. The plan
+builder read `OsKeychain` directly, and the plan builder is what actually
+fetches a provider secret. So the environment path existed, had four unit tests
+of its own, and could not reach a key.
+
+**BN-095 called the CI eval written and unproven.** This is what unproven was
+hiding. Nothing about it was visible from the unit tests, because they tested
+`EnvKeyStore` rather than whether anything asked it for a key.
+
+**Reason** Recorded because of what the smoke test cost. Two questions, and the
+provider was never reached, so the run that found this spent nothing. The same
+defect found on a scheduled nightly would have been a failed run and an
+unexplained silence.
+
+---
+
+### BN-102 Kimi is unreachable from the build container, and that is a policy denial
+
+**Measured** 2026-08-27. `api.moonshot.ai:443` answers 403 to CONNECT through
+the session's egress proxy. `api.anthropic.com` is on the proxy's bypass list
+and answers normally: a single sixteen token call returns `ready` on
+`claude-sonnet-4-5`, so the Anthropic key is live and the client works.
+
+**So the 90/10 split cannot run here.** The ninety percent leg is the blocked
+one. What is reachable is the expensive provider that was meant to carry a tenth
+of the run.
+
+**Not worked around.** The proxy's own README says a 403 is the organization's
+egress policy for the session and to report the blocked host rather than retry
+or route around it. Recorded rather than solved.
+
+**What this does not say.** Nothing about whether the Kimi key is valid. The
+request never reached a Moonshot server, so the key is untested and stays that
+way until the sweep runs somewhere that can reach one.
+
+---
+
 ---
 
 ## Measured findings
