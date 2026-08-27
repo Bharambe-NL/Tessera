@@ -43,6 +43,8 @@ from .questions import Question, audiences_manifest
 from .questions import summarise as summarise_questions
 from .rng import GENERATOR_VERSION
 from .snapshots import Snapshot
+from .learning import LearningTruth
+from .learning import summarise as summarise_learning
 from .vault import VaultTruth
 from .vault import summarise as summarise_vault
 
@@ -295,6 +297,7 @@ def write_corpus(
     breadth: list[BreadthQuestion],
     boards: list[Board],
     vault: VaultTruth,
+    learning: LearningTruth,
     snapshots: list[Snapshot],
     memory_truth: MemoryTruth,
     transformations: list[Transformation],
@@ -347,6 +350,11 @@ def write_corpus(
     # 400 questions with a shape the guards check.
     write_jsonl(root / "questions_vault.jsonl", (q.to_json() for q in vault.questions))
 
+    # Doc 17 section 10's path and learners. One file rather than two, because a
+    # learner's expected frontier is a claim about this path and reading either
+    # without the other would score one against a path it never walked.
+    write_json(root / "learning.json", learning.to_json())
+
     # Doc 15 section 5. What the boards retriever should find, what it must not,
     # and the two planted cases the Verifier is scored on. At the root rather
     # than under boards/, because it is not a board and everything that walks
@@ -385,6 +393,7 @@ def write_corpus(
         },
         "boards": summarise_boards(boards),
         "vault": summarise_vault(vault),
+        "learning": summarise_learning(learning),
         "breadth": summarise_breadth(breadth),
         "memory": summarise_memory(memory_truth),
         "snapshots": [s.label for s in snapshots],
