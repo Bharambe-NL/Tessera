@@ -1,0 +1,190 @@
+# Every check that costs nothing, on every push.
+#
+# Doc 12 phase 11 asks for a nightly eval against real providers. That one
+# spends money and lives in `eval.yml` behind a manual trigger, because a
+# workflow that bills an account on every branch push is a workflow someone
+# disables within a week.
+#
+# The jobs are split so a failure names itself. One job running everything
+# would report "checks failed" and make a person read the log to learn whether
+# it was a clippy lint or a browser test.
+
+name: checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A second push supersedes the first. The checks take minutes and nobody
+  # reads the result of a commit that has already been replaced.
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # A CI failure is read from the log, so the whole backtrace is worth the noise.
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Tauri crate links against the system webview. Without these the
+      # workspace builds with one crate excluded, which is how a compile error
+      # in the shell reaches a release.
+      - name: install the webview libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98'
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: format
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+  ui:
+    name: ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: app/ui/pnpm-lock.yaml
+
+      - name: install
+        run: pnpm --dir app/ui install --frozen-lockfile
+
+      - name: typecheck
+        run: pnpm --dir app/ui typecheck
+
+      - name: build
+        run: pnpm --dir app/ui build
+
+      - name: install the browser
+        run: pnpm --dir app/ui exec playwright install --with-deps chromium
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98'
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The end to end tests drive the built UI against a real core over the
+      # same router the shell registers, so a verb that is registered and
+      # unreachable fails here rather than in front of a person.
+      - name: end to end
+        run: pnpm --dir app/ui e2e
+
+      - name: keep the traces of a failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: app/ui/test-results/
+          retention-days: 7
+
+  generator:
+    name: generator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: install
+        run: python -m pip install --editable gen[dev]
+
+      # The eight guard tests in `gen/tests/test_corpus.py` are what keep the
+      # metric classification total: every metric is gated, exempted or named a
+      # readout, and one with nothing to measure reports n/a rather than zero.
+      - name: guards
+        run: python -m pytest gen/tests -q
+
+  corpus:
+    name: corpus and sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98'
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: install the generator
+        run: python -m pip install --editable gen
+
+      # The corpus is not committed: it is 5.6 MB of generated documents and it
+      # is reproducible from its seed, which is the whole point of a seed.
+      - name: build the corpus
+        run: python -m tessera_gen build --seed 42 --out synthetic
+
+      - name: verify the corpus
+        run: python -m tessera_gen verify --seed 42 --out synthetic
+
+      # Debug rather than release throughout this job. The sweep runs in about
+      # three minutes either way, and a release build of the embedding and
+      # tokeniser crates costs far more than it saves.
+      #
+      # Doc 12 phase 10's acceptance. No provider is called: a bundle carries
+      # what the board already holds and asks no model anything.
+      - name: bundle round trip
+        run: cargo run -p tessera-eval -- --corpus synthetic/42 --bundles
+
+      # The grounded mock answers from the passages retrieval found, so this
+      # measures the pipeline end to end and costs nothing. It is the run that
+      # would catch a change to retrieval or to the Verifier that no unit test
+      # notices.
+      - name: grounded sweep
+        run: |
+          cargo run -p tessera-eval -- \
+            --corpus synthetic/42 --out eval/results \
+            --mock --grounded --policy ci --exercise
+
+      # `gen score` exits non-zero when a measured metric is below its
+      # threshold, so this step is the gate rather than a report beside one.
+      - name: score it
+        run: |
+          run=$(ls -d eval/results/42/ci/run-* | tail -1)
+          python -m tessera_gen score --results "$run"
+
+      - name: keep the run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep
+          path: eval/results/42/ci/
+          retention-days: 30
