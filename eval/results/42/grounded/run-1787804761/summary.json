@@ -284,9 +284,9 @@
       "name": "latency_p95_ms",
       "note": "",
       "numerator": 0,
-      "reported": "209.000",
+      "reported": "205.000",
       "threshold": null,
-      "value": 209.0,
+      "value": 205.0,
       "verdict": "reported"
     },
     {
@@ -454,7 +454,7 @@
       "flags": 2845,
       "forbidden": 0,
       "input_tokens": 1396013,
-      "latency_p50_ms": 163,
+      "latency_p50_ms": 156,
       "leg": "bulk",
       "output_tokens": 304279,
       "questions": 400,

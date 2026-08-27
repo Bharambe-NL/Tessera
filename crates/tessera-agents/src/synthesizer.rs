@@ -517,6 +517,14 @@ fn bind(draft: &Value, passages: &[Value], mode: &str, packet: &Value) -> Bound 
         }));
     }
 
+    // Doc 06 section A8, research: "findings that appear in two or more
+    // sub-questions' passages are marked as convergent ... and findings
+    // supported by only one sub-question are listed after them." The order the
+    // model happened to write them in was kept, and `sq_id` was never read.
+    if mode == "research" {
+        order_by_convergence(&mut findings, passages);
+    }
+
     let mut summary = draft["structured_summary"].clone();
     // Measured before the drop below, or the term would always read 1.0.
     let values_drafted = summary
@@ -713,6 +721,39 @@ fn strip_markers(text: &str) -> String {
 
 /// Doc 06 section A8 point 3. Deterministic detection when two cited passages
 /// give different values for the same labelled value.
+/// Put the findings more than one sub-question reached first, and mark them.
+///
+/// Doc 06 section A8. Convergence is the signal a research card carries that a
+/// deep card cannot: two lines of enquiry arriving at the same place. A stable
+/// sort, so findings of equal reach keep the order the model chose.
+fn order_by_convergence(findings: &mut [Value], passages: &[Value]) {
+    let sq_of = |ordinal: u64| -> Option<String> {
+        passages
+            .get(ordinal.saturating_sub(1) as usize)
+            .and_then(|p| p["sq_id"].as_str())
+            .map(str::to_string)
+    };
+
+    let reach = |finding: &Value| -> usize {
+        finding["citations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .filter_map(sq_of)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    };
+
+    for finding in findings.iter_mut() {
+        let convergent = reach(finding) >= 2;
+        if let Some(object) = finding.as_object_mut() {
+            object.insert("convergent".into(), json!(convergent));
+        }
+    }
+    findings.sort_by_key(|f| std::cmp::Reverse(reach(f)));
+}
+
 fn detect_conflicts(summary: &Value, passages: &[Value]) -> Value {
     let Some(values) = summary.get("values").and_then(Value::as_array) else {
         return json!([]);
@@ -805,6 +846,42 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn a_research_finding_two_sub_questions_reached_is_listed_first() {
+        // Doc 06 section A8. `sq_id` was on every passage and read by nothing,
+        // so the findings kept whatever order the model wrote them in.
+        let passages = vec![
+            json!({ "passage_id": "a", "sq_id": "sq-1", "text": "one",
+                    "source": { "title": "A", "class": "web", "trust_rank": 4 } }),
+            json!({ "passage_id": "b", "sq_id": "sq-2", "text": "two",
+                    "source": { "title": "B", "class": "web", "trust_rank": 4 } }),
+            json!({ "passage_id": "c", "sq_id": "sq-1", "text": "three",
+                    "source": { "title": "C", "class": "web", "trust_rank": 4 } }),
+        ];
+        let draft = json!({
+            "answer": "One [1]. Two [2]. Three [3].",
+            // The single sub-question finding is written first on purpose.
+            "findings": ["Only sq-1 reached this [1] [3].", "Both reached this [1] [2]."],
+            "structured_summary": {}
+        });
+
+        let bound = bind(&draft, &passages, "research", &json!({}));
+        let findings = bound.findings.as_array().expect("findings");
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0]["convergent"], json!(true), "{findings:?}");
+        assert!(
+            findings[0]["text"].as_str().is_some_and(|t| t.starts_with("Both reached")),
+            "the convergent finding leads, got {findings:?}"
+        );
+        assert_eq!(findings[1]["convergent"], json!(false));
+
+        // Deep is left in the order the model wrote, because one sub-question
+        // cannot converge with itself.
+        let deep = bind(&draft, &passages, "deep", &json!({}));
+        let deep = deep.findings.as_array().expect("findings");
+        assert!(deep[0]["text"].as_str().is_some_and(|t| t.starts_with("Only sq-1")));
     }
 
     #[test]

@@ -30,7 +30,7 @@ Provider mock, 400 questions, 0 produced no card.
 | exercise_traceability | n/a |  | n/a | the Exercise agent arrives at M10; set exercise_enabled when it does |
 | cards_produced | 1.000 |  | reported |  |
 | tokens_per_question | 4250.730 |  | reported | 2077 model calls across the run |
-| latency_p95_ms | 209.000 |  | reported |  |
+| latency_p95_ms | 205.000 |  | reported |  |
 | sub_question_coverage | 1.000 | 0.9 | pass |  |
 | retriever_assignment_accuracy | 1.000 | 0.95 | pass |  |
 | must_exclude_compliance | 1.000 | 1.0 | pass |  |
@@ -69,7 +69,7 @@ Provider mock, 400 questions, 0 produced no card.
 | visual_fidelity | n/a | 1.000 |
 | visual_type_match | 0.000 | 0.250 |
 | tokens_per_question | 3022.250 | 4250.730 |
-| latency_p95_ms | 152.000 | 209.000 |
+| latency_p95_ms | 152.000 | 205.000 |
 | planner_tokens_mean | 220.966 | 222.204 |
 | prior_card_recall | 0.988 | 1.000 |
 

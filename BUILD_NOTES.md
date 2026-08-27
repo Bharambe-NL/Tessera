@@ -794,6 +794,40 @@ excludes open `block` flags, and the Verifier sets the status to `flagged` on an
 clause is therefore unreachable, and any warn flag anywhere keeps a card out of memory. That is
 defensible and it is stricter than doc 15 section 3 reads on its own.
 
+### BN-067 What M7 leaves for a run that spends money
+
+**Spec** 06 sections A8.4, B8.1, B8.4, B8.5 and B3.
+
+**Decision** Five pieces of doc 06 are built no further, each because a mock cannot exercise them and
+a fixture that pretended to would measure itself.
+
+**The audience rewrite** (A8.4). The second call that rewrites an answer for its audience, with the
+deterministic marker preservation check and A10's discard with a caveat. The packet now carries the
+audience where it carried null, and the marker check is a pure function that can be written and
+tested without a model, but the rewrite itself needs one. The corpus does not phrase an audience into
+its questions yet either, so `audience_detection` has nothing to measure regardless.
+
+**The visual tie break** (B8.1). `select_type` is a priority cascade with early returns, so no two
+rules can be live at once and no tie can arise. Reaching the tie break means restructuring the
+cascade to return candidates rather than an answer, which is worth doing when there is a model to
+break the tie.
+
+**The figure path and its sanitiser** (B8.4). `select_type` maps a figure hint to a list, and there
+is no figure branch in the payload schema, so `sanitise_svg` has two unit tests and no caller. The
+sanitiser is testable against a hostile svg fixture set that does not exist; that set is worth
+building before the path is, because it is the half that has to be right.
+
+**The image path** (B8.5). No image alias, no Image row, and the output schema's `type` enum does not
+include `image` while B8.5 requires it. Doc 06's own B5 has the same omission, so the doc and the
+schema need resolving together rather than one being bent to the other.
+
+**Re-visualising on a review edit** (B3). Nothing removes a block from a summary yet, so there is
+nothing to rerun on.
+
+**Reason** Each is a place where the honest measurement needs a real provider. Recording them here,
+with what is already in place for each, is worth more than a half implementation that a mock would
+score as working.
+
 ---
 
 ## Measured findings
