@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/synthesizer.v1",
+  "title": "Synthesizer packet",
+  "description": "Doc 06 section A4. What the pipeline hands the Synthesizer: the request, the plan's constraints, the passages retrieval found, the ancestors on this board, and the doctrine that governs how the answer reads. The Synthesizer never sees the corpus, only what was retrieved from it.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "mode", "request"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "card_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "mode": { "$ref": "tessera:entity/common.v1#/$defs/depth" },
+    "request": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string" },
+        "kind": { "enum": ["root", "follow", "branch", "read_follow"] },
+        "anchor_text": { "oneOf": [{ "type": "string" }, { "type": "null" }] }
+      }
+    },
+    "plan": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
+    "passages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["passage_id", "text"],
+        "properties": {
+          "passage_id": { "type": "string" },
+          "sq_id": { "type": ["string", "null"] },
+          "text": { "type": "string" },
+          "score": { "type": ["number", "null"] },
+          "source": { "type": "object" }
+        }
+      }
+    },
+    "ancestors": {
+      "type": "array",
+      "description": "Nearest first, capped at three. A stale ancestor is marked so the answer does not lean on a value that has since moved.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": { "type": "string" },
+          "answer_excerpt": { "type": "string", "maxLength": 800 },
+          "stale": { "type": "boolean" }
+        }
+      }
+    },
+    "flags": { "type": "array", "items": { "type": "object" } },
+    "audience": { "oneOf": [{ "type": "object" }, { "type": "null" }] },
+    "writing_rules": { "type": "object" },
+    "profile": { "type": "object" },
+    "standing_instructions": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+    "effort_budget": {
+      "type": "object",
+      "properties": {
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "answer_max_words": { "type": "integer", "minimum": 1 },
+        "findings_max": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

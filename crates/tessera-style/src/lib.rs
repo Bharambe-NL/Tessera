@@ -121,13 +121,25 @@ pub fn violations(source: &str, strings: &[(usize, String)]) -> Vec<Violation> {
 
     for (line, text) in strings {
         if has_spaced_hyphen(text) {
-            found.push(Violation { rule: Rule::SpacedHyphen, line: *line, text: trim(text) });
+            found.push(Violation {
+                rule: Rule::SpacedHyphen,
+                line: *line,
+                text: trim(text),
+            });
         }
         if is_title_case(text) {
-            found.push(Violation { rule: Rule::TitleCase, line: *line, text: trim(text) });
+            found.push(Violation {
+                rule: Rule::TitleCase,
+                line: *line,
+                text: trim(text),
+            });
         }
         if has_not_x_but_y(text) {
-            found.push(Violation { rule: Rule::NotXButY, line: *line, text: trim(text) });
+            found.push(Violation {
+                rule: Rule::NotXButY,
+                line: *line,
+                text: trim(text),
+            });
         }
         if let Some(word) = apology(text) {
             found.push(Violation {
@@ -182,9 +194,11 @@ fn has_not_x_but_y(s: &str) -> bool {
                 let x = &lower[start..start + comma];
                 if !x.is_empty() && x.len() <= 80 && !x.contains('.') {
                     let after = lower[start + comma + 1..].trim_start();
-                    let follows = ["is ", "are ", "was ", "were ", "it is", "it's", "this is", "that is"]
-                        .iter()
-                        .any(|c| after.starts_with(c))
+                    let follows = [
+                        "is ", "are ", "was ", "were ", "it is", "it's", "this is", "that is",
+                    ]
+                    .iter()
+                    .any(|c| after.starts_with(c))
                         || after
                             .split_whitespace()
                             .take(2)
@@ -435,13 +449,19 @@ mod tests {
     }
 
     fn rules(source: &str, s: &str) -> Vec<Rule> {
-        violations(source, &strings(s)).into_iter().map(|v| v.rule).collect()
+        violations(source, &strings(s))
+            .into_iter()
+            .map(|v| v.rule)
+            .collect()
     }
 
     #[test]
     fn an_em_dash_fails_wherever_it_appears() {
         assert_eq!(rules("a \u{2014} b", ""), vec![Rule::Dash]);
-        assert_eq!(rules("// a comment \u{2013} with an en dash", ""), vec![Rule::Dash]);
+        assert_eq!(
+            rules("// a comment \u{2013} with an en dash", ""),
+            vec![Rule::Dash]
+        );
     }
 
     #[test]
@@ -485,7 +505,10 @@ mod tests {
 
     #[test]
     fn an_apology_fails() {
-        assert_eq!(rules("", "Sorry, that folder could not be read"), vec![Rule::Apology]);
+        assert_eq!(
+            rules("", "Sorry, that folder could not be read"),
+            vec![Rule::Apology]
+        );
         assert_eq!(
             rules("", "Unfortunately the search key is missing"),
             vec![Rule::Apology]

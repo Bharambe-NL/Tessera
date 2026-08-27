@@ -297,8 +297,15 @@ def write_corpus(
     transformations: list[Transformation],
     dropped_questions: list[dict],
     verification_problems: list[str],
+    snapshot: str | None = None,
+    stranded_questions: list[dict] | None = None,
 ) -> dict:
-    """Write the whole tree and return the summary the CLI prints."""
+    """Write the whole tree and return the summary the CLI prints.
+
+    With no snapshot label this writes the corpus as the union of every time,
+    which is what every earlier build wrote and what the determinism gate
+    compares against.
+    """
     # A rebuild starts clean. When a transformation renames a file, the old
     # name would otherwise survive as an orphan that nothing in the ledger
     # mentions and that the retriever would still happily index (BN-037).
@@ -347,7 +354,9 @@ def write_corpus(
         "generator_version": GENERATOR_VERSION,
         "matchers_version": MATCHERS_VERSION,
         "seed": seed,
-        "corpus_name": f"{GENERATOR_VERSION}-{seed}",
+        "corpus_name": (
+            f"{GENERATOR_VERSION}-{seed}-{snapshot}" if snapshot else f"{GENERATOR_VERSION}-{seed}"
+        ),
         "facts": summarise_facts(facts),
         "questions": summarise_questions(questions),
         "documents": {
@@ -365,6 +374,12 @@ def write_corpus(
         "dropped_questions": len(dropped_questions),
         "verification_problems": len(verification_problems),
     }
+    if snapshot:
+        summary["snapshot"] = snapshot
+        # Questions whose sources this label no longer holds. They are counted
+        # here so a sweep against this tree can tell a missing document from a
+        # retrieval failure.
+        summary["stranded_questions"] = len(stranded_questions or [])
 
     # The ledger: every planting, every transformation, every drop, with the seed.
     write_jsonl(
@@ -384,6 +399,7 @@ def write_corpus(
             ],
             *[{"type": "transformation", **asdict(t)} for t in transformations],
             *[{"type": "dropped_question", **d} for d in dropped_questions],
+            *[{"type": "stranded_question", **s} for s in (stranded_questions or [])],
             *[{"type": "verification_problem", "detail": p} for p in verification_problems],
         ],
     )
@@ -402,10 +418,23 @@ def _count(values: Iterable[str]) -> dict[str, int]:
 def _readme(summary: dict) -> str:
     """Doc 02 section 8: how this corpus was produced, what it contains, how to
     regenerate."""
+    label = summary.get("snapshot")
+    at_label = (
+        f"""
+
+This tree holds the corpus as it stands at {label}, so a document added after
+{label} is absent, one deleted by then is gone, and one revised by then carries
+the revision. `snapshots/{label}.json` lists the same files with their hashes.
+{summary.get("stranded_questions", 0)} questions require a source this label no
+longer holds, listed in `ledger.jsonl` as `stranded_question`. Regenerate with
+`gen build --seed {summary["seed"]} --snapshot {label}`."""
+        if label
+        else ""
+    )
     return f"""# Synthetic corpus {summary["corpus_name"]}
 
 Produced by `gen build --seed {summary["seed"]}`. Every name in it is invented;
-see `entities.json`. Nothing here describes a real regulator, bank or rule.
+see `entities.json`. Nothing here describes a real regulator, bank or rule.{at_label}
 
 ## What it contains
 

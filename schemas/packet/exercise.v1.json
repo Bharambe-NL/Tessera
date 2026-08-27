@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/exercise.v1",
+  "title": "Exercise packet",
+  "description": "Doc 08 section 4. The Exercise agent reads cards that already exist and never retrieves, so this packet carries no passages and no retriever output. Doc 08 section 1: it 'never asks the model for new facts', and a packet that carried a passage would be the first step towards one.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "board_id",
+    "scope",
+    "cards",
+    "template"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "run_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "board_id": {
+      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+    },
+    "scope": {
+      "type": "object",
+      "description": "Which cards the items may come from. Doc 08 section 5's harness rule checks source_card_id against this.",
+      "required": [
+        "card_ids"
+      ],
+      "properties": {
+        "card_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          }
+        }
+      }
+    },
+    "cards": {
+      "type": "array",
+      "description": "Doc 08 section 2: cards that are done, or flagged with warn flags only. Blocked content is excluded before the packet is built, so nothing here needs a status.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "card_id",
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "card_id": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          },
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          },
+          "findings": {
+            "type": "array",
+            "description": "The stored shape, which is doc 06 section A7's: text plus the citation ordinals that support it. Doc 08 section 4's example writes an empty array and does not say the element type, and a packet schema that guessed `string` was rejected by the guard the first time a card with findings reached it.",
+            "items": {
+              "type": "object",
+              "required": [
+                "text"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "citations": {
+                  "$ref": "tessera:entity/common.v1#/$defs/citation_ordinals"
+                }
+              }
+            }
+          },
+          "visual": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Type and block labels only. The payload is what the visual draws; the labels are what an item can ask about.",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "block_index": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "n",
+                "source_title"
+              ],
+              "properties": {
+                "n": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "source_title": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "description": "Doc 08 section 8: cards with confirmed concepts are preferred, and an item may name the concept it checks.",
+      "items": {
+        "type": "object",
+        "required": [
+          "concept_id",
+          "term"
+        ],
+        "properties": {
+          "concept_id": {
+            "$ref": "tessera:entity/common.v1#/$defs/ulid"
+          },
+          "term": {
+            "type": "string"
+          },
+          "definition": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "audience_definitions": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "template": {
+      "type": "object",
+      "description": "Doctrine, not substrate. Doc 08 section 2: the pack says what a good question looks like per domain.",
+      "required": [
+        "id",
+        "item_kinds"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "item_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "recall",
+              "apply",
+              "contrast",
+              "trace"
+            ]
+          }
+        },
+        "items_per_card_max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "options": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 6
+        }
+      }
+    },
+    "audience_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "effort_budget": {
+      "type": "object",
+      "properties": {
+        "max_tokens": {
+          "type": "integer"
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      }
+    }
+  }
+}

@@ -330,14 +330,8 @@
     },
     "learning_templates": {
       "type": "object",
-      "description": "Doc 14 section 3.2: intake question templates per domain, curriculum shapes, mastery thresholds.",
+      "description": "Doc 14 section 3.2: the shapes a curriculum takes, how many correct checks count as mastery, and the intake questions a domain asks are doctrine rather than substrate.",
       "properties": {
-        "intake_questions": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          }
-        },
         "curriculum_shapes": {
           "type": "array",
           "items": {
@@ -347,6 +341,12 @@
         "mastery_threshold": {
           "type": "integer",
           "minimum": 1
+        },
+        "intake_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -376,6 +376,13 @@
             "$ref": "tessera:entity/common.v1#/$defs/timestamp"
           }
         }
+      }
+    },
+    "reader_extract_first": {
+      "type": "array",
+      "description": "Doc 07 section A2: what the Reader looks for first is doctrine, not substrate. Finance names figures, dates and article references. A pack that names none leaves this out, and the Reader asks for nothing in particular rather than being handed a guess as though it were doctrine.",
+      "items": {
+        "type": "string"
       }
     }
   }

@@ -52,7 +52,11 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(text: impl Into<String>, location: ChunkLocation, sequence: usize) -> Self {
-        Self { text: text.into(), location, sequence }
+        Self {
+            text: text.into(),
+            location,
+            sequence,
+        }
     }
 }
 
@@ -88,7 +92,12 @@ pub fn windows(text: &str, location: &ChunkLocation, start_sequence: usize) -> V
                 .iter()
                 .rposition(|c| *c == '.' || *c == '\n')
                 .filter(|i| *i > WINDOW / 2)
-                .or_else(|| window.iter().rposition(|c| c.is_whitespace()).filter(|i| *i > WINDOW / 2));
+                .or_else(|| {
+                    window
+                        .iter()
+                        .rposition(|c| c.is_whitespace())
+                        .filter(|i| *i > WINDOW / 2)
+                });
             match boundary {
                 Some(i) => start + i + 1,
                 None => hard_end,
@@ -138,7 +147,10 @@ mod tests {
     use super::*;
 
     fn heading() -> ChunkLocation {
-        ChunkLocation::Heading { title: "A section".into(), level: 2 }
+        ChunkLocation::Heading {
+            title: "A section".into(),
+            level: 2,
+        }
     }
 
     #[test]

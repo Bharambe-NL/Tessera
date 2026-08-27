@@ -120,11 +120,7 @@ pub fn write_document(
 }
 
 /// Remove everything indexed from one document.
-pub fn forget_document(
-    conn: &Connection,
-    folder_id: &str,
-    document_ref: &str,
-) -> rusqlite::Result<usize> {
+pub fn forget_document(conn: &Connection, folder_id: &str, document_ref: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "DELETE FROM index_entry WHERE folder_id = ?1 AND document_chunk_ref LIKE ?2",
         params![folder_id, format!("{document_ref}#%")],
@@ -195,8 +191,7 @@ fn semantic(
           WHERE folder_id IN ({placeholders}) AND embedding IS NOT NULL"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let values: Vec<&dyn rusqlite::ToSql> =
-        folder_ids.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+    let values: Vec<&dyn rusqlite::ToSql> = folder_ids.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
 
     // Brute force over the folder. A vector index earns its keep at a scale
     // this does not reach yet, and it would be a native extension to load and
@@ -258,9 +253,7 @@ pub fn search(
             // written with the passage prefix; mixing the two costs accuracy
             // silently.
             match e.embed(&[format!("query: {query}")]) {
-                Ok(vectors) if !vectors.is_empty() => {
-                    semantic(conn, folder_ids, &vectors[0], depth)?
-                }
+                Ok(vectors) if !vectors.is_empty() => semantic(conn, folder_ids, &vectors[0], depth)?,
                 _ => Vec::new(),
             }
         }
@@ -278,7 +271,9 @@ pub fn search(
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some((document_ref, text, location)) = row else { continue };
+        let Some((document_ref, text, location)) = row else {
+            continue;
+        };
         out.push(Hit {
             entry_id,
             document_ref,
@@ -334,8 +329,8 @@ mod tests {
         )
         .expect("write");
 
-        let hits = search(s.conn(), &["f1".into()], "minimum own funds requirement", None, 5)
-            .expect("search");
+        let hits =
+            search(s.conn(), &["f1".into()], "minimum own funds requirement", None, 5).expect("search");
         assert_eq!(hits.len(), 1);
         assert!(hits[0].text.contains("8.4 percent"));
     }
@@ -359,11 +354,20 @@ mod tests {
     fn forgetting_a_document_removes_it_from_the_index() {
         let s = store();
         folder(s.conn(), "f1");
-        write_document(s.conn(), "f1", "doc-a", &[chunk("A sentence about buffers.", 0)], None, "now")
-            .expect("write");
+        write_document(
+            s.conn(),
+            "f1",
+            "doc-a",
+            &[chunk("A sentence about buffers.", 0)],
+            None,
+            "now",
+        )
+        .expect("write");
         forget_document(s.conn(), "f1", "doc-a").expect("forget");
         assert!(
-            search(s.conn(), &["f1".into()], "buffers", None, 5).expect("search").is_empty()
+            search(s.conn(), &["f1".into()], "buffers", None, 5)
+                .expect("search")
+                .is_empty()
         );
     }
 
@@ -374,8 +378,15 @@ mod tests {
         let s = store();
         folder(s.conn(), "open");
         folder(s.conn(), "sensitive");
-        write_document(s.conn(), "open", "pub", &[chunk("Public guidance on buffers.", 0)], None, "now")
-            .expect("write");
+        write_document(
+            s.conn(),
+            "open",
+            "pub",
+            &[chunk("Public guidance on buffers.", 0)],
+            None,
+            "now",
+        )
+        .expect("write");
         write_document(
             s.conn(),
             "sensitive",
@@ -388,7 +399,10 @@ mod tests {
 
         let hits = search(s.conn(), &["open".into()], "buffers guidance", None, 10).expect("search");
         assert_eq!(hits.len(), 1);
-        assert!(!hits[0].text.contains("Confidential"), "an unasked folder answered");
+        assert!(
+            !hits[0].text.contains("Confidential"),
+            "an unasked folder answered"
+        );
     }
 
     #[test]
@@ -397,8 +411,15 @@ mod tests {
         // the difference between working and returning an error to the user.
         let s = store();
         folder(s.conn(), "f1");
-        write_document(s.conn(), "f1", "doc", &[chunk("The refund deadline is 14 days.", 0)], None, "now")
-            .expect("write");
+        write_document(
+            s.conn(),
+            "f1",
+            "doc",
+            &[chunk("The refund deadline is 14 days.", 0)],
+            None,
+            "now",
+        )
+        .expect("write");
 
         for question in [
             "What is the refund deadline?",
@@ -438,7 +459,10 @@ mod tests {
         )
         .expect("search");
         assert!(!hits.is_empty());
-        assert!(hits[0].text.contains("2.5 percent"), "fusion ranked the wrong chunk first");
+        assert!(
+            hits[0].text.contains("2.5 percent"),
+            "fusion ranked the wrong chunk first"
+        );
     }
 
     #[test]
@@ -450,8 +474,15 @@ mod tests {
         folder(s.conn(), "f1");
         let narrow = HashEmbedder::with_dimensions(8);
         let wide = HashEmbedder::with_dimensions(64);
-        write_document(s.conn(), "f1", "doc", &[chunk("A sentence about buffers.", 0)], Some(&narrow), "now")
-            .expect("write");
+        write_document(
+            s.conn(),
+            "f1",
+            "doc",
+            &[chunk("A sentence about buffers.", 0)],
+            Some(&narrow),
+            "now",
+        )
+        .expect("write");
 
         // Searching with the wider model finds nothing semantically, and the
         // lexical half still answers.
@@ -474,7 +505,11 @@ mod tests {
         folder(s.conn(), "f1");
         write_document(s.conn(), "f1", "doc", &[chunk("Something.", 0)], None, "now").expect("write");
         write_document(s.conn(), "f1", "doc", &[], None, "now").expect("write empty");
-        assert!(search(s.conn(), &["f1".into()], "Something", None, 5).expect("search").is_empty());
+        assert!(
+            search(s.conn(), &["f1".into()], "Something", None, 5)
+                .expect("search")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -485,12 +520,16 @@ mod tests {
         let s = store();
         folder(s.conn(), "f1");
         let many: Vec<Chunk> = (0..120)
-            .map(|i| chunk(&format!("Paragraph {i} concerns the capital buffer requirement."), i))
+            .map(|i| {
+                chunk(
+                    &format!("Paragraph {i} concerns the capital buffer requirement."),
+                    i,
+                )
+            })
             .collect();
         write_document(s.conn(), "f1", "doc", &many, None, "now").expect("write");
 
-        let hits = search(s.conn(), &["f1".into()], "capital buffer requirement", None, 100)
-            .expect("search");
+        let hits = search(s.conn(), &["f1".into()], "capital buffer requirement", None, 100).expect("search");
         assert!(hits.len() > 60, "returned {} for a request of 100", hits.len());
     }
 
@@ -499,6 +538,10 @@ mod tests {
         let s = store();
         folder(s.conn(), "f1");
         write_document(s.conn(), "f1", "doc", &[chunk("A sentence.", 0)], None, "now").expect("write");
-        assert!(search(s.conn(), &["f1".into()], "   ", None, 5).expect("search").is_empty());
+        assert!(
+            search(s.conn(), &["f1".into()], "   ", None, 5)
+                .expect("search")
+                .is_empty()
+        );
     }
 }

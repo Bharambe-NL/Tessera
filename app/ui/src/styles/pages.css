@@ -1,0 +1,885 @@
+/* The rail and the four pages. Doc 11 sections 5 and 6. */
+
+/*
+ * Doc 11 section 5: 56px collapsed, 240px open. One custom property, because
+ * three things have to agree on it: the rail's own width, the board's left
+ * padding and the page's left edge. When they did not, an open rail covered the
+ * severity chip, the checkbox and the board heading of every row on the Flags
+ * queue, and every test still passed, because a covered element is visible and
+ * clickable to a driver that scrolls it into view.
+ */
+body {
+  --rail-w: 56px;
+}
+
+body.rail-open {
+  --rail-w: 240px;
+}
+
+#rail {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  /* Above the page layer, not level with it. A page is `position: fixed` and
+     covers everything below its z-index, so a rail at the same level lost every
+     click to the page it had just opened. */
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s3) var(--s2);
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  width: var(--rail-w);
+  transition: width var(--t-rise) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #rail,
+  #main,
+  #page {
+    transition: none;
+  }
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3);
+  border-radius: var(--r-button);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-align: left;
+  font-size: 13px;
+}
+
+.rail-item .glyph {
+  flex: none;
+  width: 16px;
+  text-align: center;
+}
+
+/* The label is present for a screen reader whatever the rail's width, and
+   clipped rather than removed when the rail is collapsed. */
+.rail-item .label {
+  flex: 1;
+  opacity: 0;
+  transition: opacity var(--t-rise) var(--ease);
+}
+
+body.rail-open .rail-item .label {
+  opacity: 1;
+}
+
+.rail-item:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.rail-item.on {
+  background: var(--bg);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+#rail-toggle {
+  margin-top: auto;
+}
+
+.rail-item .count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--amber);
+  color: var(--amber-ink);
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  text-align: center;
+}
+
+/* The board sits beside the rail rather than under it, and moves when it opens. */
+#main {
+  padding-left: var(--rail-w);
+  transition: padding-left var(--t-rise) var(--ease);
+}
+
+/* A page covers the canvas; the canvas keeps its state underneath. It starts
+   where the collapsed rail ends, so the rail is never underneath it. */
+#page {
+  position: fixed;
+  inset: 0 0 0 var(--rail-w);
+  z-index: var(--z-sticky);
+  background: var(--bg);
+  overflow-y: auto;
+  transition: left var(--t-rise) var(--ease);
+}
+
+#page[hidden] {
+  display: none;
+}
+
+.page-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+  padding: var(--s6) var(--s7) var(--s5);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#page-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-left: auto;
+}
+
+#page-body {
+  padding: var(--s6) var(--s7) var(--s9);
+}
+
+.page-empty {
+  margin: var(--s7) 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.page-note {
+  margin-top: var(--s5);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* ---- segmented control, shared by Home, Library and Profile ---- */
+
+.seg {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-button);
+  overflow: hidden;
+}
+
+.seg button {
+  padding: var(--s2) var(--s4);
+  font-size: 12px;
+  border-radius: 0;
+}
+
+.seg button.on {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+#page button {
+  border: 1px solid var(--line);
+  border-radius: var(--r-button);
+  padding: var(--s2) var(--s3);
+  font-size: 12px;
+}
+
+#page .seg button {
+  border: 0;
+}
+
+#page button.primary {
+  background: var(--user);
+  color: var(--surface);
+  border-color: transparent;
+}
+
+#page button.danger {
+  color: var(--rust-ink);
+  border-color: var(--rust-ink);
+}
+
+#page :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Home ---- */
+
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s5);
+}
+
+.board-card {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+
+.board-card header {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.board-card h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-card .meta,
+.lib-row .meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.board-card .verbs,
+.lib-row .verbs,
+.flag-row .verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+/* ---- Flags and Library rows ---- */
+
+.flag-group {
+  margin-bottom: var(--s7);
+}
+
+.flag-group h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.flag-group ul,
+.lib-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+
+.flag-row,
+.lib-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+}
+
+.flag-row .what,
+.lib-row .what {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: var(--s2);
+}
+
+.flag-row .line,
+.lib-row .line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.flag-row .rule,
+.lib-row .title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.flag-row .rule {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.flag-row .card-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flag-row .age,
+.lib-row .age {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.flag-row .reason,
+.lib-row .reason {
+  margin: 0;
+  font-size: 13px;
+}
+
+.lib-row .reason.muted {
+  color: var(--ink-3);
+}
+
+/* Doc 09 section 6: an evidence preview on every row, set apart from the
+   reason because one is the rule speaking and the other is the source. */
+.flag-row .evidence {
+  margin: 0;
+  padding-left: var(--s3);
+  border-left: 2px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.chip.sev.warn,
+.chip.stale {
+  background: var(--amber);
+  color: var(--amber-ink);
+  border-color: transparent;
+}
+
+.chip.sev.block {
+  background: var(--rust);
+  color: var(--rust-ink);
+  border-color: transparent;
+}
+
+.chip.ok,
+.chip.status-confirmed {
+  background: var(--olive);
+  color: var(--olive-ink);
+  border-color: transparent;
+}
+
+.chip.missing,
+.chip.status-proposed {
+  background: var(--amber);
+  color: var(--amber-ink);
+  border-color: transparent;
+}
+
+/* ---- the bulk bar ---- */
+
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.bulk .count {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* ---- Profile fact lists ---- */
+
+.facts {
+  margin: 0;
+  display: grid;
+  gap: var(--s3);
+  max-width: 640px;
+}
+
+.facts > div {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--s4);
+  font-size: 13px;
+}
+
+.facts dt {
+  color: var(--ink-2);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+/* A flag row is a focus stop of its own, so a reader moves between rows with
+   arrows and tabs into one only when they mean to act on it. */
+.flag-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- the exercise, doc 08 and doc 11 section 6 ---- */
+
+#exercise {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tooltip);
+  display: grid;
+  place-items: center;
+  padding: var(--s7);
+  background: oklch(0 0 0 / 0.28);
+}
+
+#exercise[hidden] {
+  display: none;
+}
+
+#exercise .sheet {
+  width: min(680px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-popover);
+}
+
+#exercise header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s5) var(--s6);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+#exercise h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+}
+
+#ex-body {
+  padding: var(--s6);
+}
+
+.ex-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s7);
+}
+
+.ex-item .q {
+  display: flex;
+  gap: var(--s3);
+  margin: 0 0 var(--s4);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.ex-item .q .n {
+  flex: none;
+  color: var(--ink-3);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-weight: 400;
+}
+
+.opts {
+  display: grid;
+  gap: var(--s2);
+}
+
+.opt {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.opt.chosen {
+  border-color: var(--ink-2);
+}
+
+/* Shown only after grading: an earlier mark would answer the question. */
+.opt.right {
+  background: var(--olive);
+  color: var(--olive-ink);
+  border-color: transparent;
+}
+
+.opt.wrong {
+  background: var(--rust);
+  color: var(--rust-ink);
+  border-color: transparent;
+}
+
+.ex-item .explanation {
+  margin: var(--s3) 0 var(--s2);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.ex-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin-top: var(--s7);
+  padding-top: var(--s5);
+  border-top: 1px solid var(--line);
+}
+
+.ex-foot .score {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ex-foot .progress {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+#exercise button {
+  border: 1px solid var(--line);
+  border-radius: var(--r-button);
+  padding: var(--s2) var(--s4);
+  font-size: 12px;
+}
+
+#exercise button.primary {
+  background: var(--user);
+  color: var(--surface);
+  border-color: transparent;
+}
+
+#exercise button:disabled {
+  opacity: 0.4;
+}
+
+/* ---- the Tutor panel, doc 14 section 3.9 ---- */
+
+/* Right dock, 320px. The board keeps its own width and shifts, the way the rail
+   does on the other side: a panel that covered the board would hide the cards
+   the tutor is talking about. */
+body.learning {
+  --tutor-w: 320px;
+}
+
+#tutor {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+
+#tutor[hidden] {
+  display: none;
+}
+
+body.learning #main {
+  padding-right: var(--tutor-w);
+}
+
+#tutor header {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s5) var(--s5) var(--s4);
+  border-bottom: 1px solid var(--line);
+}
+
+#tutor-stage {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+#tutor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s5);
+}
+
+.tutor-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s4);
+}
+
+.say {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.say.learner {
+  justify-self: end;
+  max-width: 85%;
+  padding: var(--s2) var(--s4);
+  border-radius: var(--r-button);
+  background: var(--user);
+  color: var(--surface);
+}
+
+.say.caveat {
+  font-size: 12px;
+  color: var(--ink-2);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--line);
+}
+
+.ask p,
+.plan .head {
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+}
+
+.tutor-log .opts {
+  display: grid;
+  gap: var(--s2);
+}
+
+.tutor-log .opts button {
+  text-align: left;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  font-size: 12.5px;
+}
+
+/* Doc 14 section 3.9: olive for right, amber for wrong, and only after the
+   learner has answered. */
+.tutor-log .opt.right {
+  background: var(--olive);
+  color: var(--olive-ink);
+  border-color: transparent;
+}
+
+.tutor-log .opt.spent {
+  opacity: 0.55;
+}
+
+.feedback {
+  margin: var(--s3) 0;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-node);
+  font-size: 12.5px;
+}
+
+.feedback.right {
+  background: var(--olive);
+  color: var(--olive-ink);
+}
+
+.feedback.wrong {
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+.plan ol {
+  margin: 0 0 var(--s4);
+  padding-left: var(--s5);
+  display: grid;
+  gap: var(--s2);
+}
+
+.plan li {
+  font-size: 12.5px;
+}
+
+.plan li span {
+  display: block;
+  color: var(--ink-2);
+}
+
+.tutor-say {
+  padding: var(--s4) var(--s5) var(--s5);
+  border-top: 1px solid var(--line);
+}
+
+.tutor-say input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  padding: var(--s2) var(--s3);
+}
+
+#tutor :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+#learn[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+/* ---- first run, doc 11 section 6 ---- */
+
+#page .lede {
+  max-width: 60ch;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  margin: 0 0 var(--s6);
+}
+
+ol.setup {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s5);
+  max-width: 62ch;
+}
+
+ol.setup .step {
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+
+ol.setup .step.done {
+  border-color: var(--olive-ink);
+}
+
+ol.setup h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: 0 0 var(--s2);
+  font-size: 14px;
+}
+
+ol.setup .n {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+ol.setup .step.done .n {
+  background: var(--olive-ink);
+  border-color: transparent;
+  color: var(--surface);
+}
+
+ol.setup .note {
+  margin: 0 0 var(--s3);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.setup-key,
+.setup-folder {
+  display: grid;
+  gap: var(--s3);
+}
+
+.setup-key label,
+.check {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.setup-key code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.setup-key input,
+.setup-folder input[type='text'],
+.setup-folder input:not([type]) {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  padding: var(--s3);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.setup-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin: var(--s6) 0 0;
+  max-width: 62ch;
+}
+
+.setup-acts .note {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.setup-error {
+  max-width: 62ch;
+  margin: var(--s4) 0 0;
+  padding: var(--s3) var(--s4);
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--rust-ink);
+  border-radius: var(--r-button);
+}
+
+#page button.primary {
+  background: var(--user);
+  color: var(--surface);
+  border-color: transparent;
+  padding: var(--s3) var(--s5);
+  border-radius: var(--r-button);
+  font-size: 13px;
+}
+
+#page button.primary:disabled {
+  background: var(--line);
+  color: var(--ink-3);
+}

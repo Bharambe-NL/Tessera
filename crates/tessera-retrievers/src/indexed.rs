@@ -99,7 +99,12 @@ pub fn retrieve(
         // The document reference is `<path>#<sequence>`; the locator is the
         // document, because a citation points at a place in a document and not
         // at a chunk boundary this build happened to choose.
-        let locator = hit.document_ref.split('#').next().unwrap_or(&hit.document_ref).to_string();
+        let locator = hit
+            .document_ref
+            .split('#')
+            .next()
+            .unwrap_or(&hit.document_ref)
+            .to_string();
         let issuer = issuer_of(conn, &folder_ids, &locator);
 
         let trust_rank = packet.doctrine.rank_for(&config.source_class, issuer.as_deref());
@@ -225,7 +230,12 @@ mod tests {
     fn a_passage_carries_the_class_and_rank_its_configuration_says() {
         let s = store();
         folder(s.conn(), "reg", "Central Authority");
-        write(s.conn(), "reg", "car3-v1.md", &["The capital buffer is 2.5 percent."]);
+        write(
+            s.conn(),
+            "reg",
+            "car3-v1.md",
+            &["The capital buffer is 2.5 percent."],
+        );
 
         let out = retrieve(
             s.conn(),
@@ -237,7 +247,10 @@ mod tests {
 
         assert_eq!(out.passages.len(), 1);
         assert_eq!(out.passages[0].source.class, "regulatory");
-        assert_eq!(out.passages[0].source.trust_rank, 2, "doctrine did not set the rank");
+        assert_eq!(
+            out.passages[0].source.trust_rank, 2,
+            "doctrine did not set the rank"
+        );
         assert_eq!(out.passages[0].source.freshness_class, "regulation");
     }
 
@@ -248,10 +261,20 @@ mod tests {
         // first time the chunker changed.
         let s = store();
         folder(s.conn(), "local", "Risk");
-        write(s.conn(), "local", "int-capital-01.md", &["The buffer is 2.5 percent."]);
+        write(
+            s.conn(),
+            "local",
+            "int-capital-01.md",
+            &["The buffer is 2.5 percent."],
+        );
 
-        let out = retrieve(s.conn(), &IndexedConfig::local(vec!["local".into()]), &packet("buffer", 5), None)
-            .expect("retrieve");
+        let out = retrieve(
+            s.conn(),
+            &IndexedConfig::local(vec!["local".into()]),
+            &packet("buffer", 5),
+            None,
+        )
+        .expect("retrieve");
         assert_eq!(out.passages[0].source.locator, "int-capital-01.md");
         assert!(!out.passages[0].source.locator.contains('#'));
     }
@@ -267,8 +290,13 @@ mod tests {
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         write(s.conn(), "boards", "cards", &refs);
 
-        let out = retrieve(s.conn(), &IndexedConfig::boards(), &packet("capital buffer", 12), None)
-            .expect("retrieve");
+        let out = retrieve(
+            s.conn(),
+            &IndexedConfig::boards(),
+            &packet("capital buffer", 12),
+            None,
+        )
+        .expect("retrieve");
         assert!(out.passages.len() <= 3, "boards returned {}", out.passages.len());
         assert_eq!(out.passages[0].source.class, "own_card");
     }
@@ -282,14 +310,21 @@ mod tests {
         folder(s.conn(), "open", "Open");
         folder(s.conn(), "sensitive", "Sensitive");
         write(s.conn(), "open", "public.md", &["Guidance on buffers."]);
-        write(s.conn(), "sensitive", "secret.md", &["Confidential guidance on buffers."]);
+        write(
+            s.conn(),
+            "sensitive",
+            "secret.md",
+            &["Confidential guidance on buffers."],
+        );
 
         let mut p = packet("buffers guidance", 12);
         p.filters.folder = Some("sensitive".into());
-        let out = retrieve(s.conn(), &IndexedConfig::local(vec!["open".into()]), &p, None)
-            .expect("retrieve");
+        let out = retrieve(s.conn(), &IndexedConfig::local(vec!["open".into()]), &p, None).expect("retrieve");
 
-        assert!(out.passages.is_empty(), "a folder the retriever lacks answered anyway");
+        assert!(
+            out.passages.is_empty(),
+            "a folder the retriever lacks answered anyway"
+        );
         assert_eq!(out.coverage, Coverage::None);
     }
 
@@ -299,14 +334,26 @@ mod tests {
         folder(s.conn(), "local", "Risk");
         write(s.conn(), "local", "a.md", &["The buffer is 2.5 percent."]);
 
-        let partial =
-            retrieve(s.conn(), &IndexedConfig::local(vec!["local".into()]), &packet("buffer", 5), None)
-                .expect("retrieve");
-        assert_eq!(partial.coverage, Coverage::Partial, "one of five is not full coverage");
+        let partial = retrieve(
+            s.conn(),
+            &IndexedConfig::local(vec!["local".into()]),
+            &packet("buffer", 5),
+            None,
+        )
+        .expect("retrieve");
+        assert_eq!(
+            partial.coverage,
+            Coverage::Partial,
+            "one of five is not full coverage"
+        );
 
-        let full =
-            retrieve(s.conn(), &IndexedConfig::local(vec!["local".into()]), &packet("buffer", 1), None)
-                .expect("retrieve");
+        let full = retrieve(
+            s.conn(),
+            &IndexedConfig::local(vec!["local".into()]),
+            &packet("buffer", 1),
+            None,
+        )
+        .expect("retrieve");
         assert_eq!(full.coverage, Coverage::Full);
     }
 
@@ -333,7 +380,12 @@ mod tests {
     fn the_embedder_is_optional_and_the_lexical_half_still_answers() {
         let s = store();
         folder(s.conn(), "local", "Risk");
-        write(s.conn(), "local", "a.md", &["The leverage ratio floor is 3 percent."]);
+        write(
+            s.conn(),
+            "local",
+            "a.md",
+            &["The leverage ratio floor is 3 percent."],
+        );
         let embedder = HashEmbedder::default();
 
         for embedder in [None, Some(&embedder as &dyn Embedder)] {

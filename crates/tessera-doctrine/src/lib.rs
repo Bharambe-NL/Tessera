@@ -17,6 +17,11 @@ use tessera_schema::{Registry, ids};
 /// The packs that ship in the app bundle. Doc 10 section 9.
 pub static BUILT_IN: &[(&str, &str)] = &[
     ("general", include_str!("../../../packs/general.json")),
+    // Doc 11 mission: "Finance is the first doctrine pack." The rules are the
+    // ones the synthetic twin below is scored on, so what differs between them
+    // is the source hierarchy and the vocabulary, and nothing that decides
+    // whether a card passes.
+    ("finance-eu", include_str!("../../../packs/finance-eu.json")),
     // Doc 02 section 4: the sibling of finance-eu with the synthetic issuers
     // substituted in, so evaluation output can be quoted without a real
     // regulator appearing in it. Doc 02 section 10.1 loads it for every run.
@@ -101,6 +106,40 @@ impl FlagRule {
 
     pub fn runs_in(&self, mode: &str) -> bool {
         self.enabled && (self.modes.is_empty() || self.modes.iter().any(|m| m == mode))
+    }
+}
+
+/// Doc 14 section 3.2's learning doctrine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LearningTemplates {
+    /// Doc 14 section 3.4: the plan is ordered foundation to detail.
+    #[serde(default = "default_shapes")]
+    pub curriculum_shapes: Vec<String>,
+    /// Doc 14 section 3.6: how many correct checks make a concept mastered.
+    #[serde(default = "default_mastery")]
+    pub mastery_threshold: u32,
+    /// Doc 14 section 3.2: intake question templates per domain.
+    #[serde(default)]
+    pub intake_questions: Vec<String>,
+}
+
+fn default_shapes() -> Vec<String> {
+    // Doc 14 section 3.8's fallback, which is also the sensible default: what it
+    // is, how it works, who is involved.
+    vec!["foundation".into(), "mechanism".into(), "landscape".into()]
+}
+
+fn default_mastery() -> u32 {
+    2
+}
+
+impl Default for LearningTemplates {
+    fn default() -> Self {
+        Self {
+            curriculum_shapes: default_shapes(),
+            mastery_threshold: default_mastery(),
+            intake_questions: Vec::new(),
+        }
     }
 }
 
@@ -202,6 +241,17 @@ pub struct DoctrinePack {
     #[serde(default)]
     pub writing_rules: WritingRules,
     pub exercise_templates: Vec<ExerciseTemplate>,
+    /// Doc 14 section 3.2: the shapes a curriculum takes and how many correct
+    /// checks count as mastery are doctrine, not substrate.
+    #[serde(default)]
+    pub learning_templates: LearningTemplates,
+    /// Doc 07 section A2: what the Reader looks for first is doctrine.
+    ///
+    /// The finance pack names figures, dates and article references. A pack that
+    /// names none leaves this empty, and the Reader asks for nothing in
+    /// particular rather than being handed a guess as though it were doctrine.
+    #[serde(default)]
+    pub reader_extract_first: Vec<String>,
     #[serde(default)]
     pub rulings: Vec<Value>,
 }
@@ -361,6 +411,61 @@ mod tests {
     }
 
     #[test]
+    fn three_packs_ship() {
+        // Doc 12 phase 10 names three, and doc 11's mission makes finance the
+        // first doctrine pack rather than an optional one.
+        let lib = library();
+        let mut codes: Vec<&str> = lib.codes().collect();
+        codes.sort_unstable();
+        assert_eq!(codes, ["finance-eu", "finance-eu-synthetic", "general"]);
+    }
+
+    #[test]
+    fn the_synthetic_twin_carries_the_same_rules_as_the_pack_it_stands_for() {
+        // Doc 02 section 4: the twin exists "so a score on the corpus is
+        // comparable with the shipped pack". That only holds while the two
+        // agree on every rule and severity. What may differ is the source
+        // hierarchy and the vocabulary, which name issuers rather than decide
+        // whether a card passes.
+        let lib = library();
+        let real = lib.get("finance-eu").expect("finance-eu");
+        let twin = lib.get("finance-eu-synthetic").expect("finance-eu-synthetic");
+
+        let rules = |p: &DoctrinePack| {
+            let mut out: Vec<(String, String, String)> = p
+                .flag_rules
+                .iter()
+                .map(|r| (r.rule_id.clone(), r.severity.clone(), r.detector.clone()))
+                .collect();
+            out.sort();
+            out
+        };
+        assert_eq!(
+            rules(real),
+            rules(twin),
+            "a score on the corpus no longer transfers to the shipped pack"
+        );
+    }
+
+    #[test]
+    fn the_memory_rule_is_doctrine_rather_than_code() {
+        // Doc 12 principle 4: packs are JSON and no domain rule lives in code.
+        // Doc 05 v0.2 line 106 names this one, and until M12 it existed only in
+        // a test fixture and a comment: the Verifier had no such rule at all.
+        let lib = library();
+        for code in ["general", "finance-eu", "finance-eu-synthetic"] {
+            let pack = lib.get(code).expect(code);
+            let rule = pack
+                .flag_rules
+                .iter()
+                .find(|r| r.rule_id == "own_card_sole_support")
+                .unwrap_or_else(|| panic!("{code} does not carry the memory rule"));
+            assert_eq!(rule.severity, "block", "{code}");
+            assert_eq!(rule.detector, "deterministic:own_card_sole_support", "{code}");
+        }
+    }
+
+    #[test]
     fn every_shipped_rule_names_a_detector_kind() {
         // Doc 07 section B10: a rule with a missing detector is skipped and the
         // Profile is told the pack is malformed. Better to not ship one.
@@ -509,6 +614,8 @@ mod tests {
             visual_preferences: VisualPreferences::default(),
             writing_rules: WritingRules::default(),
             exercise_templates: vec![],
+            reader_extract_first: vec![],
+            learning_templates: LearningTemplates::default(),
             rulings: vec![],
         }
     }

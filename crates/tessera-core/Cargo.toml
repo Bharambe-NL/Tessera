@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+png = "0.18.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -27,4 +28,5 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 
 [dev-dependencies]
+zip = "8.6.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }

@@ -145,12 +145,12 @@ impl LocalEmbedder {
         // because a file changing under the mapping is undefined behaviour, and
         // the workspace forbids unsafe outright. Reading the weights costs one
         // copy at startup and nothing afterwards.
-        let weights = std::fs::read(&weights_path)
-            .map_err(|e| EmbedError::Unavailable(format!("weights: {e}")))?;
+        let weights =
+            std::fs::read(&weights_path).map_err(|e| EmbedError::Unavailable(format!("weights: {e}")))?;
         let vb = VarBuilder::from_buffered_safetensors(weights, DType::F32, &device)
             .map_err(|e| EmbedError::Unavailable(format!("weights: {e}")))?;
-        let model = BertModel::load(vb, &config)
-            .map_err(|e| EmbedError::Unavailable(format!("model: {e}")))?;
+        let model =
+            BertModel::load(vb, &config).map_err(|e| EmbedError::Unavailable(format!("model: {e}")))?;
 
         Ok(Self {
             model: Mutex::new(model),
@@ -275,7 +275,9 @@ impl Default for HashEmbedder {
 
 impl HashEmbedder {
     pub fn with_dimensions(dimensions: usize) -> Self {
-        Self { dimensions: dimensions.max(1) }
+        Self {
+            dimensions: dimensions.max(1),
+        }
     }
 
     fn vector(&self, text: &str) -> Vec<f32> {

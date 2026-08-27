@@ -22,7 +22,10 @@ pub fn parse(path: &Path) -> Result<Vec<Chunk>, ParseError> {
         if detail.contains("Password") || detail.contains("encrypt") {
             ParseError::Protected(path.display().to_string())
         } else {
-            ParseError::Malformed { format: "xlsx", detail }
+            ParseError::Malformed {
+                format: "xlsx",
+                detail,
+            }
         }
     })?;
 
@@ -61,13 +64,21 @@ pub fn parse(path: &Path) -> Result<Vec<Chunk>, ParseError> {
                 text.push('\n');
             }
             let text = text.trim_end().to_string();
-            if text.lines().skip(2).all(|l| l.trim().is_empty() || l.chars().all(|c| c == '|' || c.is_whitespace())) {
+            if text
+                .lines()
+                .skip(2)
+                .all(|l| l.trim().is_empty() || l.chars().all(|c| c == '|' || c.is_whitespace()))
+            {
                 continue;
             }
 
             out.push(Chunk::new(
                 text,
-                ChunkLocation::RowRange { sheet: sheet.clone(), from, to },
+                ChunkLocation::RowRange {
+                    sheet: sheet.clone(),
+                    from,
+                    to,
+                },
                 sequence,
             ));
             sequence += 1;

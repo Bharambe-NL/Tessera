@@ -11,8 +11,8 @@ pub mod chunking;
 pub mod contract;
 pub mod embed;
 pub mod index;
-pub mod ingest;
 pub mod indexed;
+pub mod ingest;
 pub mod parse;
 
 pub use boards::{BOARDS_FOLDER, index_card};

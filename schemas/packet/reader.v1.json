@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/reader.v1",
+  "title": "Reader packet",
+  "description": "Doc 07 section A4. The Reader is the vision entry point: it reads an image and, in ocr mode, returns text and layout with no card. Doc 07 section A1 keeps retrieval out of scope, so this packet carries no passages and no retriever output; what it reads is the picture and the notes beside it.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "mode", "image"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "card_id": {
+      "oneOf": [
+        { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+        { "type": "null" }
+      ],
+      "description": "Null in ocr mode, which serves the local retriever on a scanned page and writes no card."
+    },
+    "mode": { "enum": ["card", "ocr"] },
+    "image": {
+      "type": "object",
+      "required": ["image_id", "blob_ref", "mime", "width", "height", "origin"],
+      "properties": {
+        "image_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+        "blob_ref": { "type": "string" },
+        "mime": { "type": "string" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "origin": { "enum": ["pasted", "sketch_raster", "scanned_page"] }
+      }
+    },
+    "notes_text": {
+      "type": "array",
+      "description": "Doc 07 section A1: notes are text and are passed as text alongside the raster, never read out of it.",
+      "items": { "type": "string" }
+    },
+    "board_context": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "seed_label": { "type": ["string", "null"] },
+        "nearby_card_questions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "doctrine": {
+      "type": "object",
+      "description": "Doc 07 section A2: what to extract first is doctrine, not substrate.",
+      "properties": {
+        "extract_first": { "type": "array", "items": { "type": "string" } },
+        "value_formatting": { "type": "object" }
+      }
+    },
+    "effort_budget": {
+      "type": "object",
+      "properties": { "max_tokens": { "type": "integer" } }
+    }
+  }
+}

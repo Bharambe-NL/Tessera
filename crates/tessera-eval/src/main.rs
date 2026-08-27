@@ -17,21 +17,23 @@
 //! score` turns it into metrics.
 
 mod boards;
+mod bundles;
+mod reverify;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tessera_core::retrieval::RetrieverSet;
 use tessera_providers::CompletionRequest;
 use tessera_retrievers::IndexedConfig;
 use tessera_retrievers::embed::Embedder;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tessera_core::Core;
+use tessera_core::{Anchor, Core};
 use tessera_providers::{
     AnthropicProvider, KeyStore, MockProvider, MockResponse, ModelPolicy, ModelProvider,
     OpenAiCompatProvider, OsKeychain, endpoint_for,
@@ -139,6 +141,45 @@ struct Args {
     /// throwaway profile, so nothing shares a store.
     #[arg(long, default_value_t = 3)]
     workers: usize,
+
+    /// Re-verify the corpus's own boards instead of asking questions.
+    ///
+    /// Doc 07 section B3's batch: every card the corpus shipped is read back
+    /// against the tree this run points at, and a citation whose source has
+    /// since changed, gone, or been superseded flips the card to flagged. This
+    /// is what doc 02 section 5.4 means by a board written at T1 and reopened at
+    /// T3, and it is what the three staleness gates are scored on.
+    ///
+    /// Runs on one worker against one store, because every card has to see the
+    /// same imported boards.
+    #[arg(long)]
+    verify_only: bool,
+
+    /// Generate an exercise on each imported board after the sweep. Doc 08.
+    ///
+    /// The Exercise agent reads cards that exist and never retrieves, so it
+    /// costs one call per board and measures for nothing on the grounded mock.
+    /// It also writes `exercises.jsonl` beside the runs, which is what the
+    /// scorer re-checks doc 08 section 5's two rules against: measuring the
+    /// agent's output with the agent's own check would report 1.00 whatever the
+    /// check did.
+    #[arg(long)]
+    exercise: bool,
+
+    /// The corpus as it stood when those boards were written, usually the T1
+    /// tree. Without it a document that was quietly edited cannot be told from
+    /// one that was not, and the run reports that it could not tell rather than
+    /// reporting that nothing changed.
+    #[arg(long)]
+    baseline: Option<PathBuf>,
+
+    /// Round trip every corpus board through export and import. Doc 12 phase
+    /// 10's acceptance.
+    ///
+    /// Costs nothing: no provider is called, because a bundle carries what the
+    /// board already holds and asks no model anything.
+    #[arg(long)]
+    bundles: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,16 +261,151 @@ struct RunRecord {
     provider: String,
     /// `reference` or `bulk`.
     leg: String,
+    /// `card` for a question this run asked, `verify_only` for a card it read
+    /// back. The scorer keeps the two apart: a re-verification answers nothing,
+    /// so counting it among the answers would dilute every recall metric with
+    /// rows that were never asked a question.
+    kind: String,
+    /// The corpus's own name for the card being re-verified, `board_id/card_id`.
+    ///
+    /// Doc 15's ground truth names prior cards this way. Matching on `card_id`
+    /// alone would compare a pipeline ulid against a synthetic card id and
+    /// silently never match, which is why the chain is matched on this.
+    card_ref: Option<String>,
+}
+
+/// One exercise a run generated, with the cards its items may draw from.
+///
+/// The cards travel with it so the scorer can re-check doc 08 section 5's two
+/// rules independently. Measuring the agent's output with the agent's own check
+/// would report 1.00 whatever the check did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExerciseRecord {
+    board_id: String,
+    exercise_id: Option<String>,
+    items: Value,
+    cards: Value,
+    dropped: usize,
+}
+
+/// How many boards one worker generates an exercise on.
+///
+/// Every board would be a call per board and the sweep has hundreds. Five is
+/// enough for the two gates to have a denominator worth reading, and the run
+/// says out loud when it sampled rather than covered.
+const EXERCISE_BOARDS_PER_WORKER: usize = 5;
+
+/// Read back what the exercise wrote, so the scorer measures the stored rows.
+fn exercise_record(core: &Core, board_id: &str, outcome: &tessera_core::ExerciseOutcome) -> ExerciseRecord {
+    let items = outcome
+        .exercise_id
+        .as_deref()
+        .and_then(|id| {
+            core.store
+                .conn()
+                .query_row(
+                    "SELECT items FROM exercise WHERE id = ?1",
+                    rusqlite::params![id],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+        })
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or_else(|| json!([]));
+
+    ExerciseRecord {
+        board_id: board_id.to_string(),
+        exercise_id: outcome.exercise_id.clone(),
+        items,
+        cards: json!(tessera_store::repo::cards_for_exercise(&core.store, board_id, 8).unwrap_or_default()),
+        dropped: outcome.dropped,
+    }
+}
+
+/// Where this run reads its keys.
+///
+/// A mock run needs none, so it gets a keystore holding one fake. A live run on
+/// a person's machine reads the OS keychain, which is doc 01 section 4.16's rule
+/// and the only place a key belongs on a machine that has one.
+///
+/// A headless runner has no keychain at all: on Linux `keyring` wants a Secret
+/// Service over D-Bus and a CI runner has no session for one, so the choice is
+/// between reading the environment and having no nightly eval. The environment
+/// is chosen only when `TESSERA_CI` says so, rather than by asking whether the
+/// keychain happens to answer: a keychain that is merely locked would look the
+/// same, and falling back then would train a person to expect a prompt that
+/// never comes.
+fn keystore(mock: bool) -> Box<dyn KeyStore> {
+    if mock {
+        return Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"));
+    }
+    if std::env::var("TESSERA_CI").is_ok_and(|v| !v.trim().is_empty()) {
+        eprintln!("reading keys from the environment, which is what TESSERA_CI asks for");
+        return Box::new(tessera_providers::EnvKeyStore);
+    }
+    Box::new(OsKeychain)
+}
+
+/// Doc 12 phase 10's acceptance: every corpus board out and back in.
+fn round_trip_bundles(args: &Args) -> std::process::ExitCode {
+    let trips = match bundles::run(&args.corpus, &args.snapshot) {
+        Ok(t) => t,
+        Err(message) => {
+            eprintln!("{message}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+
+    println!("{}", bundles::report(&trips));
+    let lost: Vec<&bundles::Trip> = trips.iter().filter(|t| !t.whole()).collect();
+    let marked = trips.iter().filter(|t| t.marked_for_export).count();
+    let collided: usize = trips.iter().map(|t| t.concepts_collided).sum();
+
+    println!(
+        "{} boards round tripped, {marked} of them marked for export by the corpus, \
+         {collided} concept {} handled",
+        trips.len(),
+        if collided == 1 {
+            "term collision"
+        } else {
+            "term collisions"
+        }
+    );
+    if lost.is_empty() {
+        println!("every board arrived whole");
+        return std::process::ExitCode::SUCCESS;
+    }
+    for trip in &lost {
+        eprintln!(
+            "{} lost rows: {:?} sent, {:?} arrived. {}",
+            trip.board_id, trip.sent, trip.arrived, trip.note
+        );
+    }
+    std::process::ExitCode::from(1)
 }
 
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
 
-    let questions_file = if args.breadth { "questions_breadth.jsonl" } else { "questions.jsonl" };
-    let pack = args
-        .pack
-        .clone()
-        .unwrap_or_else(|| if args.breadth { "general" } else { "finance-eu-synthetic" }.to_string());
+    // Before the question set is read, because a bundle round trip asks no
+    // questions and a corpus with no `questions.jsonl` can still ship boards.
+    if args.bundles {
+        return round_trip_bundles(&args);
+    }
+
+    let questions_file = if args.breadth {
+        "questions_breadth.jsonl"
+    } else {
+        "questions.jsonl"
+    };
+    let pack = args.pack.clone().unwrap_or_else(|| {
+        if args.breadth {
+            "general"
+        } else {
+            "finance-eu-synthetic"
+        }
+        .to_string()
+    });
     let questions = match load_questions(&args.corpus.join(questions_file)) {
         Ok(q) => q,
         Err(e) => {
@@ -258,6 +434,25 @@ fn main() -> std::process::ExitCode {
     };
     println!("{}", plan.describe());
 
+    if args.verify_only {
+        let mut records = run_verify_only(&args, &pack, &plan, &questions);
+        records.sort_by(|a, b| a.q_id.cmp(&b.q_id));
+        let failures = records.iter().filter(|r| !r.ok).count();
+        let dir = args
+            .out
+            .join(corpus_name(&args.corpus))
+            .join(&args.policy)
+            .join(stamp());
+        if let Err(e) = write_records(&dir, &records, &[], &args, &pack, records.len(), failures) {
+            eprintln!("could not write the results: {e}");
+            return std::process::ExitCode::from(2);
+        }
+        println!("\n{} cards re-verified, {failures} failed", records.len());
+        println!("wrote {}", dir.display());
+        println!("score it with: gen score --results {}", dir.display());
+        return std::process::ExitCode::SUCCESS;
+    }
+
     let workers = args.workers.max(1).min(total.max(1));
     println!("{workers} workers");
 
@@ -271,6 +466,7 @@ fn main() -> std::process::ExitCode {
     let queue = Arc::new(Mutex::new(families(&questions, total)));
     let done = Arc::new(AtomicUsize::new(0));
     let collected: Arc<Mutex<Vec<RunRecord>>> = Arc::new(Mutex::new(Vec::with_capacity(total)));
+    let exercises: Arc<Mutex<Vec<ExerciseRecord>>> = Arc::new(Mutex::new(Vec::new()));
     let plan = Arc::new(plan);
 
     std::thread::scope(|scope| {
@@ -278,6 +474,7 @@ fn main() -> std::process::ExitCode {
             let queue = Arc::clone(&queue);
             let done = Arc::clone(&done);
             let collected = Arc::clone(&collected);
+            let exercises = Arc::clone(&exercises);
             let plan = Arc::clone(&plan);
             let args = &args;
             let pack = &pack;
@@ -286,11 +483,7 @@ fn main() -> std::process::ExitCode {
                 // Each worker gets its own profile. Doc 10 section 6's ledger is
                 // per profile, and sharing one store would have the workers
                 // contend on the very lock the limit exists to avoid.
-                let keys: Box<dyn KeyStore> = if args.mock {
-                    Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
-                } else {
-                    Box::new(OsKeychain)
-                };
+                let keys = keystore(args.mock);
                 let first_key_ref = if args.mock {
                     "test-key"
                 } else {
@@ -320,8 +513,7 @@ fn main() -> std::process::ExitCode {
                 // with no retrievers and reported n/a for the half of the
                 // product that had just been built.
                 if !args.no_retrievers
-                    && let Err(e) =
-                        configure_retrievers(&mut core, &args.corpus, &args.snapshot)
+                    && let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot)
                 {
                     eprintln!("a worker could not index the corpus: {e}");
                     return;
@@ -329,6 +521,7 @@ fn main() -> std::process::ExitCode {
 
                 let mut current = String::new();
                 let mut local_failures = 0usize;
+                let mut boards_seen: std::collections::BTreeSet<String> = Default::default();
 
                 while let Some(family) = queue.lock().ok().and_then(|mut q| q.pop_front()) {
                     // Where each question in this family was answered, so its
@@ -351,6 +544,7 @@ fn main() -> std::process::ExitCode {
                         if let (Some(card_id), Some(board_id)) =
                             (record.card_id.clone(), record.board_id.clone())
                         {
+                            boards_seen.insert(board_id.clone());
                             answered.insert(q.q_id.clone(), Answered { board_id, card_id });
                         }
 
@@ -360,6 +554,38 @@ fn main() -> std::process::ExitCode {
                         }
                         if let Ok(mut out) = collected.lock() {
                             out.push(record);
+                        }
+                    }
+                }
+
+                // Doc 08 section 3: on demand from a board. Every board this
+                // worker filled is a board with cards worth testing, so this is
+                // the widest sample the run can take for free.
+                if args.exercise {
+                    let taken: Vec<String> = boards_seen
+                        .iter()
+                        .take(EXERCISE_BOARDS_PER_WORKER)
+                        .cloned()
+                        .collect();
+                    if boards_seen.len() > taken.len() {
+                        // No silent caps: a run that sampled 5 of 40 boards
+                        // says so, because "traceability 1.00" over five boards
+                        // and over forty are different claims.
+                        println!(
+                            "  exercise: sampling {} of this worker's {} boards",
+                            taken.len(),
+                            boards_seen.len()
+                        );
+                    }
+                    for board_id in taken {
+                        match core.make_exercise(&board_id, None) {
+                            Ok(outcome) => {
+                                let record = exercise_record(&core, &board_id, &outcome);
+                                if let Ok(mut out) = exercises.lock() {
+                                    out.push(record);
+                                }
+                            }
+                            Err(e) => eprintln!("  exercise on {board_id} failed: {e}"),
                         }
                     }
                 }
@@ -381,7 +607,11 @@ fn main() -> std::process::ExitCode {
         .join(corpus_name(&args.corpus))
         .join(&args.policy)
         .join(stamp());
-    if let Err(e) = write_records(&dir, &records, &args, &pack, total, failures) {
+    let exercises = exercises
+        .lock()
+        .map(|mut e| std::mem::take(&mut *e))
+        .unwrap_or_default();
+    if let Err(e) = write_records(&dir, &records, &exercises, &args, &pack, total, failures) {
         eprintln!("could not write the results: {e}");
         return std::process::ExitCode::from(2);
     }
@@ -450,12 +680,7 @@ struct Answered {
     card_id: String,
 }
 
-fn run_one(
-    core: &mut Core,
-    q: &Question,
-    parent: Option<&Answered>,
-    failures: &mut usize,
-) -> RunRecord {
+fn run_one(core: &mut Core, q: &Question, parent: Option<&Answered>, failures: &mut usize) -> RunRecord {
     let started = std::time::Instant::now();
 
     // A follow-up belongs on its parent's board, which is what makes the
@@ -481,7 +706,7 @@ fn run_one(
         &board_id,
         &q.text,
         Some(&q.depth_expected),
-        parent.map(|p| p.card_id.as_str()),
+        parent.map_or_else(Anchor::default, |p| Anchor::on(&p.card_id)),
     );
 
     let plan: Option<Value> = core
@@ -532,7 +757,9 @@ fn run_one(
             // By id, not the board's first card: a follow-up sits on its
             // parent's board, and `first()` would report the parent's answer as
             // this question's.
-            let card = board.as_ref().and_then(|b| b.cards.iter().find(|c| c.id == o.card_id));
+            let card = board
+                .as_ref()
+                .and_then(|b| b.cards.iter().find(|c| c.id == o.card_id));
 
             RunRecord {
                 ok: true,
@@ -575,11 +802,7 @@ fn run_one(
                         c.builds_on
                             .iter()
                             .filter_map(|b| {
-                                Some(format!(
-                                    "{}/{}",
-                                    b["board_id"].as_str()?,
-                                    b["card_id"].as_str()?
-                                ))
+                                Some(format!("{}/{}", b["board_id"].as_str()?, b["card_id"].as_str()?))
                             })
                             .collect()
                     })
@@ -606,6 +829,323 @@ fn run_one(
     record.events = events;
     record.latency_ms = started.elapsed().as_millis();
     record
+}
+
+/// Bring one core up, import the corpus's boards, re-verify their sources, and
+/// read every card back.
+///
+/// One store rather than the sweep's three, because a re-verification reads
+/// cards another worker would not have.
+fn run_verify_only(args: &Args, pack: &str, plan: &Plan, questions: &[Question]) -> Vec<RunRecord> {
+    let keys = keystore(args.mock);
+    let first_key_ref = if args.mock {
+        "test-key"
+    } else {
+        args.bulk_key_ref.as_str()
+    };
+
+    let mut core = match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("could not bring a core up: {e}");
+            return Vec::new();
+        }
+    };
+    core.source = Source::Test;
+    if let Err(e) = core.use_pack(pack) {
+        eprintln!("could not load the `{pack}` pack: {e}");
+        return Vec::new();
+    }
+    // The boards are imported by the same call that indexes the corpus, so the
+    // cards and the tree they are judged against arrive together.
+    if let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot) {
+        eprintln!("could not index the corpus: {e}");
+        return Vec::new();
+    }
+
+    let stale = match reverify::mark(
+        &mut core.store,
+        &args.corpus,
+        args.baseline.as_deref(),
+        "reverify",
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("could not re-verify the cited sources: {e}");
+            return Vec::new();
+        }
+    };
+
+    verify_sweep(&mut core, &args.corpus, questions, &stale)
+}
+
+/// Read every card the corpus shipped back against the tree this run points at.
+///
+/// Doc 07 section B3's batch, and what doc 02 section 5.4 means by a board
+/// written at T1 and reopened at T3. One store and one worker, because every
+/// card has to see the same imported boards and doc 10 section 6 allows one
+/// verifier per board anyway.
+fn verify_sweep(
+    core: &mut Core,
+    corpus: &Path,
+    questions: &[Question],
+    stale: &reverify::StaleReport,
+) -> Vec<RunRecord> {
+    let mut records = Vec::new();
+    let boards = match boards::load(corpus) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("could not read the corpus boards: {e}");
+            return records;
+        }
+    };
+
+    println!(
+        "re-verifying {} boards against {}",
+        boards.len(),
+        corpus.display()
+    );
+    println!(
+        "  {} of {} cited sources went stale{}",
+        stale.stale,
+        stale.checked,
+        if stale.by_reason.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({})",
+                stale
+                    .by_reason
+                    .iter()
+                    .map(|(reason, n)| format!("{n} {reason}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    );
+    if stale.content_comparison_skipped {
+        // BN-019. A run that could not compare says so, rather than letting a
+        // reader take the absence of `content_changed` for evidence of none.
+        println!(
+            "  no baseline tree was given, so a quietly edited document reads as unchanged. \
+             Pass --baseline to measure that."
+        );
+    }
+    if stale.unresolvable > 0 {
+        println!("  {} cited sources point outside the corpus", stale.unresolvable);
+    }
+
+    for board in &boards {
+        for card in &board.cards {
+            // A card that cited nothing has no source to have gone stale, so
+            // re-verifying it would add a row that measures nothing.
+            if card.citations.is_empty() {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let card_ref = format!("{}/{}", board.board_id, card.card_id);
+            let mut record = empty_verify_record(board, card, started);
+
+            match core.verify_card(&board.board_id, &card.card_id) {
+                Ok(outcome) => {
+                    record.ok = true;
+                    record.card_id = Some(outcome.card_id.clone());
+                    record.status = Some(outcome.status);
+                    record.confidence = Some(outcome.confidence);
+                    let view = tessera_store::repo::read_board(&core.store, &board.board_id)
+                        .ok()
+                        .flatten();
+                    if let Some(view) = view
+                        && let Some(found) = view.cards.iter().find(|c| c.id == card.card_id)
+                    {
+                        record.citations = found.citations.clone();
+                        record.flags = found.flags.clone();
+                        record.prior_cards = found
+                            .builds_on
+                            .iter()
+                            .filter_map(|b| {
+                                Some(format!("{}/{}", b["board_id"].as_str()?, b["card_id"].as_str()?))
+                            })
+                            .collect();
+                    }
+                }
+                Err(e) => record.failure = Some(e.to_string()),
+            }
+            record.latency_ms = started.elapsed().as_millis();
+            record.card_ref = Some(card_ref);
+            records.push(record);
+        }
+    }
+
+    let flagged = records
+        .iter()
+        .filter(|r| r.flags.iter().any(|f| f["rule_id"] == json!("stale_source")))
+        .count();
+    println!(
+        "  {} cards re-verified, {flagged} carry a stale citation",
+        records.len()
+    );
+
+    records.extend(follow_up_on_stale(core, questions, &stale.locators));
+    records
+}
+
+/// Ask a question whose sources have gone stale, then follow up on the answer.
+///
+/// Doc 04 section 12 scores the Planner on whether a request whose ancestor
+/// carries a stale citation earns a sub-question that re-checks it. That needs
+/// such a request to exist, and this is where it comes from.
+///
+/// The pair is asked through the ordinary pipeline rather than on the corpus's
+/// own boards. Those boards keep the generator's card ids so doc 15's ground
+/// truth can name them, and doc 01 section 3 makes every id the product mints a
+/// ulid, so asking a follow-up on an imported card would put a fixture id where
+/// the Router's packet requires a real one. The sources are already marked
+/// stale, so a card that reaches one is flagged exactly as an old card would be,
+/// and its follow-up sees a genuinely stale ancestor.
+///
+/// The follow-up says nothing about verifying or currency on purpose. The
+/// grounded mock echoes the request into its one sub-question, so a question
+/// using those words would score the wording rather than the Planner.
+fn follow_up_on_stale(core: &mut Core, questions: &[Question], stale_locators: &[String]) -> Vec<RunRecord> {
+    const FOLLOW_UP: &str = "What does this mean for the position today?";
+    let mut out = Vec::new();
+
+    // Questions whose own required sources are among the ones that went stale.
+    // A question that never reaches a stale source would produce a fresh card
+    // and measure nothing.
+    let stale_docs: HashSet<&str> = stale_locators
+        .iter()
+        .filter_map(|l| Path::new(l).file_stem().and_then(|s| s.to_str()))
+        .collect();
+    let touching: Vec<&Question> = questions
+        .iter()
+        .filter(|q| q.required_sources.iter().any(|s| stale_docs.contains(s.as_str())))
+        .take(12)
+        .collect();
+
+    if touching.is_empty() {
+        println!("  no question in the set reaches a stale source, so no follow-up was asked");
+        return out;
+    }
+
+    let mut failures = 0usize;
+    for q in touching {
+        let mut root = run_one(core, q, None, &mut failures);
+        root.provider = "mock".to_string();
+        root.leg = "verify".to_string();
+        let (Some(board_id), Some(card_id)) = (root.board_id.clone(), root.card_id.clone()) else {
+            out.push(root);
+            continue;
+        };
+        let asked_stale = root.citations.iter().any(|c| c["stale"] == json!(true));
+        out.push(root);
+        if !asked_stale {
+            continue;
+        }
+
+        let started = std::time::Instant::now();
+        let mut record = empty_record(q, String::new(), started);
+        record.q_id = format!("FU-{}", q.q_id);
+        record.text = FOLLOW_UP.to_string();
+        record.depth_expected = "deep".to_string();
+        record.parent_q_id = Some(q.q_id.clone());
+        record.board_id = Some(board_id.clone());
+        // A follow-up asks something the question set never asked, so it carries
+        // no required facts of its own to be scored against.
+        record.required_facts = Vec::new();
+        record.required_sources = Vec::new();
+        record.provider = "mock".to_string();
+        record.leg = "verify".to_string();
+
+        match core.ask_on(&board_id, FOLLOW_UP, Some("deep"), Anchor::on(&card_id)) {
+            Ok(outcome) => {
+                record.ok = true;
+                record.card_id = Some(outcome.card_id);
+                record.status = Some(outcome.status);
+                record.confidence = Some(outcome.confidence);
+                record.depth_chosen = Some("deep".to_string());
+            }
+            Err(e) => record.failure = Some(e.to_string()),
+        }
+
+        record.plan = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT s.output FROM step s
+                 JOIN run r ON r.id = s.run_id
+                 WHERE r.board_id = ?1 AND s.agent_id = 'planner' AND s.output IS NOT NULL
+                 ORDER BY s.started_at DESC LIMIT 1",
+                [&board_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
+        record.latency_ms = started.elapsed().as_millis();
+        out.push(record);
+    }
+
+    let planned = out.iter().filter(|r| r.plan.is_some()).count();
+    let with_stale = out
+        .iter()
+        .filter(|r| {
+            r.plan
+                .as_ref()
+                .and_then(|p| p["constraints"]["stale_ancestor_citations"].as_array())
+                .is_some_and(|a| !a.is_empty())
+        })
+        .count();
+    println!(
+        "  {} questions asked over stale sources, {planned} carried a plan, \
+         {with_stale} planned against a stale ancestor",
+        out.len()
+    );
+    out
+}
+
+fn empty_verify_record(board: &boards::Board, card: &boards::Card, started: std::time::Instant) -> RunRecord {
+    RunRecord {
+        q_id: format!("VO-{}-{}", board.board_id, card.card_id),
+        text: card.question.clone(),
+        domain: String::new(),
+        depth_expected: card.depth.clone(),
+        depth_chosen: Some(card.depth.clone()),
+        audience_id: None,
+        // What the card states. Doc 02 section 10.2 scores staleness detection
+        // against the cards whose facts were superseded, and this is where that
+        // denominator comes from.
+        required_facts: card.fact_ids.clone(),
+        required_sources: Vec::new(),
+        forbidden_facts: Vec::new(),
+        expected_visual: String::new(),
+        expected_flags: Vec::new(),
+        edge_case_ids: Vec::new(),
+        parent_q_id: card.parent_card_id.clone(),
+        anchor_text: card.anchor_text.clone(),
+        ok: false,
+        failure: None,
+        card_id: None,
+        board_id: Some(board.board_id.clone()),
+        answer: card.answer.clone(),
+        findings: Vec::new(),
+        visual_type: None,
+        visual_labels: Vec::new(),
+        block_index: Vec::new(),
+        citations: Vec::new(),
+        prior_cards: Vec::new(),
+        plan: None,
+        flags: Vec::new(),
+        status: None,
+        confidence: None,
+        events: Vec::new(),
+        cost: Value::Null,
+        latency_ms: started.elapsed().as_millis(),
+        provider: String::new(),
+        leg: "verify".to_string(),
+        kind: "verify_only".to_string(),
+        card_ref: None,
+    }
 }
 
 fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> RunRecord {
@@ -644,6 +1184,8 @@ fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> R
         latency_ms: started.elapsed().as_millis(),
         provider: String::new(),
         leg: String::new(),
+        kind: "card".to_string(),
+        card_ref: None,
     }
 }
 
@@ -693,18 +1235,19 @@ impl Plan {
 /// conflict resolution, or whether a real model would have cited the passage it
 /// was given. Those need a real provider and a real sweep.
 fn grounded_mock() -> Arc<dyn ModelProvider> {
-    let provider = MockProvider::new()
-        .with_default(MockResponse::Scripted(Arc::new(|request| {
-            match request.stage.as_str() {
-                "route" => MockResponse::Json(routed()),
-                "plan" => MockResponse::Json(planned(request)),
-                "synthesize" => MockResponse::Json(synthesized(request)),
-                "visualize" => MockResponse::Json(visualised(request)),
-                // Anything else is not scripted, and failing closed is the
-                // right default for a stage nobody thought about.
-                _ => MockResponse::Garbage,
-            }
-        })));
+    let provider = MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+        match request.stage.as_str() {
+            "route" => MockResponse::Json(routed()),
+            "plan" => MockResponse::Json(planned(request)),
+            "synthesize" => MockResponse::Json(synthesized(request)),
+            "visualize" => MockResponse::Json(visualised(request)),
+            "verify" => MockResponse::Json(support_judged(request)),
+            "exercise" => MockResponse::Json(exercised(request)),
+            // Anything else is not scripted, and failing closed is the
+            // right default for a stage nobody thought about.
+            _ => MockResponse::Garbage,
+        }
+    })));
     Arc::new(provider)
 }
 
@@ -718,6 +1261,21 @@ fn routed() -> Value {
             "needs_current_information": false,
             "needs_internal_documents": true,
             "needs_structured_data": false,
+            // Empty, and stated as a limit rather than left as an oversight.
+            //
+            // The M9 Concept write path turns these into proposals, so an empty
+            // array means the grounded sweep never enters it. Naming entities is
+            // a judgment: this corpus asks "what is the model validation
+            // interval for a systemically important institution", which carries
+            // no proper noun at all, so a capitalisation pass returns "What" and
+            // a template pass returns whatever the templates were written with.
+            // Either would put a term in the Library that nothing observed, and
+            // a mock that answers plausibly is worse than one that answers
+            // nothing.
+            //
+            // So the graph is measured by the end to end tests, where the mock
+            // Router names an entity because the test wrote one, and at scale it
+            // needs a real provider. BN-067 carries it with the other four.
             "entities": [],
             "is_follow_up_of_context": false
         }
@@ -766,6 +1324,78 @@ fn ancestor_question(prompt: &str) -> Option<String> {
 /// and that fence exists so the model can tell quoted data from instruction. It
 /// serves here for the same reason: it is the one part of the prompt whose
 /// shape is guaranteed.
+/// Doc 07 section B8.2's support check, answered deterministically.
+///
+/// The claim is supported when the passage contains it, which on this mock is
+/// the common case because the answer quotes its passages verbatim. Judging by
+/// containment rather than by asking a model keeps `verifier_agreement`
+/// measurable for nothing, and the Verifier's own override still runs on top.
+fn support_judged(request: &CompletionRequest) -> Value {
+    let prompt = prompt_of(request);
+
+    // Doc 07 section B8.5's rules share the verify stage with the support check,
+    // so the prompt says which one is being asked. The mock answers that none
+    // matched: its answers are verbatim quotes of retrieved passages, so it has
+    // no jurisdiction drift or scope creep to find, and inventing one would put
+    // a flag in the record that nothing in the corpus expects. What this does
+    // measure is that the rules are dispatched, parsed and reported at all,
+    // which they were not before.
+    if prompt.contains("For each rule, say whether it matches") {
+        let matches: Vec<Value> = prompt
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("- "))
+            .filter_map(|line| line.split_once(": "))
+            .map(|(rule_id, _)| json!({ "rule_id": rule_id, "matched": false }))
+            .collect();
+        return json!({ "matches": matches });
+    }
+
+    let passages: std::collections::BTreeMap<usize, String> = passages_in(&prompt).into_iter().collect();
+
+    let mut verdicts = Vec::new();
+    for line in prompt.lines() {
+        let Some(rest) = line.trim().strip_prefix("Claim ") else {
+            continue;
+        };
+        let Some((n, claim)) = rest.split_once(": ") else {
+            continue;
+        };
+        let Ok(n) = n.parse::<usize>() else { continue };
+        let Some(passage) = passages.get(&n) else { continue };
+
+        // The claim carries its own citation marker and has been through the
+        // answer's whitespace, so both sides are normalised before comparing.
+        // Without that no claim could ever read as supported and the agreement
+        // number would describe the comparison rather than the check.
+        let flatten = |s: &str| {
+            s.split_whitespace()
+                .filter(|w| !(w.starts_with('[') && w.ends_with(']')))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let claim = flatten(claim);
+        let passage = flatten(passage);
+        let verdict = if claim.is_empty() || passage.contains(&claim) {
+            "supported"
+        } else if claim
+            .split_whitespace()
+            .filter(|w| w.len() > 4)
+            .any(|w| passage.contains(w))
+        {
+            "weak"
+        } else {
+            "unsupported"
+        };
+        verdicts.push(json!({
+            "n": n,
+            "verdict": verdict,
+            "reason": "Judged by whether the passage contains the claim.",
+        }));
+    }
+
+    json!({ "verdicts": verdicts })
+}
+
 fn passages_in(prompt: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut rest = prompt;
@@ -778,7 +1408,9 @@ fn passages_in(prompt: &str) -> Vec<(usize, String)> {
         };
         let Some(open_end) = after.find('>') else { break };
         let body = &after[open_end + 1..];
-        let Some(close) = body.find("</passage>") else { break };
+        let Some(close) = body.find("</passage>") else {
+            break;
+        };
         out.push((ordinal, body[..close].trim().to_string()));
         rest = &body[close..];
     }
@@ -809,6 +1441,7 @@ fn synthesized(request: &CompletionRequest) -> Value {
     let mut answer = String::new();
     let mut citations = Vec::new();
     let mut findings = Vec::new();
+    let mut values = Vec::new();
     for (ordinal, text) in passages.iter().take(6) {
         let sentence = text.split_whitespace().collect::<Vec<_>>().join(" ");
         answer.push_str(&sentence);
@@ -816,9 +1449,23 @@ fn synthesized(request: &CompletionRequest) -> Value {
         answer.push(' ');
         citations.push(json!({ "ordinal": ordinal, "binding": "answer" }));
         if findings.len() < 3 {
-            findings.push(json!({
-                "text": sentence.chars().take(200).collect::<String>(),
-                "citations": [ordinal]
+            // A string carrying its own marker, which is the shape
+            // `draft_schema` declares. Objects were silently dropped by the
+            // Synthesizer's `filter_map(Value::as_str)`, so every grounded run
+            // ever recorded produced a card with no findings at all.
+            let short: String = sentence.chars().take(200).collect();
+            findings.push(json!(format!("{short} [{ordinal}]")));
+        }
+        // One value per passage, labelled by the passage it came from and
+        // citing it. Doc 06 section B8.1 builds a table from two or more values,
+        // so this is what gives the Visualizer something to compose. Without it
+        // it declined on every question and the whole of doc 06 part B went
+        // unmeasured while the report said nothing was wrong.
+        if let Some(number) = first_number(&sentence) {
+            values.push(json!({
+                "label": format!("Passage {ordinal}"),
+                "value": number,
+                "citation": ordinal,
             }));
         }
     }
@@ -828,7 +1475,7 @@ fn synthesized(request: &CompletionRequest) -> Value {
         "findings": findings,
         "citations": citations,
         "structured_summary": {
-            "values": [],
+            "values": values,
             "steps": [],
             "groups": [],
             "relations": []
@@ -839,15 +1486,124 @@ fn synthesized(request: &CompletionRequest) -> Value {
     })
 }
 
-fn visualised(_request: &CompletionRequest) -> Value {
-    // An empty summary declines a visual, which doc 06 section B10 allows and
-    // which keeps the visual metrics honest: this mock has no structure to
-    // render, so claiming one would be inventing a number.
+/// The first number in a passage, as the mock's stand in for a value worth
+/// tabulating. Deterministic, so two runs of one corpus compose one table.
+fn first_number(text: &str) -> Option<String> {
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || (!current.is_empty() && (ch == '.' || ch == ',')) {
+            current.push(ch);
+        } else if !current.is_empty() {
+            let trimmed = current.trim_end_matches(['.', ',']).to_string();
+            if trimmed.chars().any(|c| c.is_ascii_digit()) {
+                return Some(trimmed);
+            }
+            current.clear();
+        }
+    }
+    let trimmed = current.trim_end_matches(['.', ',']).to_string();
+    trimmed.chars().any(|c| c.is_ascii_digit()).then_some(trimmed)
+}
+
+fn visualised(request: &CompletionRequest) -> Value {
+    // Compose a table from the values the summary carries, in the order the
+    // prompt lists them. The labels have to come back verbatim or doc 06
+    // section B8.3 cannot trace them, which is exactly what this exercises.
+    // The prompt carries the summary as pretty printed json, so the labels are
+    // read back out of it. They have to come back verbatim: doc 06 section B8.3
+    // drops a block whose label traces to nothing in the summary, and this is
+    // what exercises that.
+    let prompt = prompt_of(request);
+    let mut labels = Vec::new();
+    let mut values = Vec::new();
+    for line in prompt.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("\"label\": \"") {
+            labels.push(rest.trim_end_matches([',', '"']).to_string());
+        } else if let Some(rest) = line.strip_prefix("\"value\": \"") {
+            values.push(rest.trim_end_matches([',', '"']).to_string());
+        }
+    }
+
+    if labels.is_empty() {
+        return json!({ "declined": true, "reason": "no_structure", "visual": null });
+    }
+
     json!({
-        "declined": true,
-        "reason": "no_structure",
-        "visual": null
+        "type": "table",
+        "title": "Values by source",
+        "payload": {
+            "columns": ["Source", "Value"],
+            "rows": labels
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    json!([label, values.get(i).cloned().unwrap_or_else(|| label.clone())])
+                })
+                .collect::<Vec<_>>(),
+        },
+        "caveats": []
     })
+}
+
+/// An exercise built from the cards in the prompt, quoting them.
+///
+/// The same contract as `synthesized`: it invents nothing and it judges nothing.
+/// The correct option is a sentence lifted from the card, so doc 08 section 5's
+/// traceability rule passes for a reason rather than by luck, and the
+/// distractors are statements about absence, which cannot be true on another
+/// card because no card says them.
+///
+/// What this cannot measure is whether a real model writes a question worth
+/// answering: doc 08 section 12's fourth line, "answerable from the source card
+/// by a second model", needs two real models. That is on the spend list.
+fn exercised(request: &CompletionRequest) -> Value {
+    let prompt = prompt_of(request);
+    let mut items: Vec<Value> = Vec::new();
+
+    let mut card_id: Option<String> = None;
+    let mut question: Option<String> = None;
+    for line in prompt.lines() {
+        let line = line.trim();
+        if let Some(id) = line.strip_prefix("card_id: ") {
+            card_id = Some(id.to_string());
+            question = None;
+        } else if let Some(q) = line.strip_prefix("question: ") {
+            question = Some(q.to_string());
+        } else if let Some(answer) = line.strip_prefix("answer: ")
+            && let (Some(id), Some(q)) = (card_id.clone(), question.clone())
+        {
+            // The first sentence, which is what a recall item asks for and what
+            // the traceability check will look for in the card.
+            let claim = answer
+                .split_once(". ")
+                .map(|(first, _)| first.to_string())
+                .unwrap_or_else(|| answer.to_string());
+            let claim = claim.trim().trim_end_matches('.').to_string();
+            if claim.split_whitespace().count() < 3 {
+                continue;
+            }
+            items.push(json!({
+                "id": format!("i{}", items.len() + 1),
+                "kind": "recall",
+                "prompt": format!("According to this card, {}", q.trim_end_matches('?')),
+                "options": [
+                    { "id": "a", "text": claim },
+                    { "id": "b", "text": "This card does not say." },
+                    { "id": "c", "text": "The card gives a range rather than a figure." },
+                    { "id": "d", "text": "The card defers to a later regulation." },
+                ],
+                "answer_id": "a",
+                "explanation": "The card states it in its opening sentence.",
+                "source_card_id": id,
+            }));
+        }
+        if items.len() >= 8 {
+            break;
+        }
+    }
+
+    json!({ "items": items })
 }
 
 fn prompt_of(request: &CompletionRequest) -> String {
@@ -1062,7 +1818,11 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
     }
 
     let roots = [
-        ("regulatory", "Central Authority for Prudential Oversight", corpus.join("corpus/regulatory")),
+        (
+            "regulatory",
+            "Central Authority for Prudential Oversight",
+            corpus.join("corpus/regulatory"),
+        ),
         ("local", "Internal documents", corpus.join("corpus/internal")),
         ("web", "The synthetic web", corpus.join("corpus/web")),
     ];
@@ -1121,8 +1881,14 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
     // unasked question.
     let pack_id = core.active_pack_id().map_err(|e| format!("pack: {e}"))?;
     let seeded = boards::load(corpus)?;
-    let report =
-        boards::seed(&mut core.store, &profile_id, &pack_id, &seeded, snapshot, embedder.as_deref())?;
+    let report = boards::seed(
+        &mut core.store,
+        &profile_id,
+        &pack_id,
+        &seeded,
+        snapshot,
+        embedder.as_deref(),
+    )?;
     if !report.eligibility_disagreements.is_empty() {
         // Doc 15 section 3 is the rule and the corpus label is a second opinion.
         // Where they differ one of them is wrong, and finding out which is worth
@@ -1139,7 +1905,10 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
         report.boards, report.cards, report.indexed
     );
 
-    core.retrievers = RetrieverSet { indexed: configured, embedder };
+    core.retrievers = RetrieverSet {
+        indexed: configured,
+        embedder,
+    };
     Ok(())
 }
 
@@ -1154,6 +1923,7 @@ fn doctrine_exclusions(core: &Core) -> Vec<String> {
 fn write_records(
     dir: &Path,
     records: &[RunRecord],
+    exercises: &[ExerciseRecord],
     args: &Args,
     pack: &str,
     total: usize,
@@ -1164,6 +1934,16 @@ fn write_records(
     let mut file = std::fs::File::create(dir.join("runs.jsonl"))?;
     for r in records {
         writeln!(file, "{}", serde_json::to_string(r).unwrap_or_default())?;
+    }
+
+    // Written only when there is one. An empty file would have the scorer read
+    // zero items and report a ratio over nothing, and doc 08's two gates say
+    // n/a when no exercise ran rather than 0.
+    if !exercises.is_empty() {
+        let mut file = std::fs::File::create(dir.join("exercises.jsonl"))?;
+        for e in exercises {
+            writeln!(file, "{}", serde_json::to_string(e).unwrap_or_default())?;
+        }
     }
 
     let manifest = json!({
@@ -1180,13 +1960,24 @@ fn write_records(
         },
         "reference_provider": if args.mock { "mock" } else { "anthropic" },
         "sample_per_depth": args.sample_per_depth,
-        "questions_run": total,
+        // A re-verification asks nothing, so it counts cards read back rather
+        // than questions run. Reporting them as questions would have the scorer
+        // divide answer metrics by a denominator nobody was asked.
+        "questions_run": if args.verify_only { 0 } else { total },
+        "verify_only": args.verify_only,
+        "cards_reverified": if args.verify_only { records.len() } else { 0 },
+        "baseline": args.baseline.as_deref().map(corpus_name),
         "cards_failed": failures,
-        // Doc 07 section B9: the support check is not enabled until its
-        // agreement is measured, so every verdict in this run is `unchecked`.
-        // A scorer that read them as `supported` would report a number the
-        // product has not earned.
-        "support_check_enabled": false,
+        // Doc 07 section B8.2's check runs from M8, so the verdicts in this run
+        // are the Verifier's own rather than a placeholder. Doc 07 section B9
+        // still withholds full automation until agreement with the ledger check
+        // reaches 0.90, which is what `verifier_agreement` measures; the flag
+        // says the verdicts are real, not that the gate has been passed.
+        "support_check_enabled": true,
+        // Doc 08 section 12's two gates report n/a until this is true, because
+        // a run that generated no exercise has nothing to say about items that
+        // do not exist.
+        "exercise_enabled": args.exercise,
         "retrievers_enabled": !args.no_retrievers,
         // Doc 15 section 5's four metrics report n/a until this is true.
         // Reporting a clean zero for own_card sole support while no card has

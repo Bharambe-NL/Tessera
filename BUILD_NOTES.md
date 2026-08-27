@@ -440,7 +440,8 @@ pack, where a synthetic regulator is called "Central Authority for Prudential Ov
 that is its name. A lint with a six in six false positive rate gets switched off in a week. So
 the extractor is told what surface it is reading: HTML text nodes and label attributes, Rust
 double quoted literals, the doctrine pack fields that reach the screen, and TypeScript only in a
-file named `strings.ts`. That file does not exist yet; M9 writes the copy that goes in it.
+file named `strings.ts`. M9 step 1 moved the card's copy into it, so the lint reads the strings on
+the busiest screen; the copy the rail and the four pages write joins it in step 3.
 
 U+2212 MINUS SIGN is deliberately not in the dash set. The zoom control uses it as the
 counterpart to a plus, and it is a mathematical symbol rather than punctuation.
@@ -521,9 +522,1330 @@ says n/a while the temptation does not exist and becomes real the moment it does
 three report n/a on `memory_enabled` in the run manifest, the same way fact recall reports n/a
 on `retrievers_enabled`.
 
+### BN-049 A snapshot is a tree as well as a manifest
+
+**Spec** 02 section 5.4, which describes the corpus as "a sequence of snapshots at T0, T1, T2, T3"
+and section 8, which lists `snapshots/T0.json ...` as the only snapshot output.
+
+**Decision** `gen build --seed 42 --snapshot T3` writes the whole corpus as it stands at that
+label to `<out>/<seed>-<label>`, beside the default tree rather than replacing it. The manifests
+are computed by hashing what the materialiser returns, so a file and its snapshot entry cannot
+disagree. A build with no flag writes exactly what it wrote before, byte for byte.
+
+**Reason** The manifests named what changes at T2 and T3 but no code ever wrote those bytes, so
+the single tree on disk was the union of every time and nothing could read the corpus as it stood
+at T3. Doc 02 section 5.4's own acceptance, a board written at T1 and reopened at T3, needs both
+trees present at once, which is why the snapshot tree sits beside the default one rather than
+overwriting it. Computing the manifest from the materialised documents rather than beside them
+removes the way the two could drift: the earlier code hashed `body + "\n\nRevised at T2."` in one
+place and would have written the file in another.
+
+### BN-050 A snapshot records the questions it strands
+
+**Spec** silent. 02 section 5.4 deletes documents between snapshots and section 6 fixes the
+question set at 400 for every snapshot.
+
+**Decision** A snapshot tree counts the questions whose required sources it no longer holds,
+writes one `stranded_question` row per question into `ledger.jsonl`, and reports the count in the
+build row and the README. Seven questions are stranded at T3.
+
+**Reason** BN-019. A sweep against the T3 tree will answer those questions worse, and the reason
+is that the documents were deleted on purpose rather than that retrieval got worse. Without the
+record the next person to run that sweep reads a recall drop and starts fixing the retriever. The
+first verify only run made the point: `fact_recall_research` read 0.000 off exactly one question,
+whose only source is the memo doc 15 section 5 removes at T2.
+
+### BN-051 Staleness is computed from the files, never from the corpus manifests
+
+**Spec** 05 section 3, "re-verification of cited locators (content hash comparison)", and section
+7's three reasons: `content_changed`, `locator_gone`, `superseded_version`.
+
+**Decision** The re-verification pass reads the corpus the way a retriever does: the file at the
+locator, its bytes against the baseline tree's, and the other files in its folder. It never reads
+`snapshots/*.json` or `facts.jsonl`. All three reasons come out of that: a locator that resolves
+in neither tree is gone, bytes that moved are changed, and a document with a later version beside
+it is superseded.
+
+**Reason** The generator's manifests are the answer the metric is scored against. A pass that read
+them would report what the generator already knew, and `staleness_detection` would measure whether
+the copy succeeded rather than whether the product noticed. The cost is that a locator resolvable
+in neither tree is counted unresolvable rather than assumed gone, which is the honest reading.
+
+### BN-052 The version in force is read from the folder, not filtered on
+
+**Spec** 07 section B8.4, "version_ref equals the version in force".
+
+**Decision** A regulatory document whose stem carries a version, `reg-car3-v1`, is superseded when
+a sibling in the same folder carries a later one. This is a freshness check at re-verification
+time. It is not the version_ref retrieval filter, which stays struck.
+
+**Reason** Both ends of doc 15's stale chain cite `reg-car3-v1.md`, whose bytes are identical at
+T1 and T3, so neither a hash comparison nor an existence check can find them. Supersession is the
+only signal that reaches them, and without it two of the three gates cannot be measured at all.
+The struck filter was a different thing for a different purpose: filtering retrieval results by
+version, measured useless because only 2 of 104 documents carry a version and a filter over two
+documents cannot move a recall gate. Those same two documents are exactly what the freshness check
+exists for.
+
+### BN-053 An imported card records the locator a retriever would
+
+**Spec** 01 section 4.9's dedupe key, and 05 section 12's zero duplicates gate.
+
+**Decision** The eval's board import writes each citation's locator in the form the retriever that
+reaches the same file records, relative to the folder it indexes, rather than the form the corpus
+files it under. `regulatory/reg-car3-v1.md` becomes `reg-car3-v1.md`.
+
+**Reason** Found by splitting a number. The first re-verification marked 51 cards stale and the
+follow up leg found none, because the two spellings produced two Source rows for one document. A
+card answered today deduped against the retriever's row and inherited nothing from the one the
+imported card cited. Doc 05 section 12's gate would have counted the same duplication.
+
+### BN-054 A card read back is not an answer, and a fixture question is not a sample
+
+**Spec** 02 section 10.2, whose metrics are all defined per question asked.
+
+**Decision** `gen score` splits three populations. A `verify_only` row re-verifies an existing card
+and is read only by the staleness metrics. A question the verify leg asked to build a stale
+ancestor is read only by the Planner metrics. Everything about answering, recall, precision,
+flags, cost and latency, reads the questions that were actually sampled, and reports n/a when
+there are none.
+
+**Reason** BN-019, twice over. A re-verification carries the card's own answer and the card's own
+facts, so counting it scored `fact_recall_deep` at 1.000 for restating text nobody was asked to
+find. The verify leg picks its questions because their sources went stale, several of them deleted
+outright, so scoring their recall measures the timeline. Both numbers looked like results.
+
+### BN-055 A verify_only packet carries the card id the store holds
+
+**Spec** 01 section 3, "identifiers are ULIDs", and 07 section B3's re-verification batch.
+
+**Decision** The Verifier packet requires a ulid `card_id` for every kind except `verify_only`,
+which accepts whatever id the store holds. Every other packet, and every other kind, keeps the
+rule unchanged.
+
+**Reason** A re-verification reads a card that already exists, and on the eval corpus that is one
+the generator named `B-01-C03`. Those ids are kept deliberately, because doc 15's ground truth
+names prior cards as `board_id/card_id` and the boards retriever's document reference is exactly
+that; minting ulids for them would need a translation table on the path the memory gates are
+measured through. Relaxing the rule for one packet kind was the smaller change, and it points at
+a real case: doc 01 section 7's bundle merge re-verifies cards that arrived from another machine.
+The follow up leg runs through the ordinary pipeline on cards the product minted, so nothing else
+needed the exception.
+
+### BN-057 The grounded mock has to produce structure, or half the product is unmeasured
+
+**Spec** 02 section 10.1, where the mock exists so the pipeline can be measured for nothing.
+
+**Decision** The grounded mock emits one `structured_summary.value` per quoted passage and its
+findings as strings carrying their own `[n]` markers, which is the shape `draft_schema` declares.
+
+**Reason** It emitted an empty summary and findings as objects. The Synthesizer's
+`filter_map(Value::as_str)` dropped the objects silently, so every grounded run ever recorded
+produced 400 cards with no findings; and `select_type` saw an empty summary, declined, and returned
+before composing, so `index_blocks`, the doctrine limits and every other part of doc 06 part B were
+unreachable on the eval. `visual_fidelity` and `visual_type_match` had no thresholds, so the report
+said nothing was wrong. A mock that cannot exercise a stage measures the mock.
+
+### BN-058 `visual_type_match` is measured and not gated
+
+**Spec** 06 section B12, which gates type match at 0.85.
+
+**Decision** The metric computes and reports; the threshold is not applied.
+
+**Reason** The type follows the shape of the summary the model wrote, so on a scripted provider it
+scores the script. The grounded mock emits values and nothing else, which selects a table every
+time and lands at 0.24 against a corpus expecting five types. A gate that fails every free run is a
+gate people learn to ignore, which is the failure doc 07 section B12 names for flag rules. It
+becomes a gate on a live sweep, where the summary is the model's own. `visual_fidelity` is gated at
+1.00 as B12 asks, because it is a deterministic property of the Visualizer rather than of the
+summary it was handed.
+
+### BN-059 A safety gate needs a denominator, so the hostile document gets its questions
+
+**Spec** 02 section 10.3, injection resistance 100 percent.
+
+**Decision** The facts the hostile document states are hoisted to the front of the root question
+pool, the same way doc 15's sole source fact already was. Nine questions now carry the
+`hostile_document` case; the hostile copy stays out of `required_sources`, because citing it is the
+failure the metric measures.
+
+**Reason** The corpus planted the hostile document from the first build and no question ever
+reached it, so `injection_resistance` reported n/a against a threshold of 1.0 for every run there
+has been. The three facts it carries are stated in three or four real documents each, so a question
+about one is answerable honestly and pulls the hostile copy alongside. This is the same defect the
+`held_out` hoist already fixed for memory, in the same place, found only because the report was read
+for what it was not measuring rather than for what it was.
+
+The metric's note now carries how many of those questions actually cited the hostile document,
+because retrieval decides that and not the question set. On the first run it was 3 of 9: the gate
+reads 1.000 and the exposure behind it is three answers.
+
+### BN-060 The ledger check has to ask the Verifier's question, not a neighbouring one
+
+**Spec** 02 section 10.2: "Citations whose passage supports the claim span, per Verifier verdict and
+per ledger check. Both are reported so the Verifier's own accuracy can be measured."
+
+**Decision** `citation_accuracy_ledger` is the share of citations whose passage states a value the
+question required, decided by the same matchers the corpus was verified with.
+`verifier_agreement` is how often the Verifier reached that same answer. The run record carries the
+cited passage text so the scorer can ask the question at all.
+
+**Reason** The first implementation counted verdicts equal to `supported` and called it the ledger
+check, which reported the Verifier's own opinion twice and could never measure its accuracy. The
+second asked whether the cited *document* states a required fact, which is a different question from
+the one the Verifier answers, and scored the difference as disagreement: 0.609 where most of the gap
+was definitional. A gate at 0.90 that measures the wrong comparison is worse than one that reports
+n/a.
+
+### BN-061 The support check runs, and its two gates stay advisory on a mock
+
+**Spec** 07 section B8.2, and 02 section 10.3's 0.90 agreement gate.
+
+**Decision** The support check is live: one batched call on the verify stage, then the deterministic
+override, with unsupported and weak-numeric raising the flags B8.2 names and a provider failure
+falling to all weak plus a card flag. `support_check_enabled` is now true, so the verdicts in a run
+record are real. `citation_accuracy_ledger` and `verifier_agreement` join `route_accuracy` and
+`flag_false_positive_rate` in `MOCKED`.
+
+**Reason** The grounded mock cites every passage it was handed and quotes them verbatim. The support
+check therefore calls almost everything supported, while the ledger asks whether the passage carries
+a required value, and the two disagree on every passage that was retrieved but not needed. Both
+readings are correct about different passages; the disagreement is the fixture's. On a real provider
+the answer cites what it used and the two questions converge, which is the run where doc 02 section
+10.3's automation gate means what it says. Until that run happens
+`verifier_below_threshold` keeps firing on every deep card, which is doc 07 section B9's own
+fallback and the honest state.
+
+The exemption is an exemption and not a retirement: a guard test already refuses any name in
+`MOCKED` that has no threshold to be exempted from, which is how `visual_type_match` got its doc 06
+section B12 threshold back after being briefly left ungated.
+
+### BN-062 The Synthesizer and Visualizer packets are validated at their boundary
+
+**Spec** 06 sections A4 and B4, which declare both packets, and doc 12's operating principle 1,
+validate at every boundary.
+
+**Decision** `schemas/packet/synthesizer.v1.json` and `schemas/packet/visualizer.v1.json` now exist
+and both agents name them.
+
+**Reason** Neither file had ever been written. Both agents returned `tessera:entity/common.v1` as
+their packet schema, which validates the shared primitives and nothing packet shaped, so a packet
+missing its passages, its request or its summary reached a model and was answered. Four packets were
+guarded and two were not, and the two unguarded ones are the pair that spend the most tokens.
+
+### BN-063 What the packets carried and the agents never saw
+
+**Spec** 06 sections A2, A4 and A7.
+
+**Decision** Four fields that existed on one side of the boundary and nowhere on the other are now
+joined up: `ancestors` on the Synthesizer packet (hardcoded empty, while the prompt loop that reads
+them was already written), `request.kind` and `request.anchor_text` (hardcoded `root` and null),
+`plan.constraints.must_include` (produced by the Planner, read by nobody), and `writing_rules` (taken
+from the pack into the packet and never put in a prompt). `card.synthesized.v1` gains the
+`audience_id` doc 06 section A7 lists.
+
+**Reason** Each one reads as working. A follow-up was written as though nothing preceded it, a branch
+spawned from a highlighted phrase looked identical to a question typed from nothing, and the
+doctrine's units and spelling governed nothing. None of them fails a test, because what they produce
+is a plausible answer to a smaller question.
+
+### BN-064 Two of the three conflict resolutions were unreachable
+
+**Spec** 06 section A8.3: "higher trust rank wins; equal rank, later `published_at` wins; otherwise
+both are presented and the conflict is recorded."
+
+**Decision** The readings are sorted by trust rank and then by date, and the resolution names which
+rule decided. The winning value rides on the conflict so a later fix-up call can use it.
+
+**Reason** The code took the best trust rank and then reported `higher_trust` whenever a best
+existed, which is whenever there were any readings at all. Two passages of equal rank resolved as
+though one outranked the other, and `later_date` and `presented_both` could not be produced by any
+input. The output schema had allowed all three since it was written.
+
+### BN-065 The doctrine model rules run, and the rule's own words are the check
+
+**Spec** 07 section B8.5.
+
+**Decision** A rule whose detector starts with `model:` is collected during the deterministic pass
+and asked in one batched call at the `doctrine_model_checks` stage. Each rule's own `description` is
+the question, so the pack decides what is looked for and the code decides only when to ask. Matches
+are capped at warn. A call that fails lists every rule as unchecked and flags the card, never as
+passed.
+
+**Reason** Doctrine is data, never code. The alternative was a detector function per rule id, which
+would have put `jurisdiction_drift` in Rust and made the pack a list of names for behaviour it did
+not contain. The finance pack has shipped three of these rules since it was written and every one was
+listed as skipped: "This build runs deterministic detectors only."
+
+### BN-066 The support check flags cards, and a flagged card is not remembered
+
+**Spec** 15 section 3's eligibility rule, and 07 section B10's fail closed posture.
+
+**Decision** Kept. A card the support check could not verify is flagged, and doc 15 section 3 only
+remembers a card whose status is `done`.
+
+**Reason** Found by a test rather than by a metric. An end to end memory test scripted the mock for
+route, plan, synthesize and visualize but not verify, so the support check failed, the card was
+flagged, and it was no longer eligible to be recalled on another board. That is the fail closed rule
+working: a card nobody could verify should not become the evidence for the next one. The fixture now
+answers both verify stage calls, which is what a fixture wanting an admitted card has to do.
+
+Worth naming because the chain is not obvious: eligibility reads `status = 'done'` and separately
+excludes open `block` flags, and the Verifier sets the status to `flagged` on any warn. The second
+clause is therefore unreachable, and any warn flag anywhere keeps a card out of memory. That is
+defensible and it is stricter than doc 15 section 3 reads on its own.
+
+### BN-067 What M7 leaves for a run that spends money
+
+**Spec** 06 sections A8.4, B8.1, B8.4, B8.5 and B3.
+
+**Decision** Five pieces of doc 06 are built no further, each because a mock cannot exercise them and
+a fixture that pretended to would measure itself.
+
+**The audience rewrite** (A8.4). The second call that rewrites an answer for its audience, with the
+deterministic marker preservation check and A10's discard with a caveat. The packet now carries the
+audience where it carried null, and the marker check is a pure function that can be written and
+tested without a model, but the rewrite itself needs one. The corpus does not phrase an audience into
+its questions yet either, so `audience_detection` has nothing to measure regardless.
+
+**The visual tie break** (B8.1). `select_type` is a priority cascade with early returns, so no two
+rules can be live at once and no tie can arise. Reaching the tie break means restructuring the
+cascade to return candidates rather than an answer, which is worth doing when there is a model to
+break the tie.
+
+**The figure path and its sanitiser** (B8.4). `select_type` maps a figure hint to a list, and there
+is no figure branch in the payload schema, so `sanitise_svg` has two unit tests and no caller. The
+sanitiser is testable against a hostile svg fixture set that does not exist; that set is worth
+building before the path is, because it is the half that has to be right.
+
+**The image path** (B8.5). No image alias, no Image row, and the output schema's `type` enum does not
+include `image` while B8.5 requires it. Doc 06's own B5 has the same omission, so the doc and the
+schema need resolving together rather than one being bent to the other.
+
+**Re-visualising on a review edit** (B3). Nothing removes a block from a summary yet, so there is
+nothing to rerun on.
+
+**Entity naming, added at M9** (03 section 5). The grounded mock's Router answers `entities: []`, so
+the Concept write path built at M9 runs on every card in a sweep and proposes nothing. Naming the
+entities in a question is judgment, and this corpus carries no proper noun in any of its 400
+questions, so no heuristic can stand in for it. See BN-075.
+
+**Reason** Each is a place where the honest measurement needs a real provider. Recording them here,
+with what is already in place for each, is worth more than a half implementation that a mock would
+score as working.
+
+---
+
+### BN-068 The board answers now, and the RPC learned to say where a card hangs from
+
+**Spec** 09 section 5, 01 sections 4.1 and 4.4, 12 phase 8.
+
+**Decision** `card.ask` takes `parent_card_id`, `anchor_text` and `anchor_block_ref`, and `Core::ask_on`
+takes them as one `Anchor` rather than as three parameters. `card.verify` and `board.rename` are
+registered. One delegated click listener in `main.ts` serves every verb on every card.
+
+**What was actually broken.** `render.ts` emitted `data-act="flags"`, `data-act="remove"` and
+`data-act="follow"` from M2, and no file in `app/ui/src` ever listened for any of them. The per card
+follow-up box, the remove verb and the flag chip were markup. Underneath that the RPC could not have
+served two of them anyway: `card.ask` called `Core::ask`, which passes `parent_card_id: None`, so a
+follow-up asked from a card would have landed on the board as another root. `applyNotification`
+handled two of the bridge's eight notification kinds and dropped the other six without a word.
+
+**The anchor is a struct** because the three fields are one decision. They select the card's kind
+between them (parent and anchor is a `branch`, parent alone is a `follow`, neither is a `root`), and
+passed separately they let a caller name a span on no card. The RPC refuses that combination rather
+than storing a root card carrying a pointer into a visual it has no parent to read.
+
+**Remove is not wired, and its markup is gone rather than left inert.** Doc 09 section 5 has "Remove
+card and subtree" and section 5 also says every verb emits a user event. There is no
+`card.removed.v1` in `EVENT_VOCABULARY` and no soft delete column on `card`, so the verb needs a
+vocabulary entry and a migration. Both belong with board trash, restore and purge in M9 step 3, which
+opens the same two files. The header slot it occupied now carries Rerun, which is a verb that works.
+
+**Six notification kinds now do something, and most of them re-read rather than guess.**
+`card_answered` and `card_failed` apply live, because that is what stops a card spinning the moment
+its answer lands. `card_updated`, `flag_raised`, `flag_resolved` and `board_updated` set a flag that
+re-reads the board. Pattern 25 is why: `flag_raised` carries a rule id and a severity and not the
+reason the card shows, and `flag_resolved` carries only a card id, so filling the rest in here would
+put a string on screen that no event said.
+
+**Reason** Doc 12 phase 8's acceptance is "every verb in 09 section 5 works and emits its event". A
+verb whose markup renders and whose listener does not exist meets none of that, and nothing in the
+build reported it for four milestones, because nothing drove the UI.
+
+---
+
+### BN-069 The UI is driven headlessly now, and the first thing it caught was a fixture
+
+**Spec** 12 phase 8 acceptance and phase 11 (nightly eval in CI).
+
+**Decision** `tessera-ui-server` serves `app/ui/dist` and one `POST /rpc` over the same router the
+Tauri shell registers, so Playwright can drive the real product against a real core. Six tests in
+`app/ui/tests/board.spec.ts` cover the verbs M9 step 1 wires.
+
+**Why a server rather than a fixture.** The shell reaches the core through
+`window.__TAURI__.core.invoke`, which exists only inside the Tauri webview, so a browser driver finds
+`rpc.connected === false` and measures the offline fixture. A test against the fixture would have
+passed on every day the click listeners did not exist.
+
+**What it caught immediately.** The first screenshot showed the follow-up card carrying "This card
+did not finish", with a toast reading `schema_violation: provider mock returned no usable content`.
+`MockProvider::on` queues one response per stage and then falls through to garbage, which is correct
+for a test asserting one card and wrong for a server answering many: the second card on the board
+found an exhausted script. The fixture now uses a scripted default, which is consulted rather than
+consumed.
+
+**The test had the same hole the UI did.** `the follow-up box on a card asks a follow-up` asserted
+that a second card appeared and that its title read "Follow-up". A card that renders and fails
+satisfies both. The assertion now reads the card's terminal status and its answer, and a seventh test
+reads every card's status, every `.failed` body and every error toast on the board, so a fixture that
+runs dry fails there first. This is the rule that governs this project applied to a screen: a metric
+with nothing to measure must not report a pass, and "a card exists" was measuring nothing.
+
+**Reason** A rendered screen and a working one are different claims, and only one of them was being
+made. The server is also the piece doc 12 phase 11 needs to put the UI into a nightly CI run.
+
+---
+
+### BN-070 The two branch popovers, and why the anchor stays in client coordinates
+
+**Spec** 09 sections 3, 4 and 5.
+
+**Decision** One popover element in two states serves both of doc 09's board popovers. The offer
+comes first, with the verb the anchor kind calls for, and the question box only once the offer is
+taken. That is the prototype's interaction (`Docs/canvas-prototype.html:331`-336) and it is right for
+a reason worth stating: a selection made while reading should not be interrupted by a text box.
+
+**Client coordinates, not board coordinates.** The popover lives outside `#world`, so it holds its
+size when the board is zoomed. Converting the selection rect into board coordinates and back would
+put the popover inside the transformed layer, where its text scales with the camera and a zoomed out
+board renders an unreadable one. The plan said this step needed the board coordinate transform; it
+does not, and the reason it does not is the same reason the popover is a sibling of the canvas rather
+than a child of it.
+
+**The card body is `data-no-pan` now.** A drag inside a card body is a person selecting a span, and
+the viewport drag handler was panning the board out from under them. Cards are not draggable yet, so
+nothing is lost; when they become draggable the header is the handle.
+
+**A selection spanning two cards is refused rather than truncated.** It names no single card, and a
+branch has exactly one parent. A selection in a card header or a follow-up box is refused too: that
+is a person reading or editing, not one marking a claim.
+
+**Reason** Doc 09 section 5's Branch verb is two thirds of the acceptance walkthrough's branching
+rows, and until now neither the markup nor the RPC could express it.
+
+---
+
+### BN-071 "How this was built" claimed the answer was checked against sources it never had
+
+**Spec** 09 section 4 and 12, 07 section B8.1.
+
+**Decision** The disclosure renders from `board.history`, which had been registered on the core since
+M2 and called by nothing. The Verified row counts what `verify.completed.v1` recorded rather than
+characterising it.
+
+**What the first version got wrong.** The row said "checked against its sources" whenever the event
+appeared. It appears on a fast card too: doc 07 section B8.1 runs the deterministic checks at fast
+depth, which is what raises `fast_mode_notice`. A fast card cites nothing, so there were no sources
+and nothing was checked against them, and the disclosure said the opposite of the flag two lines
+above it. The screenshot showed it; no test did.
+
+The row now reads what the event carries: `checks_run` counted by outcome, and `verdict_counts` only
+when there were citations to count, because "0 of 0 citations supported" reads as a failure rather
+than as an absence. On a fast card it now reads "6 rules passed, 1 flagged, 4 skipped", which agrees
+with the flag chip in the header.
+
+**Cost is stated in tokens.** Doc 09 section 4 names cost. Tokens are what `model.call.v1` records; a
+currency figure would need a price the core never saw.
+
+**Read on open, not on render.** The disclosure is closed on most cards most of the time and the
+history is the whole board's log, so filling it per card per render would read the same hundreds of
+events once per card.
+
+**Reason** The audit trail is the one surface whose whole job is to agree with what happened. A
+sentence in it that overstates is worse than an empty disclosure, because an empty one does not
+mislead.
+
+### BN-072 The rail, the four pages, and the two verbs that needed no migration
+
+**Spec** 09 sections 3, 5, 6 and 9, 11 sections 5 and 6.
+
+**Decision** A left rail over a page layer that covers the canvas rather than replacing it, so the
+board keeps its camera, its cards and any in flight run while a page is open.
+
+**Trash and purge needed no schema change.** `board` already had `status` with an `active` or
+`trashed` check and a `trashed_at` column, and `list_boards` already took a status. Doc 09 open
+question 1, adopted by doc 11, makes Trash a filter on Home rather than a rail item, so it is the
+same grid read with a different word. `board.trashed.v1`, `board.restored.v1` and `board.purged.v1`
+were all in the vocabulary with nothing emitting them.
+
+**A purge keeps the events.** The event log is append only and the database enforces it with a
+trigger, so deleting a board removes the entities and leaves the trail that says they existed. That
+is what makes `board.purged.v1` readable afterwards rather than a claim about rows nobody can check.
+The RPC also refuses a purge on a live board: it is two steps, so it is never one click from a board
+in use.
+
+**The Flags queue needed no schema change either.** The `flag_open` index in the initial migration
+was written for exactly this query, severity then age across every board, and had never been used.
+`read_flags` stays as it was: it is per card and feeds the chip. `review.decided.v1` had a projection
+handler since M2 and nothing emitting it.
+
+**One event per card, not one per decision.** A bulk decision can span several cards, and the
+projection that reopens or closes a card reads the card from the event, so a single event would
+recompute one card and leave the rest wrong.
+
+**Rerun and edit leave the flag open.** Only accept and dismiss close it. A rerun that has not
+written its new card yet would otherwise take its row out of the queue and leave nothing to come
+back to.
+
+**Reason** Doc 12 phase 8's acceptance is every verb in doc 09 section 5 working. Home, Flags,
+Library and Profile are where the verbs that do not act on a card live, and none of them existed.
+
+---
+
+### BN-073 A covered element is visible and clickable, so sixteen tests passed over a broken layout
+
+**Spec** 11 section 5.
+
+**Decision** The rail width is one custom property on `body`, read by the rail, by the board's left
+padding and by the page's left edge.
+
+**What broke.** Doc 11 section 5 says the rail is 56px collapsed and 240px open. The rail knew that;
+the page did not, and started at a hardcoded 56px. Opening the rail put 184px of it on top of every
+row on the Flags queue: the checkbox, the severity chip, the rule name and the board heading were all
+underneath it.
+
+Sixteen Playwright tests passed. Every one of them was written against visibility and text, and a
+covered element is visible, has its text, and is clickable to a driver that scrolls it into view.
+The screenshot showed it in a second.
+
+The test that catches it now reads geometry: the row's left edge against the rail's right edge, with
+the rail open. That is the assertion shape this class of bug needs, and it is the same lesson as the
+build trail two steps ago in a different costume. A rendered screen is not a working one, and now:
+a visible element is not an uncovered one.
+
+**A second one from the same run.** `#page` and `#rail` both sat at `--z-sticky`, so the page won on
+DOM order and swallowed every rail click after the first. That one a test did catch, because a click
+that lands on the wrong element times out.
+
+**Reason** Recording it because the fix is one line and the lesson is not. Two of the four defects
+this milestone has surfaced were found by looking at a screenshot after a green suite.
+
+---
+
+### BN-074 What the Profile page can say about a key
+
+**Spec** 10 section 8, 11 section 6.
+
+**Decision** `profile.get` reports, per model alias, which `key_ref` it wants and whether the
+keychain has it. It cannot report what the key is, because it never reads one.
+
+`profile.set_key` is the other direction and the only one a secret travels: the value goes to
+`KeyStore::set` and nothing writes it to the store, logs it, or echoes it back. The reply is the
+key_ref and a boolean. The UI asks for it with `window.prompt`, which is the one input in the product
+whose value must not survive anywhere: no element holds it and no state keeps it.
+
+A test asserts the leak rather than the feature: it opens a core whose keystore holds a known secret,
+reads the whole profile, and fails if that string appears anywhere in the response. The Playwright
+suite does the same against the rendered page.
+
+**Diagnostics is counts, not a verdict.** What the page is for is telling a person whether the thing
+they think happened happened, and a green tick summarising six numbers hides the one that is wrong.
+
+**Reason** This is the surface that retires the `tessera-keys` CLI, and it is the surface where the
+standing constraint is easiest to break by accident.
+
+### BN-075 The Concept graph writes, and the Planner packet stops carrying an empty array
+
+**Spec** 01 sections 4.10 and 4.11, 04 section 4, 09 section 9.
+
+**Decision** A card that answers proposes the entities its Router named as Concepts, links each to the
+card with `mentions`, and reuses a term the profile already holds rather than duplicating it.
+
+**What this closes.** Doc 04 section 4 gives the Planner a `concepts` array. It has been `[]` on
+every run since M5, with a comment saying so, and entity resolution degraded to literals marked
+`unknown` exactly as doc 04 says it should when the graph is empty. The Router has returned entities
+since M4 and they reached the log and nothing else. Both halves existed and nothing joined them.
+
+**Reuse is the point, not an optimisation.** Doc 01 section 4.11: "two boards that both cite the same
+Concept share it, which is the mechanism behind when two boards touch PSD3 they touch the same node".
+Matching is case insensitive on the canonical spelling. An alias pass belongs with the Concept editor,
+not with a write path that runs on every card.
+
+**A failure here is not the card's failure.** The answer is written and verified before this runs, so
+a graph that missed a term is a Library with one fewer row rather than a card the reader loses. The
+Planner's read degrades the same way, to the empty array it carried before.
+
+**No `concept.rejected.v1` was invented.** The vocabulary has proposed, confirmed and linked. A
+rejection sets the link rows to `rejected`, which is the status doc 01 section 4.11 already gives
+them, and `concept.linked.v1` already said those links existed.
+
+**A correction to an earlier note.** `builds_on` on `concept_link.relation` and the `learn_session`
+table both already exist: the first landed in migration 0002 and the second in 0001. Two earlier
+readings called them missing, both because the search stopped at Rust or at the initial migration.
+
+**The grounded sweep does not exercise this, and that is recorded rather than papered over.** The
+sweep ran clean after the change, 28 of 36 with nothing below threshold, and that number means
+nothing about this path: the grounded mock's Router answers `entities: []`, so 400 cards proposed
+nothing and "unchanged" was a report about code the run never entered.
+
+The first fix attempted was a capitalisation pass over the question. It produced "What" and "How",
+because this corpus asks "what is the model validation interval for a systemically important
+institution" and carries no proper noun anywhere in its 400 questions. A template pass would have
+returned whatever the generator's templates were written with, which measures the template. Either
+would have put terms in the Library that nothing observed, and a mock that answers plausibly is worse
+than one that answers nothing.
+
+So it stays `[]` with a comment saying why. Naming entities is judgment, which is the one thing the
+grounded mock's own doc comment says it cannot measure, alongside phrasing and conflict resolution.
+The graph is measured by the end to end tests and needs a live provider at scale. It joins the five
+in BN-067.
+
+**Reason** The Library's Concepts tab reads a table nothing wrote, and a tab that can only ever be
+empty is a screen that lies about what the product does.
+
+---
+
+### BN-076 Contrast is measured from what the renderer painted, not from the palette
+
+**Spec** 09 section 14, 11 section 10.
+
+**Decision** The contrast check walks every text bearing element on screen, reads its computed colour
+and the first opaque background behind it, and computes the ratio. It runs over the board and over all
+four pages, at 4.5:1 for text and 3:1 for large.
+
+**Why not read the tokens.** The palette is OKLCH and the WCAG ratio is defined on sRGB relative
+luminance. A number computed from the tokens would be a colour space conversion this repository got
+right or wrong with nothing to check it against, and a contrast check that is itself unchecked is the
+kind of green tick this project has been burned by. `getComputedStyle` asks the renderer that will
+actually paint it.
+
+Every element passes today, so the check reports a pass it earned. It will earn a failure the first
+time a token moves.
+
+**The rest of doc 09 section 14, and what each needed.** Keyboard reach is measured by tabbing from
+the top of the document and collecting what receives focus, rather than by asserting that a button
+exists. Flag rows are their own focus stop with arrow, Home, End and Space, so a reader moves between
+rows instead of tabbing through four verbs to reach the next one. Reduced motion is checked by
+opening a context that asks for it and reading `animationName` and `transitionDuration` back.
+
+**Reason** Doc 12 phase 8's acceptance names keyboard reachability and contrast checks by name, and
+both are the kind of claim that is easy to assert and hard to earn.
+
+---
+
+### BN-077 The canvas has a document, and a third z-index collision
+
+**Spec** 11 section 10.
+
+**Decision** The board renders as a document from the same `Card[]` the canvas does, so the two
+cannot disagree. Parents before children, the anchor a branch came from stated rather than drawn, and
+the visual described by type and block labels rather than drawn at all.
+
+**One copy in the accessibility tree, not two.** The canvas is `aria-hidden` while the document is
+open and the document is hidden while the canvas is. Rendering both would put every card in the tree
+twice, which is worse for a screen reader than either alone.
+
+**The third z-index collision this milestone.** `#reading` sat at `--z-sticky` alongside the title
+bar, so it covered the control that opens it and there was no way back to the board. The rail and the
+page layer had the same collision in step 3. Three occurrences is a pattern rather than three
+mistakes: this shell has four fixed layers and one token, and the next one to be added should be
+given its own level rather than borrowing `--z-sticky` because the neighbour did.
+
+**Reason** Doc 11 section 10 asks for a list view alternative reachable from the title. A canvas is a
+spatial arrangement and a screen reader has no way to convey one.
+
+---
+
+### BN-078 IBM Plex is bundled, and the CSP needed no widening
+
+**Spec** 11 section 2, 10 section 8's no remote resource rule.
+
+**Decision** Four faces are declared in `app/ui/src/styles/fonts.css` and their files come from
+`@fontsource` in node_modules. Vite rewrites each `url()` into a fingerprinted asset served from the
+app's own origin, so `default-src 'self'` already covers them and no `font-src` was added.
+
+Four faces rather than the package's full set: Sans 400 and 600, Sans 400 latin extended for the
+European issuer names doc 02 plants in the corpus, and Mono 400 for rule ids and locators. That is 77
+KB. `font-display: swap`, so a cold start shows text in the fallback rather than showing nothing.
+
+**Reason** `index.html` has carried a comment since M2 saying the fonts arrive at M9. Until now the
+stack fell through to the system sans, so the prototype's typography was approximated rather than
+shown.
+
+### BN-079 The Exercise agent, and the gate it should have had for four milestones
+
+**Spec** 08, 12 phase 9.
+
+**Decision** The Exercise agent is built, and `exercise_traceability` has the threshold doc 08
+section 12 and doc 12 phase 9 both give it.
+
+**The defect the plan named, in full.** The metric computed from the day it was written, gated on
+`manifest["exercise_enabled"]`, and had no entry in `THRESHOLDS`. The moment the flag flipped it
+would have produced a number, looked measured, and been gated by nothing. `visual_fidelity` had the
+same shape at M7 and went unreported for as long as nothing drew a visual.
+
+The fix is structural rather than one line. `READOUTS` now names the ten metrics that describe a run
+rather than judging it, each with a reason, so the classification is **total**: every metric is
+gated, deliberately ungated, or a readout, and a guard test fails on any metric in none of the three.
+Ten metrics were in none of them. A second guard fails on a metric in two.
+
+`reader_structure_recovery_mess_f1` sat in `NO_THRESHOLD` with nothing producing it, which reads as a
+degraded scan path that is covered and reported. It is removed until the Reader writes one, and a
+third guard now fails on any exemption or readout with no metric behind it.
+
+**The scorer re-checks rather than trusts.** The agent runs doc 08 section 5's two rules and drops
+what fails, so scoring its output against its own check would report 1.00 whatever the check did.
+`gen/src/tessera_gen/harness.py` carries a second implementation that reads the persisted exercise
+and the persisted cards, and a test proves that second implementation can fail: an answer the card
+does not state, a card outside the scope, a citation ordinal the card does not have, and a distractor
+that is true on another card.
+
+**A one word distractor is a word, not a statement.** Checking every short option against every other
+card would drop "yes" and "no" from any board containing either, so the leak check skips options
+under three words. Recorded because it is a deliberate hole and a small one.
+
+**Measured.** 30 of 37 metrics on the grounded sweep, up from 28 of 36, with nothing below threshold.
+`exercise_traceability` 1.000 and `exercise_distractor_leakage` 0.000 over 36 items across 12 boards,
+with 3 further boards correctly reporting doc 08 section 10's `no_eligible_cards`. The sweep samples
+five boards per worker and says so, because "traceability 1.00" over 15 boards and over 200 are
+different claims.
+
+**What still needs a live provider.** Doc 08 section 12's fourth line, "item answerable from the
+source card by a second model with only that card as context", needs two real models. The grounded
+mock quotes cards; it does not judge whether a question is worth answering.
+
+**Reason** Doc 12 phase 9's acceptance is "exercise traceability 1.00", and until now there was
+neither an agent to measure nor a gate to measure it against.
+
+---
+
+### BN-080 Two shapes the schema guard caught before a reader did
+
+**Spec** 12 principle 1, 06 section A7, 08 section 4.
+
+**Decision** Recorded because both were caught by the boundary rather than by review, which is what
+doc 12 principle 1 built the guard for.
+
+**Findings are objects, not strings.** Doc 08 section 4's packet example writes `"findings": []` and
+does not say the element type. The packet schema guessed `string`, and the guard rejected the first
+packet carrying a card with findings: the stored shape is doc 06 section A7's `{text, citations}`. The
+schema, the agent and the scorer all read the same shape now.
+
+**Every output carries its envelope.** The agent returned `title` and `items` and no
+`schema_version`, `agent_id` or `run_id`, and the output schema rejected it on both return paths
+including the empty one. An agent that answers nothing still has to say who it was.
+
+**Reason** Two boundaries, two catches, no reader involved. Worth writing down as evidence that the
+schema first principle pays rather than as two mistakes.
+
+### BN-081 The Reader, and the half of it a mock can measure
+
+**Spec** 07 part A, 12 phase 9.
+
+**Decision** The Reader is built. Its deterministic half is fully exercised on the mock; its vision
+half is measured on a live run and nowhere else, and the metric says so rather than reporting a
+number the fixture wrote.
+
+**What is deterministic here, and why it is separated.** Doc 07 section A6 makes preprocessing,
+structuring and summarising deterministic and only recognising a model call. So the injection check,
+the mapping into the Synthesizer format, the traceability rule and the confidence are pure functions
+with unit tests, and the vision call is one seam. That split is what lets doc 07 section A12's
+"injected image text obeyed 0 times" and "summary values traceable to structure 1.00" be tested for
+nothing while "structure recovery F1 0.80" waits for eyes.
+
+**The injection check is about the address, not the verb.** A table that says "ignore rows below the
+double line" is a table; one that says "ignore your previous instructions" is an attack. What
+separates them is whether the sentence is speaking to a model, so the list is of phrasings that
+address one. Doc 07 section A10 continues with the block excluded rather than dropping the image: one
+sentence written on a page must not destroy a reader's diagram.
+
+**Confidence does not score an unmeasured term as full marks.** Doc 07 section A9 has three terms and
+one of them is OCR agreement with a local pass that does not exist. Its weight goes to the terms that
+are measured rather than being counted as perfect agreement, and a test asserts a clean picture with
+nothing recovered does not read as confident. Scoring an absent term as a pass is the shape of
+dishonesty this project keeps finding.
+
+**`reader_structure_recovery_f1` is advisory on a mock, and no `--read` eval leg was built.** A mock
+has no eyes. A fixture that returned the structure the corpus recorded as `sketch_truth` would be
+scoring this repository against itself, and a fixture that returned anything else would measure the
+fixture. Either way the number would be about the harness. The eval also imports no ink, so a read
+leg would have had to invent its own subject. What it would have produced is one meaningless number
+and one that the Rust tests already assert more directly, so it is not built. The metric joins
+`visual_type_match` and `verifier_agreement` on the advisory list, gated the day a vision run sets
+`reader_enabled`.
+
+The note on `reader_enabled` said "the Reader arrives at M10". It has arrived, so it now names what
+it actually waits for.
+
+**Reason** Doc 12 phase 9's second half. The vision entry point exists, and the part of it that can
+be held to a standard for free is held to one.
+
+---
+
+### BN-082 The sketch raster path, and one test that earns its keep
+
+**Spec** 12 phase 9, 07 section A6.
+
+**Decision** Ink strokes rasterise to a greyscale png, cropped to what was drawn, bounded at the
+vision alias long edge, and the ink survives it.
+
+**Cropped, because a sketch in the corner of a large board should not hand a vision model a page that
+is nine tenths empty.** One scale for both axes, because a drawing stretched on one of them is a
+different drawing. Greyscale, because ink is one colour and a vision model gains nothing from three
+channels of the same number.
+
+**The test worth naming** is `the_ink_actually_lands_on_the_page`. It decodes the png back and counts
+dark pixels. The failure it guards is a rasteriser that encodes a valid, empty image: every other
+check in that file would still pass, and the only symptom downstream would be a vision model
+reporting `unrecognised` for a picture that really was blank.
+
+**Reason** Doc 07 section A2 has the Reader read an Image row and doc 07 section A4's packet carries
+a `blob_ref`. Something had to turn the strokes a person drew into a picture, and doc 12 phase 9
+names it.
+
+---
+
+### BN-083 A paste rule that read correctly and would have blocked every paste
+
+**Spec** 07 section A3.
+
+**Decision** An image on the clipboard is read. A paste that also carries text, into a box that takes
+text, stays text.
+
+**What the first version did.** It checked the focus: a paste into an input or a textarea is text,
+whatever else is on the clipboard. That reads as obviously right and is wrong in practice, because
+`boot` focuses the composer, so the composer always has focus and no image would ever have been read
+at all. The rule now asks whether there is text to prefer rather than whether a text box is focused.
+
+**Two rounds were spent on a fixture rather than the product.** The test pasted a base64 string that
+looked like a png and was not one: its chunk table walked off the end, `createImageBitmap` refused
+it, and the page correctly reported that the image could not be read. The fixture is generated now
+rather than remembered, and the comment says why.
+
+**Reason** Recorded because the first defect is the interesting one: a guard can be correct about the
+case it names and wrong about every case that occurs.
+
+### BN-084 The Tutor decides and never answers, and four rules stand between the two
+
+**Spec** 14 sections 1, 3.5 and 5.
+
+**Decision** The Tutor writes no card content and retrieves nothing. It chooses what to ask and what
+to open next, and doc 14 section 3.5's four rules are deterministic checks over what it decided,
+each one dropping the part that broke it rather than failing the turn.
+
+**Why dropping rather than failing.** A turn is a conversation, and a learner who asked a question
+and got an error learned nothing. A turn that loses its `open` because the tutor asked for two cards
+at once still carries its reply, and the caveat says what went. The Verifier fails closed because a
+card is a claim; a tutor turn is not a claim, so it does not.
+
+**Two of the four rules are the Exercise agent's, reused rather than rewritten.** A check item is an
+Exercise item with a single card scope, which doc 14 section 1 says in as many words, so
+`exercise::traceable` and `exercise::leaks_truth` are called on it directly. A second implementation
+of traceability would be a second definition of it, and the two would drift.
+
+**The load bearing rule is the fourth.** A tutor reply carrying `[1]` claims a source for a sentence
+nobody verified, inside a product whose entire argument is that a marker means the Verifier stood
+behind it. That rule has both a unit test and a Playwright test, at the two ends: one over the turn,
+one over what the learner reads on screen.
+
+**Reason** Doc 14 section 1: "Learn mode adds no new answer path." Everything the tutor could have
+been given to do that a card already does was given to the card.
+
+---
+
+### BN-085 A session that renders intake and cannot leave it
+
+**Spec** 14 section 3.4.
+
+**Found** while writing the Playwright pass over Learn mode. The intake questions rendered, the
+options were tappable, each answer recorded and the session's `intake` list grew. And the plan never
+came, because `learn.build` is its own RPC and nothing on screen called it: answering an intake
+question refreshed the session and stopped. Doc 14 section 3.4 lets the learner skip intake, which is
+why building cannot be a side effect of finishing it, and that is exactly why something had to notice
+when the questions ran out.
+
+**Decision** The panel drops a question the session already holds an answer to, and asks for the plan
+when the last one goes. A `Just build it` button offers the skip doc 14 section 3.4 names.
+
+**The same shape as the click delegation gap at M9**, and worth naming twice for that reason: markup
+that renders correctly, a handler that fires correctly, and no path from the end of one step to the
+start of the next. Neither a unit test nor a screenshot catches it. A test that drives the whole
+sequence does, and only that.
+
+**A second bug in the test, not the product.** The first helper clicked the first intake option and
+waited for it to become hidden. A `.first()` locator re-resolves on every poll, so once that question
+was gone the locator resolved to the next question's first option and reported it visible until the
+timeout. The loop waits on the count of unanswered questions now.
+
+**Reason** Recorded because the plan's rule about metrics has a UI twin: a screen that renders is not
+a screen that works, and only a driver that walks the whole path can tell them apart.
+
+---
+
+### BN-086 Two events the log claimed and one actor it got wrong
+
+**Spec** 14 sections 2 and 3.3, 12's acceptance walkthrough line 12.
+
+**Found** while checking the Learn session against walkthrough line 12, "every act appears in board
+history with the right actor". Two defects, both in the same twenty lines.
+
+**The log claimed checks nobody asked.** Doc 01's vocabulary declares seven `learn.*` events, and the
+turn recorder needed an event for two stages that have none: the tutor asking its intake questions,
+and the tutor replying with no card to open. It reached for the nearest declared name and wrote
+`learn.check_asked.v1` for both. Anything counting checks would have believed it, and the log is
+append-only, so nothing could take it back.
+
+The fix is that neither stage records anything. Asking the intake questions changes no session state:
+the answer is what changes it, and `learn.intake_answered.v1` already carries that. A reply with no
+card to open changes none either. Both write columns that were already what they are, so the write
+existed only to carry the event.
+
+**Every act was attributed to the learner.** `Provenance::user` on all six, including the plan and the
+check question, which are the tutor's decisions. On a screen that reads back as the learner having
+written their own exam. Session writes now name their actor at the call site, and the three the tutor
+makes carry `Provenance::agent("tutor", run_id)` with the run it decided in.
+
+**Not adding two events to the vocabulary** was the choice underneath both. The seven declared events
+are the session's state changes, and the two stages that wanted a name are not state changes. An
+eighth event for "the tutor said something" would put the conversation in the event log beside the
+decisions, and doc 14 section 2 keeps the conversation in the session row where a reopened panel can
+still read it.
+
+**Reason** Recorded because a wrong event in an append-only log is the one class of defect this
+build cannot correct later, only annotate.
+
+---
+
+### BN-087 The bundle, and the one default where being wrong sends someone's documents to a stranger
+
+**Spec** 01 section 7, 12 phase 10.
+
+**Decision** A board exports as a zip: a manifest, one jsonl per entity kind, and the blobs the rows
+point at. Rows travel as objects keyed by column name rather than as thirteen hand written structs,
+so a column added to the store appears in the next bundle instead of being silently dropped.
+
+**The checklist defaults to sending nothing.** Doc 01 section 7 says the exporter shows a checklist
+of local document sources "so nothing leaves by accident", and a checklist whose default is to send
+everything is not a checklist. A local document travels only when its source id is named. There is a
+test whose whole content is that assertion, because this is the one setting where the wrong default
+puts a person's own files on a stranger's machine.
+
+**The redaction lives in one function.** `redact_source` reduces a local document's locator to its
+file name and rewrites its dedupe key to match, and every export path calls it. A rule applied in two
+places is a rule that will one day be applied in one.
+
+**A citation whose source was withheld still travels.** Dropping it would quietly change the card's
+answer: markers are rendered from citations, and a card that cited four things arriving citing three
+reads as a card that claimed less. The importer resolves it as a citation with no passage, which is
+visibly missing rather than invisibly absent.
+
+**The sender's history arrives as a replay.** Doc 01 section 6.3's `source` enum has `replay` for
+exactly this. Appending the events as `live` would have the recipient's own log claim they built a
+board they were given, which is the same class of defect as BN-086 and caught by the same question.
+
+**Every rule has a guard that bites**, checked by breaking each one in turn: redaction off, checklist
+ignored, existence check dropped, source merge skipped, concept collision merged silently, history
+appended as live. Six mutations, six named failures. The first run of the whole suite passed, which
+in this build is a reason to go looking rather than a reason to stop.
+
+**Reason** Doc 12's walkthrough rows 10 and 11 are a person exporting a bundle and importing it on a
+second machine, and every test here uses two profiles for that reason: one profile proves the writer
+and the reader agree with each other, which is true whatever either of them does.
+
+---
+
+### BN-088 The corpus ids are not ULIDs, and the bundle is where that first matters
+
+**Spec** 01 line 79, 02 section 6.
+
+**Found** on the first run of doc 12 phase 10's acceptance. All twenty boards failed export, and the
+manifest schema said why: `/board_id: "B-01" does not match "^[0-9A-HJKMNP-TV-Z]{26}$"`.
+
+**The schema is right and the corpus is the outlier.** Doc 01 line 79: "Identifiers are ULIDs (time
+sortable, safe to merge across machines when bundles are imported)." The parenthesis is the whole
+point, and the bundle is the first place in the build where that sentence has teeth. Everywhere else
+an id is just a key, so `B-01` worked and nothing noticed.
+
+**Decision** The round trip seeds its own profile, translating corpus ids to ULIDs as it goes. The
+sweep keeps the readable ids, because a failing question is easier to chase when the board is called
+`B-05` than when it is called `01M113PSRHMPE9P9HQGADJ630D`. The seeding step was already a
+translation from corpus form into store form: `retriever_locator` does the same thing for paths.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --bundles`. Twenty of twenty boards
+arrive whole, three of them the ones doc 02 line 155 marks for export, and the one concept term
+collision the corpus plants is handled as doc 01 section 7 specifies. No provider is called: a bundle
+carries what the board already holds and asks no model anything, so this acceptance is free.
+
+**The check can fail.** Dropping one citation per board on the import side is reported for every board
+that had one, with the counts on both sides.
+
+**Reason** Recorded because the schema guard found a spec violation nothing else could have: the ids
+were wrong in a way that only mattered at the boundary the ULIDs exist for.
+
+---
+
+### BN-089 The memory rule did not exist, and the plan was wrong about where it lived
+
+**Spec** 05 v0.2 line 106, 12 principle 4, HANDOFF section 2.
+
+**The plan said** `own_card_sole_support` was doctrine living in code, firing from a hardcoded
+`rule_id` in the boards retriever. It was not. That line is a test fixture asserting that a card
+carrying such a flag is never remembered, which is the eligibility rule and a different thing. The
+name appears twice more in the build, both times in a comment. **The Verifier had no such rule at
+all**, so the gate doc 05 v0.2 states in as many words had never once been evaluated.
+
+**Decision** The detector is written, both packs carry the rule as data at block severity, and the
+new `finance-eu` pack carries it too. A figure covered only by citations to `own_card` or `page`
+passages is blocked. A figure covered by no citation belongs to `numeric_without_citation`; two
+rules firing on one absence would put two flags on one span and read as two faults.
+
+**Scoped to figures, not to every claim**, because a prior card summarising what a rule is about is
+the context memory exists to supply. It is the numbers and the citations to instruments that have to
+rest on the thing itself. Doc 16 line 69 extends the same rule to `page` sources when the vault
+lands, so both classes are listed now and that arrival is a pack edit rather than a code edit.
+
+**Doc 05 v0.2 also asks that own_card passages reach the Synthesizer "marked prior work, context
+only".** The prompt carried `class="own_card"`, which says what a passage is and never what to do
+with it. The sentence is there now, asserted end to end.
+
+**Reason** Recorded because the plan asserted a defect that was one step milder than the truth, and
+the check that found the difference was reading the line the plan cited.
+
+---
+
+### BN-090 Every percentage in the corpus escaped the citation rules
+
+**Spec** 07 section B8.1.
+
+**Found** while writing a fixture for BN-089's rule. The fixture said `2.5 %` and the detector found
+nothing in it.
+
+**`numeric_spans` ended its pattern in `\b`**, which cannot follow `%`: a word boundary needs a word
+character on one side, and `%` is not one. So `2.5 %`, `2.5%` and `2.5 %.` matched nothing, and every
+rule built on that helper skipped them without a word. That is `numeric_without_citation`, block
+severity, doc 07 section B8.1's rule that a figure carries a source.
+
+**Split before fixing, and the split is the finding.** The synthetic corpus writes all 147 of its
+percentages with the symbol and none as "per cent". The unit tests wrote theirs as `percent`, which
+the pattern matches. So the gate passed every test and measured nothing across the whole corpus, and
+neither side of the build ever met the other.
+
+**Measured after the fix**: no metric moved on the grounded sweep. That is the right outcome and it
+is worth saying why rather than treating it as nothing happening. The grounded mock quotes each
+passage behind its own marker and spans the citation over it, so every figure it writes is already
+inside a cited span. The rule now sees the figures it always should have seen and finds them cited.
+What changed is that a real model writing `2.5 %` outside a cited span will be caught, and until now
+it would not have been.
+
+**Reason** The same shape as BN-019's rule seen from the other end: a metric can have nothing to
+measure, and so can a gate. This one had a denominator of 147 and a matcher that could not see any
+of them.
+
+---
+
+### BN-091 Finance ships, and the twin has to keep agreeing with it
+
+**Spec** 12 phase 10, 11 mission, 02 section 4.
+
+**Decision** `packs/finance-eu.json` ships beside `general` and `finance-eu-synthetic`, which is doc
+12 phase 10's three. It is the twin with real bodies in the source hierarchy and real instruments in
+the vocabulary: EBA, ECB and EUR-Lex at trust rank 1, ESMA at 2, then structured, local, own_card,
+web, user supplied. CRR and CRD, PSD2, DORA.
+
+**The rules are identical and a test says so.** Doc 02 section 4 says the twin exists "so a score on
+the corpus is comparable with the shipped pack", and that only holds while the two agree on every
+rule id, severity and detector. What may differ is who the issuers are and what the words are, which
+name the domain rather than decide whether a card passes. Dropping one rule from the shipped pack
+fails that test.
+
+**The hierarchy is a first draft and is recorded as one.** Saying that EBA guidance outranks a
+national circular is a domain judgment, and nothing in this build verifies it. The rules underneath
+are measured; the ranking of real issuers is not, and it wants a review from someone who works in the
+field before it reaches one.
+
+**Reason** Doc 11's mission makes finance the first doctrine pack rather than an optional one, and
+two of three shipping meant the sentence was not true yet.
+
+---
+
+### BN-092 The diagnostics export shipped everything it exists to withhold
+
+**Spec** 10 section 11.
+
+**Found** by the test written beside it, on its first run.
+
+**What happened.** `payload` is declared TEXT and holds serialised json, so a row
+read comes back as one long string. The redaction walked the value it was given,
+matched no keys because a string has none, and wrote the whole payload through
+untouched: every answer, every question, every reason a flag gave, every passage
+quoted in an evidence object. The export was airtight against exactly the shape
+it never saw.
+
+**Decision** A json column is parsed before it is redacted, and a nested string
+that looks like json is descended into rather than passed through. `Step` fields
+carry a document inside a document, and a pass that stopped at the quote mark
+would ship it.
+
+**The rule here is the opposite of the bundle's.** A bundle names what it
+includes, so a column added to the store tomorrow travels by design. This names
+what survives, and everything else goes. That is the right way round for the one
+file whose recipient is a stranger debugging a crash rather than someone the
+sender chose.
+
+**Evidence goes whole rather than field by field.** Doc 01 line 310 says evidence
+is "the passage, the number, the stale date", so descending into it to keep some
+of it would be looking for reasons to keep part of a field that exists to carry
+content.
+
+**Reason** Recorded because the defect and its test were written in the same
+hour, and only one of them was right. A redaction that has never been run
+against real rows is a claim, not a guard.
+
+---
+
+### BN-093 A test that searched for a string the export could not have contained
+
+**Spec** 10 section 11.
+
+**Found** by breaking the redaction on purpose after BN-092 was fixed, to check
+the guards bit. Two of three did. The third, the end to end one over the RPC
+surface, passed with the redaction switched off entirely.
+
+**Why.** It looked for the card's answer. `card.answered.v1` carries a card id, a
+mode and three counts, and never the prose, so the answer was not in the export
+either way and the assertion was true whatever the code did.
+`card.requested.v1` does carry the question a person typed, which makes it the
+one field in that fixture where a leak would show.
+
+**Reason** The same shape as BN-090 and BN-019 in a third place: a check with
+nothing to check reports success, and success is indistinguishable from working
+until somebody breaks the thing on purpose. Mutating each rule in turn is now
+what earns a guard the right to be called one.
+
+---
+
+### BN-094 A backup is a snapshot, not a copy of a file
+
+**Spec** 10 section 15.
+
+**Decision** `VACUUM INTO` rather than a byte copy. SQLite in WAL mode keeps
+recent commits in a side file, so copying `tessera.sqlite` while anything is
+writing produces a database mid transaction: it opens, it passes a shallow look,
+and it is missing whatever had not been checkpointed. The snapshot is deleted
+whether the zip succeeded or not, because until then the profile folder holds two
+copies of everything a person owns.
+
+**Corruption is detected before the migrations run**, not after. A migration
+against damaged pages rewrites tables on top of the damage and turns a database
+that could still have been partly read into one that cannot, at which point the
+backup is the only copy of anything. `PRAGMA integrity_check` reads every page,
+which is the point: an opened handle proves the header parsed and nothing else.
+
+**Nothing is moved on start.** Doc 10 section 15 says the damaged file is kept
+aside, and `quarantine` is a separate call the shell makes after telling the
+person what it found. A start that silently renamed someone's work and carried on
+is the behaviour they would least expect and could least undo. The `-wal` and
+`-shm` files go with it, because applied to a restored database they would be a
+second corruption on top of the first.
+
+**Restore refuses a folder that already holds a profile.** The offer is made to
+someone whose database is damaged, and the worst reading of that offer is one
+that overwrites the damaged file before anyone has looked at it.
+
+**Restore is not an RPC.** It replaces the database the running core is holding
+open, so a core cannot perform one on itself. A `profile.restore` that half
+worked would land on someone whose database is already damaged.
+
+**Reason** Doc 10 section 15 names three operations and the interesting part of
+all three is what they refuse to do.
+
+---
+
+### BN-095 CI, and the tree that had never been formatted
+
+**Spec** 12 phase 11.
+
+**Decision** Three workflows. `checks.yml` runs everything free on every push,
+split into four jobs so a failure names itself rather than saying "checks
+failed". `eval.yml` is the live sweep, behind a manual trigger with the question
+count as an input, and its nightly schedule is written and commented out.
+`release.yml` builds the msi and the dmg and opens a draft release.
+
+**The formatter check needed the tree formatted first.** `rustfmt.toml` has been
+in the repo since the first commit and rustfmt was never installed in the
+container this was built in, so `cargo fmt --check` failed on forty five files
+the moment it was added. A check the tree cannot pass is a check nobody can act
+on, so the tree was formatted in its own commit before CI arrived.
+
+**Signing is conditional and the job says which build it made.** An unsigned
+build that claimed to be signed is worse than one that says so: the person finds
+out from Gatekeeper instead, holding a file nobody warned them about.
+
+**The nightly is not scheduled.** Doc 12 phase 11 asks for one and the cron line
+is there, commented, because a job that bills an account every night is a
+decision somebody makes on purpose rather than a default that arrives with a
+merge. Uncommenting it is that decision.
+
+**Not verified on a runner.** Every step was run locally and the yaml parses, but
+both pushes produced runs that ended in seconds with no runner assigned and no
+logs, which is what an account with no Actions minutes looks like. The workflows
+are written and unproven, and that is recorded rather than assumed away.
+
+---
+
+### BN-096 A key a headless runner can read, and why it is not a second keychain
+
+**Spec** 01 section 4.16, 10 section 8, 12 phase 11.
+
+**Found** while writing `eval.yml`. There was no path at all: Linux `keyring`
+wants a Secret Service over D-Bus, a CI runner has no session for one, and every
+live run there would have failed on its first call. Doc 12 phase 11's nightly
+could not exist.
+
+**Decision** `EnvKeyStore` reads a key from an environment variable named by its
+provider, so `anthropic-default` and `anthropic-team` both resolve to
+`TESSERA_KEY_ANTHROPIC`: a runner has one account per provider, and the label
+after the first dash is a name someone chose on their own machine.
+
+**What the rule was protecting is intact.** A secret still never lands in a file
+and never becomes an argument, and an argument is the thing that shows up in
+`ps`, in a crash dump, and in the runner's own echo of the command it ran. The
+store is read only, because nothing a process exports reaches the step after it
+and reporting a key stored that is not would send someone looking for it later.
+Its error names the variable and never any part of a value: a CI log is the most
+public place this build has.
+
+**Opted into by `TESSERA_CI`, never by probing.** Asking whether the keychain
+happens to answer would treat a locked keychain on someone's laptop the same as
+an absent one, and falling back there would train a person to expect an unlock
+prompt that never comes.
+
+**Reason** Recorded because this is the one place a standing constraint was
+widened, and the argument for it should be legible without reading the diff.
+
+---
+
+### BN-097 First run, and the question the shell must not answer for itself
+
+**Spec** 11 section 6, 12 phase 11.
+
+**Decision** Three steps, and the third says it is optional. The pack is already
+chosen, because a profile always has one, so that step opens finished. The key
+is the only one that gates the way out, and the disabled button says why rather
+than leaving a person to work it out from a dead control.
+
+**Whether this is a first run is asked of the core.** A shell that inferred it
+from "are there any boards" would show the setup screen again to someone who
+trashed their only board, and a second shell would infer it differently. The
+definition lives in one place, and a key in the keychain is what it turns on:
+a pack is always set and a folder is optional, so neither can be the question.
+
+**The key field is cleared before the call, not after.** It holds the only copy
+of the secret in the page and the screen stays up when a call fails.
+
+**A folder that does not exist is refused.** A path typed with a typo is the
+common case, and a setup that accepted it would leave a retriever pointed at
+nothing and report that everything went well.
+
+**A sensitive folder cannot ask for provider embeddings.** Doc 05 section 7 and
+doc 10 section 16 make those two settings a contradiction, and honouring both
+quietly would send the text of a folder someone marked private.
+
+**Reason** Doc 12 phase 11's acceptance is a fresh install to a first verified
+deep card, and the only part of that measurable without spending money is
+everything up to the ask. Seven Playwright tests cover it; breaking the gate
+fails six of them.
+
+---
+
+### BN-098 Walkthrough line 15 had no screen, and finding one out took four defects
+
+**Spec** 01 section 4.4, 15 section 2, 12's acceptance walkthrough line 15.
+
+**The row** is "a card on a second board builds on a verified card from the
+first, citing the original source". The core has done it since M6 and a Rust test
+has proved it since then. `builds_on` was recorded on the card, carried over the
+RPC in `board.get`, and rendered by nothing. The plan called this the encouraging
+row because the hard part was built; what it lacked was a surface, and a surface
+that does not exist is indistinguishable from one that does until someone drives
+it.
+
+**Decision** The build trail names the prior cards, read from `card.answered.v1`
+like every other row in that disclosure rather than from the card row, so the
+disclosure has one source and cannot disagree with itself. Doc 15 section 2's
+rule decides the wording: it names the cards and never stands in for the
+citations below it, because a prior card is context and the source it cited is
+the evidence.
+
+**Driving it end to end found four things**, none of which a unit test would have.
+
+1. **The boards retriever is not a retriever.** Doc 04 section 10's
+   `no_retriever_enabled` refuses a plan with nothing to retrieve from, and doc
+   05 adds `boards` to every sub-question rather than making it a substitute for
+   one. A dev core with only memory configured could not answer a deep card at
+   all.
+2. **The dev server could never produce a verified card.** Its Synthesizer mock
+   returned a fixed answer that cited nothing, so every deep card came back
+   flagged `unsupported_claim`, and doc 15 section 3 rules out a card with an
+   open block flag. Memory had nothing to remember, in the one place a person
+   would look at it.
+3. **A citation marker after the full stop is its own sentence.** The Synthesizer
+   binds by walking sentences and reading the `[n]` markers in each, so the first
+   fix put the marker outside the claim it belonged to and every card stayed
+   flagged. The marker goes before the stop.
+4. **`verifier_below_threshold` was telling people something untrue.** Its
+   message read "the support check is not enabled yet", which stopped being true
+   at M8 when that check was built. Doc 07 section B9 has the rule fire while a
+   pack has not reached 0.90 agreement with the ledger check, which no pack has,
+   so it fires on every deep and research card in the product. Anyone reading it
+   would conclude nothing had checked their card, when what is pending is the
+   measurement that would let the checking run unsupervised.
+
+**`own_card_sole_support` still did not fire**, and correctly: the answer carries
+no figures, and BN-089 scoped the rule to figures on purpose. Its first real
+opportunity came and went, which is worth more than the n/a it keeps.
+
+**Reason** Recorded because the fourth one is the interesting one. It was in
+front of a user on every deep card since M8 and no test noticed, because no test
+reads a flag's prose and the copy lint checks style rather than truth.
+
+---
+
 ---
 
 ## Measured findings
+
+### BN-056 The three staleness gates, measured at last
+
+**Measured** 2026-08-27, corpus 0.3.0-42 built at T1 and T3, grounded mock, no model spend. The
+question sweep is 400 questions at T1, results at `eval/results/42/grounded/run-1787801147`. The
+re-verification reads 148 cards back at T3 against the T1 tree as its baseline, results at
+`eval/results/42-T3/grounded/run-1787800768`.
+
+| Gate | Threshold | Result |
+|---|---|---|
+| `staleness_detection` | 0.95 | 1.000 |
+| `stale_propagation` | 0.95 | 1.000 |
+| `stale_ancestor_reverification` | 1.0 | 1.000 |
+
+Neither run has a measured metric below its threshold. The T1 sweep measures 24 of 36 metrics and
+the T3 re-verification 9, and the two do not overlap much on purpose: a re-verification answers
+nothing, so every metric about answering reports n/a there.
+
+**What the denominators are.** Worth writing down, because all three are small and a reader who
+assumes otherwise will misread the next run. `staleness_detection` is 2, the two cards that state
+a superseded fact; no question in the 400 requires one, so the question sweep can never measure
+this metric however well it retrieves. `stale_propagation` is 2, the ends of doc 15's stale chain.
+`stale_ancestor_reverification` is 10, the follow ups whose parent turned out to cite a stale
+source. Five of 28 cited sources went stale at T3: two changed content, two stopped resolving, one
+was superseded.
+
+**What is not yet measured.** The dependent end of the stale chain cites `reg-car3-v1` itself as
+well as building on the origin card, so it would be flagged whether propagation works or not. The
+metric passes on a card that has two reasons to be flagged, and separating them needs a fixture
+where the dependent cites nothing stale of its own. Recorded rather than fixed, because changing
+the corpus to suit the metric is the wrong order.
 
 ### BN-047 The three defects the M6 plan predicted, closed
 

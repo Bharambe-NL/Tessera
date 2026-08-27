@@ -37,7 +37,8 @@ impl Agent for Visualizer {
         "visualizer"
     }
     fn packet_schema(&self) -> &'static str {
-        ids::COMMON
+        // Doc 06 section B4.
+        ids::PACKET_VISUALIZER
     }
     fn output_schema(&self) -> &'static str {
         ids::OUT_VISUALIZER
@@ -59,27 +60,49 @@ impl Agent for Visualizer {
         };
 
         step(ctx, "composing")?;
-        let composed = compose(ctx, packet, summary, visual_type).await?;
+        let mut composed = compose(ctx, packet, summary, visual_type).await?;
+
+        // Doc 06 section B5's harness rule: node and row counts within the
+        // doctrine's limits. The limits were named in the prompt and nothing
+        // checked the answer, so a model returning twenty rows produced a
+        // twenty row visual against a pack that allows eight.
+        let mut shape = Shape::default();
+        shape.dropped += enforce_limits(&mut composed, visual_type, &packet["doctrine"]);
 
         step(ctx, "indexing_blocks")?;
-        let indexed = match index_blocks(&composed, visual_type, summary) {
-            Ok(i) => i,
-            // Doc 06 section B10 `untraceable_labels`: retry naming them, then
-            // drop. The retry is the harness's, so a second failure lands here.
-            Err(untraceable) => {
-                if ctx.machine.retries_used() == 0 && ctx.machine.retry().is_ok() {
-                    return Err(Failure {
-                        kind: "untraceable_labels".into(),
-                        detail: format!("labels not present in the summary: {}", untraceable.join(", ")),
-                        recovery: Recovery::Retried,
-                        evidence: Some(json!({ "untraceable": untraceable })),
-                        recoverable: true,
-                    });
+        let mut second_pass = false;
+        let indexed = loop {
+            match index_blocks(&composed, visual_type, summary, shape) {
+                Ok(i) => break i,
+                // Doc 06 section B10 `untraceable_labels`: retry naming them,
+                // then drop. The retry is the harness's, so a second failure
+                // lands here, and B8.3 says it drops those blocks rather than
+                // the whole visual.
+                Err(untraceable) => {
+                    if ctx.machine.retries_used() == 0 && ctx.machine.retry().is_ok() {
+                        return Err(Failure {
+                            kind: "untraceable_labels".into(),
+                            detail: format!("labels not present in the summary: {}", untraceable.join(", ")),
+                            recovery: Recovery::Retried,
+                            evidence: Some(json!({ "untraceable": untraceable })),
+                            recoverable: true,
+                        });
+                    }
+                    if second_pass {
+                        return Ok(declined(
+                            ctx,
+                            "Nothing in the diagram traced back to the answer, so it was dropped.",
+                        ));
+                    }
+                    second_pass = true;
+                    shape.dropped += prune_untraceable(&mut composed, visual_type, &untraceable);
+                    if !has_content(&composed, visual_type) {
+                        return Ok(declined(
+                            ctx,
+                            "Nothing in the diagram traced back to the answer, so it was dropped.",
+                        ));
+                    }
                 }
-                return Ok(declined(
-                    ctx,
-                    "Some labels could not be traced back to the answer, so the diagram was dropped.",
-                ));
             }
         };
 
@@ -310,11 +333,159 @@ struct Indexed {
     confidence: f64,
 }
 
+/// How the visual came to be, which is what doc 06 section B9's second and
+/// third confidence terms are about.
+#[derive(Debug, Clone, Copy, Default)]
+struct Shape {
+    /// The type came from a model call breaking a tie rather than from a rule.
+    tie_broken: bool,
+    /// Blocks removed before indexing, by a doctrine limit or by doc 06 section
+    /// B8.3's second untraceable pass.
+    dropped: usize,
+}
+
+/// Cut a composed payload down to the doctrine's limits, returning how many
+/// elements went. Doc 06 section B5.
+///
+/// The limits reach the model in the prompt, and a prompt is a request. This is
+/// the check, so a pack that allows eight rows gets eight.
+fn enforce_limits(composed: &mut Value, visual_type: &str, doctrine: &Value) -> usize {
+    let max_nodes = doctrine["max_nodes"].as_u64().unwrap_or(18) as usize;
+    let max_rows = doctrine["max_rows"].as_u64().unwrap_or(8) as usize;
+    let payload = &mut composed["payload"];
+    let mut dropped = 0;
+
+    let mut truncate = |array: Option<&mut Vec<Value>>, limit: usize| {
+        if let Some(items) = array
+            && items.len() > limit
+        {
+            dropped += items.len() - limit;
+            items.truncate(limit);
+        }
+    };
+
+    match visual_type {
+        "table" => truncate(payload["rows"].as_array_mut(), max_rows),
+        "steps" => truncate(payload["steps"].as_array_mut(), max_nodes),
+        "tree" => {
+            truncate(payload["root"]["children"].as_array_mut(), max_nodes);
+            let budget = max_nodes;
+            if let Some(children) = payload["root"]["children"].as_array_mut() {
+                let mut used = children.len();
+                for child in children.iter_mut() {
+                    let Some(grandchildren) = child["children"].as_array_mut() else {
+                        continue;
+                    };
+                    let room = budget.saturating_sub(used);
+                    if grandchildren.len() > room {
+                        dropped += grandchildren.len() - room;
+                        grandchildren.truncate(room);
+                    }
+                    used += grandchildren.len();
+                }
+            }
+        }
+        _ => {
+            let mut used = 0usize;
+            if let Some(groups) = payload["groups"].as_array_mut() {
+                for group in groups.iter_mut() {
+                    let Some(items) = group["items"].as_array_mut() else {
+                        continue;
+                    };
+                    let room = max_nodes.saturating_sub(used);
+                    if items.len() > room {
+                        dropped += items.len() - room;
+                        items.truncate(room);
+                    }
+                    used += items.len();
+                }
+            }
+        }
+    }
+    dropped
+}
+
+/// Remove the blocks whose labels trace back to nothing, returning how many
+/// went. Doc 06 section B8.3's second pass, which drops those blocks rather
+/// than the diagram.
+fn prune_untraceable(composed: &mut Value, visual_type: &str, untraceable: &[String]) -> usize {
+    let gone: std::collections::BTreeSet<&str> = untraceable.iter().map(String::as_str).collect();
+    let payload = &mut composed["payload"];
+    let mut dropped = 0;
+
+    match visual_type {
+        "table" => {
+            if let Some(rows) = payload["rows"].as_array_mut() {
+                let before = rows.len();
+                rows.retain(|row| {
+                    !row.as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|cell| cell.as_str().is_some_and(|label| gone.contains(label)))
+                });
+                dropped += before - rows.len();
+            }
+        }
+        "steps" => {
+            if let Some(steps) = payload["steps"].as_array_mut() {
+                let before = steps.len();
+                steps.retain(|s| !s["label"].as_str().is_some_and(|l| gone.contains(l)));
+                dropped += before - steps.len();
+            }
+        }
+        "tree" => {
+            if let Some(children) = payload["root"]["children"].as_array_mut() {
+                let before = children.len();
+                children.retain(|c| !c["label"].as_str().is_some_and(|l| gone.contains(l)));
+                dropped += before - children.len();
+                for child in children.iter_mut() {
+                    if let Some(grandchildren) = child["children"].as_array_mut() {
+                        let before = grandchildren.len();
+                        grandchildren.retain(|g| !g["label"].as_str().is_some_and(|l| gone.contains(l)));
+                        dropped += before - grandchildren.len();
+                    }
+                }
+            }
+        }
+        _ => {
+            if let Some(groups) = payload["groups"].as_array_mut() {
+                for group in groups.iter_mut() {
+                    if let Some(items) = group["items"].as_array_mut() {
+                        let before = items.len();
+                        items.retain(|i| !i["name"].as_str().is_some_and(|l| gone.contains(l)));
+                        dropped += before - items.len();
+                    }
+                }
+            }
+        }
+    }
+    dropped
+}
+
+/// Whether a pruned payload still has anything to draw.
+fn has_content(composed: &Value, visual_type: &str) -> bool {
+    let payload = &composed["payload"];
+    match visual_type {
+        "table" => payload["rows"].as_array().is_some_and(|r| !r.is_empty()),
+        "steps" => payload["steps"].as_array().is_some_and(|s| !s.is_empty()),
+        "tree" => payload["root"].is_object(),
+        _ => payload["groups"].as_array().is_some_and(|g| {
+            g.iter()
+                .any(|x| x["items"].as_array().is_some_and(|i| !i.is_empty()))
+        }),
+    }
+}
+
 /// Doc 06 section B8 point 3. A deterministic walk of the payload building
 /// pointers and copying citations from the summary entry each label came from.
 ///
 /// Returns the untraceable labels on failure, so the retry prompt can name them.
-fn index_blocks(composed: &Value, visual_type: &str, summary: &Value) -> Result<Indexed, Vec<String>> {
+fn index_blocks(
+    composed: &Value,
+    visual_type: &str,
+    summary: &Value,
+    shape: Shape,
+) -> Result<Indexed, Vec<String>> {
     let payload = composed["payload"].clone();
     let lookup = SummaryIndex::build(summary);
 
@@ -333,8 +504,14 @@ fn index_blocks(composed: &Value, visual_type: &str, summary: &Value) -> Result<
                     "ref": ref_path, "label": label, "citation_ordinals": [], "no_claim": true
                 }));
             }
+            // A label the summary knows but carries no citation for. Only
+            // `values` carry ordinals, so every entity, relation endpoint, step
+            // and group item lands here. Doc 06 section B5 wants every block
+            // either cited or marked, and these were neither, which made a
+            // steps or list visual fail the rule silently while
+            // `visual_fidelity` had no threshold to catch it.
             None if lookup.knows(label) => blocks.push(json!({
-                "ref": ref_path, "label": label, "citation_ordinals": []
+                "ref": ref_path, "label": label, "citation_ordinals": [], "no_claim": true
             })),
             None => untraceable.push(label.to_string()),
         }
@@ -379,6 +556,26 @@ fn index_blocks(composed: &Value, visual_type: &str, summary: &Value) -> Result<
                     );
                 }
             }
+            // Doc 06 section B5: every label in the payload appears in the block
+            // index. The payload schema allows a `bottom_line` and this walk
+            // skipped it, so a table could carry a closing claim with no block
+            // behind it and no citation, which is exactly what the rule forbids.
+            // The head is a label and the text is a claim, so only the text has
+            // to trace.
+            if payload["bottom_line"].is_object() {
+                add(
+                    "/bottom_line/head".into(),
+                    payload["bottom_line"]["head"].as_str().unwrap_or_default(),
+                    true,
+                    &mut blocks,
+                );
+                add(
+                    "/bottom_line/text".into(),
+                    payload["bottom_line"]["text"].as_str().unwrap_or_default(),
+                    false,
+                    &mut blocks,
+                );
+            }
         }
         "steps" => {
             for (i, s) in payload["steps"].as_array().into_iter().flatten().enumerate() {
@@ -416,13 +613,21 @@ fn index_blocks(composed: &Value, visual_type: &str, summary: &Value) -> Result<
         return Err(untraceable);
     }
 
-    // Doc 06 section B9.
+    // Doc 06 section B9: the share of blocks with citations at 0.6, a type the
+    // rules chose rather than a tie break at 0.2, and no blocks dropped at 0.2.
+    //
+    // The last two were written as constants, `+ 0.2 + 0.2 * 100.0 / 100.0`, so
+    // confidence could never fall below 0.4 whatever happened and B9's "under
+    // 0.5 the Verifier is told to check block bindings first" could never fire
+    // on a visual whose blocks were the problem.
     let total = blocks.len().max(1) as f64;
     let cited = blocks
         .iter()
         .filter(|b| b["citation_ordinals"].as_array().is_some_and(|c| !c.is_empty()))
         .count() as f64;
-    let confidence = ((cited / total) * 0.6 + 0.2 + 0.2 * 100.0 / 100.0).min(1.0);
+    let by_rule = if shape.tie_broken { 0.0 } else { 0.2 };
+    let intact = if shape.dropped == 0 { 0.2 } else { 0.0 };
+    let confidence = ((cited / total) * 0.6 + by_rule + intact).min(1.0);
 
     Ok(Indexed {
         payload,
@@ -605,7 +810,7 @@ mod tests {
             "title": "Thresholds",
             "payload": { "columns": ["Rule", "Value"], "rows": [["buffer", "2.5"], ["leverage floor", "3"]] }
         });
-        let err = index_blocks(&composed, "table", &summary).expect_err("must not pass");
+        let err = index_blocks(&composed, "table", &summary, Shape::default()).expect_err("must not pass");
         assert!(err.iter().any(|l| l == "leverage floor"), "got {err:?}");
     }
 
@@ -617,7 +822,7 @@ mod tests {
             "title": "Buffer",
             "payload": { "columns": ["Rule", "Value"], "rows": [["buffer", "2.5 %"]] }
         });
-        let indexed = index_blocks(&composed, "table", &summary).expect("indexes");
+        let indexed = index_blocks(&composed, "table", &summary, Shape::default()).expect("indexes");
         let blocks = indexed.blocks.as_array().expect("blocks");
 
         let cell = blocks
@@ -628,6 +833,107 @@ mod tests {
     }
 
     #[test]
+    fn a_doctrine_limit_cuts_the_rows_it_names() {
+        // Doc 06 section B5. The limit reached the model in the prompt and
+        // nothing checked the answer, so a pack allowing eight rows got twenty.
+        let mut composed = json!({
+            "title": "T",
+            "payload": {
+                "columns": ["A", "B"],
+                "rows": (0..20).map(|i| json!([format!("r{i}"), "v"])).collect::<Vec<_>>()
+            }
+        });
+        let dropped = enforce_limits(&mut composed, "table", &json!({ "max_rows": 8 }));
+        assert_eq!(dropped, 12);
+        assert_eq!(composed["payload"]["rows"].as_array().expect("rows").len(), 8);
+    }
+
+    #[test]
+    fn a_second_untraceable_pass_drops_the_block_and_keeps_the_rest() {
+        // Doc 06 section B8.3: "a second failure drops those blocks", which is
+        // not the same as dropping the diagram.
+        let mut composed = json!({
+            "title": "T",
+            "payload": {
+                "columns": ["Rule", "Value"],
+                "rows": [["buffer", "2.5"], ["invented", "9.9"]]
+            }
+        });
+        let dropped = prune_untraceable(&mut composed, "table", &["invented".to_string()]);
+        assert_eq!(dropped, 1);
+        assert_eq!(composed["payload"]["rows"], json!([["buffer", "2.5"]]));
+        assert!(has_content(&composed, "table"));
+
+        // And when nothing traceable is left there is no diagram to keep.
+        let mut all_bad = json!({
+            "title": "T",
+            "payload": { "columns": ["Rule"], "rows": [["invented"]] }
+        });
+        prune_untraceable(&mut all_bad, "table", &["invented".to_string()]);
+        assert!(!has_content(&all_bad, "table"));
+    }
+
+    #[test]
+    fn confidence_falls_when_a_block_was_dropped() {
+        // Doc 06 section B9's third term. It was written as `0.2 * 100.0 /
+        // 100.0`, so confidence could never fall below 0.4 whatever happened.
+        let summary = json!({ "values": [{ "label": "buffer", "value": "2.5", "citation": 1 }] });
+        let composed = json!({
+            "title": "T",
+            "payload": { "columns": ["Rule", "Value"], "rows": [["buffer", "2.5"]] }
+        });
+
+        let intact = index_blocks(&composed, "table", &summary, Shape::default()).expect("indexes");
+        let pruned = index_blocks(
+            &composed,
+            "table",
+            &summary,
+            Shape {
+                tie_broken: false,
+                dropped: 1,
+            },
+        )
+        .expect("indexes");
+        assert!(pruned.confidence < intact.confidence, "{pruned:?} {intact:?}");
+
+        let tied = index_blocks(
+            &composed,
+            "table",
+            &summary,
+            Shape {
+                tie_broken: true,
+                dropped: 0,
+            },
+        )
+        .expect("indexes");
+        assert!(tied.confidence < intact.confidence);
+    }
+
+    #[test]
+    fn a_step_the_summary_knows_but_never_cited_is_marked_rather_than_left_bare() {
+        // Doc 06 section B5 wants every block cited or marked. Only `values`
+        // carry ordinals, so a steps visual produced blocks that were neither.
+        let summary = json!({ "steps": ["identify the counterparty", "assign the risk weight"] });
+        let composed = json!({
+            "title": "T",
+            "payload": { "steps": [
+                { "label": "identify the counterparty" },
+                { "label": "assign the risk weight" }
+            ] }
+        });
+        let indexed = index_blocks(&composed, "steps", &summary, Shape::default()).expect("indexes");
+        for block in indexed.blocks.as_array().expect("blocks") {
+            let cited = block["citation_ordinals"]
+                .as_array()
+                .is_some_and(|c| !c.is_empty());
+            assert!(
+                cited || block["no_claim"] == true,
+                "a block with neither citations nor no_claim: {block}"
+            );
+        }
+    }
+
+    #[test]
     fn a_column_heading_is_structural_and_may_carry_no_claim() {
         // Doc 07 section B8.3 limits no_claim to structural labels.
         let summary = json!({ "values": [{ "label": "buffer", "value": "2.5", "citation": 1 }] });
@@ -635,7 +941,7 @@ mod tests {
             "title": "T",
             "payload": { "columns": ["Rule", "Value"], "rows": [["buffer", "2.5"]] }
         });
-        let indexed = index_blocks(&composed, "table", &summary).expect("indexes");
+        let indexed = index_blocks(&composed, "table", &summary, Shape::default()).expect("indexes");
         let blocks = indexed.blocks.as_array().expect("blocks");
         let heading = blocks.iter().find(|b| b["ref"] == "/columns/0").expect("heading");
         assert_eq!(heading["no_claim"], true);
@@ -648,7 +954,7 @@ mod tests {
             "title": "Loop",
             "payload": { "steps": [{ "label": "Encode" }, { "label": "Predict" }, { "label": "Plan" }] }
         });
-        let indexed = index_blocks(&composed, "steps", &summary).expect("indexes");
+        let indexed = index_blocks(&composed, "steps", &summary, Shape::default()).expect("indexes");
         for b in indexed.blocks.as_array().expect("blocks") {
             let r = b["ref"].as_str().expect("ref");
             assert!(r.starts_with('/'), "`{r}` is not a JSON pointer");

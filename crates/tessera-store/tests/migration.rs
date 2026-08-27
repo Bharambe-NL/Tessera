@@ -289,7 +289,13 @@ fn schema_of(conn: &Connection) -> Vec<(String, String)> {
     stmt.query_map([], |r| {
         let name: String = r.get(0)?;
         let sql: String = r.get(1)?;
-        Ok((name, sql.replace('"', "").split_whitespace().collect::<Vec<_>>().join(" ")))
+        Ok((
+            name,
+            sql.replace('"', "")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        ))
     })
     .expect("query")
     .collect::<Result<Vec<_>, _>>()
@@ -369,8 +375,11 @@ fn the_widened_checks_still_refuse_what_they_always_refused() {
     );
 
     assert!(
-        conn.execute("UPDATE board SET mode = 'freestyle' WHERE id = ?1", params![ids.board])
-            .is_err(),
+        conn.execute(
+            "UPDATE board SET mode = 'freestyle' WHERE id = ?1",
+            params![ids.board]
+        )
+        .is_err(),
         "the board mode check did not survive the rebuild"
     );
 

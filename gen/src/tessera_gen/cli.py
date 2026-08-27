@@ -25,10 +25,16 @@ DEFAULT_SEED = 42
 DEFAULT_OUT = Path("synthetic")
 
 
-def build(seed: int, out: Path) -> dict:
+def build(seed: int, out: Path, snapshot: str | None = None) -> dict:
     """Everything, in dependency order. Doc 02 section 2: a corpus, then a
-    question set, then boards, because each depends on the previous one."""
-    root = out / str(seed)
+    question set, then boards, because each depends on the previous one.
+
+    With a snapshot label, the corpus is written as it stands at that time
+    rather than as the union of every time, and it goes to its own root so the
+    two can sit side by side. Doc 02 section 5.4 wants a board written at T1 and
+    reopened at T3, which needs both trees on disk at once.
+    """
+    root = out / (f"{seed}-{snapshot}" if snapshot else str(seed))
 
     facts = generate_facts(seed)
 
@@ -49,6 +55,26 @@ def build(seed: int, out: Path) -> dict:
     memory_truth = memory_mod.build(seed, facts, documents, question_set, board_set)
     snaps = snapshots_mod.build(seed, documents, facts)
 
+    # A snapshot tree holds the files that exist at its label, so a question
+    # whose source was deleted or taken down by then cannot be answered from it.
+    # Doc 02 section 5.4 means that to happen; recording which questions it hits
+    # keeps a later sweep from reading the gap as a retrieval failure.
+    stranded: list[dict] = []
+    if snapshot:
+        documents = snapshots_mod.materialise(
+            snapshot, documents, snapshots_mod.plan(seed, documents)
+        )
+        present = {d.doc_id for d in documents}
+        stranded = [
+            {
+                "q_id": q.q_id,
+                "snapshot": snapshot,
+                "missing_sources": sorted(set(q.required_sources) - present),
+            }
+            for q in question_set
+            if set(q.required_sources) - present
+        ]
+
     return writer.write_corpus(
         root=root,
         seed=seed,
@@ -62,21 +88,31 @@ def build(seed: int, out: Path) -> dict:
         transformations=transformations,
         dropped_questions=dropped,
         verification_problems=problems,
+        snapshot=snapshot,
+        stranded_questions=stranded,
     )
 
 
-def verify(seed: int, out: Path) -> int:
+def corpus_root(out: Path, seed: int, snapshot: str | None = None) -> Path:
+    """Where a corpus lives. A snapshot tree sits beside the default one, so
+    both can be on disk at once and a T1 board can be reopened at T3."""
+    return out / (f"{seed}-{snapshot}" if snapshot else str(seed))
+
+
+def verify(seed: int, out: Path, snapshot: str | None = None) -> int:
     """Re-run the checks that make a corpus usable, against what is on disk."""
-    root = out / str(seed)
+    root = corpus_root(out, seed, snapshot)
     ledger = root / "ledger.jsonl"
     if not ledger.exists():
-        print(f"no corpus at {root}. Run `gen build --seed {seed}` first.", file=sys.stderr)
+        flag = f" --snapshot {snapshot}" if snapshot else ""
+        print(f"no corpus at {root}. Run `gen build --seed {seed}{flag}` first.", file=sys.stderr)
         return 2
 
     rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line]
     build_row = next((r for r in rows if r.get("type") == "build"), None)
     problems = [r for r in rows if r.get("type") == "verification_problem"]
     dropped = [r for r in rows if r.get("type") == "dropped_question"]
+    stranded = [r for r in rows if r.get("type") == "stranded_question"]
 
     print(f"corpus {build_row['corpus_name'] if build_row else '?'} at {root}")
     print(f"  facts        {build_row['facts']['total'] if build_row else '?'}")
@@ -85,6 +121,8 @@ def verify(seed: int, out: Path) -> int:
     print(f"  boards       {build_row['boards']['total'] if build_row else '?'}")
     print(f"  plantings    {sum(1 for r in rows if r.get('type') == 'planting')}")
     print(f"  dropped      {len(dropped)}")
+    if stranded:
+        print(f"  stranded     {len(stranded)} questions whose sources this label no longer holds")
     print(f"  problems     {len(problems)}")
 
     for p in problems[:10]:
@@ -185,10 +223,17 @@ def main(argv: list[str] | None = None) -> int:
     p_build = sub.add_parser("build", help="generate a corpus")
     p_build.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p_build.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    p_build.add_argument(
+        "--snapshot",
+        choices=list(snapshots_mod.TIMELINE),
+        default=None,
+        help="write the corpus as it stands at this label, to <out>/<seed>-<label>",
+    )
 
     p_verify = sub.add_parser("verify", help="check a corpus on disk")
     p_verify.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p_verify.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    p_verify.add_argument("--snapshot", choices=list(snapshots_mod.TIMELINE), default=None)
 
     p_snapshot = sub.add_parser("snapshot", help="describe one snapshot")
     p_snapshot.add_argument("label", choices=list(snapshots_mod.TIMELINE))
@@ -199,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     p_score.add_argument("--results", type=Path, required=True)
     p_score.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p_score.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    p_score.add_argument(
+        "--snapshot",
+        choices=list(snapshots_mod.TIMELINE),
+        default=None,
+        help="score against the corpus as it stands at this label",
+    )
 
     p_recall = sub.add_parser(
         "score-retrieval", help="score what the index retrieved, doc 05 section 12"
@@ -215,15 +266,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "build":
-        summary = build(args.seed, args.out)
+        summary = build(args.seed, args.out, args.snapshot)
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 1 if summary["verification_problems"] else 0
     if args.command == "verify":
-        return verify(args.seed, args.out)
+        return verify(args.seed, args.out, args.snapshot)
     if args.command == "snapshot":
         return snapshot(args.seed, args.out, args.label)
     if args.command == "score":
-        return score(args.results, args.out / str(args.seed))
+        return score(args.results, corpus_root(args.out, args.seed, args.snapshot))
     if args.command == "score-retrieval":
         return score_retrieval(args.results, args.out / str(args.seed))
     if args.command == "serve":

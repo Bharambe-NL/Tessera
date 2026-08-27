@@ -723,7 +723,10 @@ pub struct Ancestor {
 
 impl Ancestor {
     pub fn stale_citations(&self) -> usize {
-        self.citations.iter().filter(|c| c["stale"] == json!(true)).count()
+        self.citations
+            .iter()
+            .filter(|c| c["stale"] == json!(true))
+            .count()
     }
 }
 
@@ -743,7 +746,11 @@ pub fn ancestor_chain(store: &Store, card_id: &str, limit: usize) -> Result<Vec<
     seen.insert(card_id.to_string());
 
     let mut next: Option<String> = conn
-        .query_row("SELECT parent_card_id FROM card WHERE id = ?1", params![card_id], |r| r.get(0))
+        .query_row(
+            "SELECT parent_card_id FROM card WHERE id = ?1",
+            params![card_id],
+            |r| r.get(0),
+        )
         .optional()?
         .flatten();
 
@@ -791,7 +798,7 @@ pub fn ancestor_chain(store: &Store, card_id: &str, limit: usize) -> Result<Vec<
 fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
     let conn = store.conn();
     let mut stmt = conn.prepare(
-        "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale
+        "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale, p.text
          FROM citation c JOIN passage p ON p.id = c.passage_id JOIN source s ON s.id = p.source_id
          WHERE c.card_id = ?1 ORDER BY c.ordinal ASC",
     )?;
@@ -804,9 +811,98 @@ fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
                 "locator": r.get::<_, String>(3)?,
                 "verdict": r.get::<_, String>(4)?,
                 "stale": r.get::<_, i64>(5)? != 0,
+                // Doc 02 section 10.2 reports citation accuracy per Verifier
+                // verdict *and* per ledger check, and the ledger check has to
+                // ask the same question the Verifier did. Without the passage
+                // the scorer could only ask a different one and call the gap
+                // disagreement.
+                "passage_text": r.get::<_, Option<String>>(6)?.unwrap_or_default(),
             }))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// A card read back for re-verification, with the current state of the sources
+/// it cited. Doc 07 section B8.4's freshness check runs against this.
+#[derive(Debug, Clone)]
+pub struct CardForVerify {
+    pub depth: String,
+    pub answer: Option<String>,
+    pub findings: Value,
+    /// In the shape an agent packet uses, keyed `n` rather than `ordinal`, so
+    /// the Verifier reads a re-verified card's citations exactly as it reads a
+    /// freshly synthesised one.
+    pub citations: Vec<Value>,
+    /// One per citation, in the shape the Verifier's packet expects, carrying
+    /// what the source looks like now rather than when the card was written.
+    pub passages: Vec<Value>,
+}
+
+/// Read a card and its citations back, for a run that re-verifies rather than
+/// answers. Doc 07 section B3.
+///
+/// The passages carry `stale` and `stale_reason` from the source rows as they
+/// stand now, which is the whole point: a card written months ago is judged
+/// against what its sources have since become.
+pub fn read_card_for_verify(store: &Store, card_id: &str) -> Result<Option<CardForVerify>> {
+    let conn = store.conn();
+    let row: Option<(String, Option<String>, String)> = conn
+        .query_row(
+            "SELECT depth, answer, findings FROM card WHERE id = ?1",
+            params![card_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?)),
+        )
+        .optional()?;
+    let Some((depth, answer, findings)) = row else {
+        return Ok(None);
+    };
+
+    let mut stmt = conn.prepare(
+        "SELECT c.ordinal, c.passage_id, p.text, s.title, s.class, s.locator, s.site_or_issuer,
+                s.trust_rank, s.published_at, s.version_ref, s.stale, s.stale_reason, c.claim_span,
+                c.binding
+           FROM citation c
+           JOIN passage p ON p.id = c.passage_id
+           JOIN source s ON s.id = p.source_id
+          WHERE c.card_id = ?1 ORDER BY c.ordinal ASC",
+    )?;
+    let rows: Vec<(Value, Value)> = stmt
+        .query_map(params![card_id], |r| {
+            let stale: i64 = r.get(10)?;
+            let passage_id: String = r.get(1)?;
+            let citation = json!({
+                "n": r.get::<_, i64>(0)?,
+                "passage_id": passage_id,
+                "claim_span": parse_json(&r.get::<_, String>(12)?),
+                "binding": r.get::<_, String>(13)?,
+            });
+            let passage = json!({
+                "passage_id": r.get::<_, String>(1)?,
+                "text": r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                "source": {
+                    "title": r.get::<_, String>(3)?,
+                    "class": r.get::<_, String>(4)?,
+                    "locator": r.get::<_, String>(5)?,
+                    "issuer": r.get::<_, Option<String>>(6)?,
+                    "trust_rank": r.get::<_, i64>(7)?,
+                    "published_at": r.get::<_, Option<String>>(8)?,
+                    "version_ref": r.get::<_, Option<String>>(9)?,
+                    "stale": stale != 0,
+                    "stale_reason": r.get::<_, Option<String>>(11)?,
+                },
+            });
+            Ok((citation, passage))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let (citations, passages) = rows.into_iter().unzip();
+    Ok(Some(CardForVerify {
+        depth,
+        answer,
+        findings: parse_json(&findings),
+        citations,
+        passages,
+    }))
 }
 
 fn read_flags(store: &Store, card_id: &str) -> Result<Vec<Value>> {
@@ -918,6 +1014,1168 @@ pub fn ensure_pack(store: &Store, pack: &Value) -> Result<String> {
     Ok(id)
 }
 
+/// Give a board a name the user chose.
+///
+/// `named_by_user` is what stops the next question overwriting it: doc 01
+/// section 4.1 lets the first question title an unnamed board, and once a person
+/// has typed a title that inference has to stop.
+pub fn rename_board(store: &mut Store, board_id: &str, title: &str) -> Result<()> {
+    let (id, name, now) = (board_id.to_string(), title.to_string(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "board.renamed.v1",
+            json!({ "board_id": board_id, "title": title }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "UPDATE board SET title = ?1, named_by_user = 1, updated_at = ?2 WHERE id = ?3",
+                params![name, now, id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+/// Move a board to Trash. Doc 09 open question 1, adopted by doc 11: Trash is a
+/// filter on Home rather than a rail item of its own.
+///
+/// Doc 09 section 5: every verb is undoable within the session except Remove on
+/// a board, which goes here instead of vanishing.
+pub fn trash_board(store: &mut Store, board_id: &str) -> Result<()> {
+    let (id, now) = (board_id.to_string(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "board.trashed.v1",
+            json!({ "board_id": board_id }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "UPDATE board SET status = 'trashed', trashed_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+pub fn restore_board(store: &mut Store, board_id: &str) -> Result<()> {
+    let (id, now) = (board_id.to_string(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "board.restored.v1",
+            json!({ "board_id": board_id }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "UPDATE board SET status = 'active', trashed_at = NULL, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+/// Delete a board and everything hanging from it.
+///
+/// The events stay. The log is append only and the database enforces it with a
+/// trigger, so a purge removes the entities and leaves the trail that says they
+/// existed, which is what makes `board.purged.v1` readable afterwards rather
+/// than a claim about rows nobody can check.
+pub fn purge_board(store: &mut Store, board_id: &str) -> Result<()> {
+    let id = board_id.to_string();
+    store.append_with(
+        NewEvent::new(
+            "board.purged.v1",
+            json!({ "board_id": board_id }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            // Cards cascade from the board, and citations and flags cascade from
+            // the cards. Visuals and notes are keyed on the board the same way.
+            tx.execute("DELETE FROM board WHERE id = ?1", params![id])?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+/// The Flags queue. Doc 09 section 6: open flags across every board on the
+/// profile, severity first and then age.
+///
+/// `read_flags` is per card and feeds the chip on a card. This is the other
+/// shape the same table is read in, and the `flag_open` index in the migration
+/// was written for it.
+pub fn open_flags(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT f.id, f.rule_id, f.severity, f.reason, f.evidence, f.created_at,
+                c.id, c.question, c.anchor_text, c.kind,
+                b.id, b.title
+         FROM flag f
+         JOIN card c ON c.id = f.card_id
+         JOIN board b ON b.id = c.board_id
+         WHERE f.status = 'open' AND b.profile_id = ?1 AND b.status = 'active'
+         ORDER BY CASE f.severity WHEN 'block' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END,
+                  f.created_at
+         LIMIT ?2",
+    )?;
+    Ok(stmt
+        .query_map(params![profile_id, limit], |r| {
+            let question: String = r.get(7)?;
+            let anchor: Option<String> = r.get(8)?;
+            let kind: String = r.get(9)?;
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "rule_id": r.get::<_, String>(1)?,
+                "severity": r.get::<_, String>(2)?,
+                "reason": r.get::<_, String>(3)?,
+                // Doc 09 section 6 wants an evidence preview on every row: the
+                // passage excerpt or the stale date, whichever the rule wrote.
+                "evidence": r.get::<_, Option<String>>(4)?
+                    .and_then(|e| serde_json::from_str::<Value>(&e).ok())
+                    .unwrap_or(Value::Null),
+                "created_at": r.get::<_, String>(5)?,
+                "card_id": r.get::<_, String>(6)?,
+                // The card title as the board shows it, so a row names what the
+                // reader will recognise rather than repeating the question.
+                "card_title": if kind == "root" { question } else { anchor.unwrap_or(question) },
+                "board_id": r.get::<_, String>(10)?,
+                "board_title": r.get::<_, String>(11)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Record one decision over one or more flags. Doc 01 section 4.12.
+///
+/// Reviews are immutable: changing your mind inserts another Review rather than
+/// editing this one, which is why the flag carries the review id and the review
+/// carries the flag ids.
+///
+/// `None` means no open flag matched. A decision recorded over nothing would
+/// leave a Review in the table that decided nothing, and the caller can say so
+/// instead.
+pub fn decide_flags(
+    store: &mut Store,
+    flag_ids: &[String],
+    decision: &str,
+    note: Option<&str>,
+) -> Result<Option<String>> {
+    // Which card each flag belongs to, read before the write so the events can
+    // be grouped by card and so a flag id naming nothing open is dropped rather
+    // than silently decided.
+    let mut cards: Vec<(String, String)> = Vec::new();
+    let mut open: Vec<String> = Vec::new();
+    {
+        let conn = store.conn();
+        for flag_id in flag_ids {
+            let found: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT f.card_id, c.board_id FROM flag f JOIN card c ON c.id = f.card_id
+                     WHERE f.id = ?1 AND f.status = 'open'",
+                    params![flag_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some(pair) = found {
+                cards.push(pair);
+                open.push(flag_id.clone());
+            }
+        }
+    }
+    let Some((first_card, first_board)) = cards.first().cloned() else {
+        return Ok(None);
+    };
+
+    let status = match decision {
+        "accept" => "accepted",
+        "dismiss" => "dismissed",
+        // Rerun and edit leave the flag open until the rerun writes a new card,
+        // so the queue does not lose a row to a decision that has not landed.
+        _ => "open",
+    };
+
+    let review_id = new_id();
+    let (rid, dec, n, at) = (
+        review_id.clone(),
+        decision.to_string(),
+        note.map(str::to_string),
+        now_iso8601(),
+    );
+    let flag_json = serde_json::to_string(&open).unwrap_or_else(|_| "[]".into());
+    let row_status = status.to_string();
+    let ids = open.clone();
+
+    store.append_with(
+        NewEvent::new(
+            "review.decided.v1",
+            json!({
+                "review_id": review_id,
+                "flag_ids": open,
+                "decision": decision,
+                "note": note,
+                "card_id": first_card,
+            }),
+            Provenance::user(),
+        )
+        .on_board(&first_board)
+        .on_card(&first_card),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO review (id, flag_ids, decision, note, decided_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![rid, flag_json, dec, n, at],
+            )?;
+            for flag_id in &ids {
+                tx.execute(
+                    "UPDATE flag SET status = ?1, review_id = ?2 WHERE id = ?3 AND status = 'open'",
+                    params![row_status, rid, flag_id],
+                )?;
+            }
+            Ok(())
+        },
+    )?;
+
+    // One event per card the decision touched, because the projection that
+    // reopens or closes a card reads the card from the event and a bulk
+    // decision can span several. The first card had its event above.
+    let mut seen = std::collections::BTreeSet::from([first_card]);
+    for (card_id, board_id) in &cards {
+        if !seen.insert(card_id.clone()) {
+            continue;
+        }
+        store.append(
+            NewEvent::new(
+                "review.decided.v1",
+                json!({
+                    "review_id": review_id,
+                    "flag_ids": open,
+                    "decision": decision,
+                    "card_id": card_id,
+                }),
+                Provenance::user(),
+            )
+            .on_board(board_id)
+            .on_card(card_id),
+        )?;
+    }
+
+    Ok(Some(review_id))
+}
+
+// ------------------------------------------------------------ learn mode ---
+//
+// Doc 14 section 2's LearnSession. One per board at a time, and a board can have
+// several over time, so the reads below take the newest rather than assuming one.
+
+/// Open a session. Doc 14 section 3.3's `learn.started.v1`.
+pub fn start_learn_session(store: &mut Store, board_id: &str, topic: &str) -> Result<String> {
+    let id = new_id();
+    let now = now_iso8601();
+    let (row, board, subject, at) = (id.clone(), board_id.to_string(), topic.to_string(), now.clone());
+
+    store.append_with(
+        NewEvent::new(
+            "learn.started.v1",
+            json!({ "session_id": id, "board_id": board_id, "topic": topic }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO learn_session (id, board_id, topic, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'intake', ?4, ?4)",
+                params![row, board, subject, at],
+            )?;
+            // Doc 14 section 2 and doc 01: the board's mode is what the Router
+            // reads, so it moves with the session rather than being inferred.
+            tx.execute(
+                "UPDATE board SET mode = 'learn', updated_at = ?1 WHERE id = ?2",
+                params![at, board_id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(id)
+}
+
+/// The newest session on a board, whatever its status.
+pub fn read_learn_session(store: &Store, board_id: &str) -> Result<Option<Value>> {
+    // The session assembles inside the row closure rather than coming back as an
+    // eight tuple. Five of the eight columns are json text that has to be parsed
+    // before anyone can use it, so a tuple would only carry them as far as here.
+    let parse = |s: String, fallback: Value| serde_json::from_str(&s).unwrap_or(fallback);
+    let session = store
+        .conn()
+        .query_row(
+            "SELECT id, topic, status, intake, plan, checks, opened, mastery
+             FROM learn_session WHERE board_id = ?1 ORDER BY created_at DESC LIMIT 1",
+            params![board_id],
+            |r| {
+                Ok(json!({
+                    "session_id": r.get::<_, String>(0)?,
+                    "board_id": board_id,
+                    "topic": r.get::<_, String>(1)?,
+                    "status": r.get::<_, String>(2)?,
+                    "intake": parse(r.get::<_, String>(3)?, json!([])),
+                    "plan": parse(r.get::<_, String>(4)?, json!([])),
+                    "checks": parse(r.get::<_, String>(5)?, json!([])),
+                    "opened": parse(r.get::<_, String>(6)?, json!([])),
+                    "mastery": parse(r.get::<_, String>(7)?, json!({})),
+                }))
+            },
+        )
+        .optional()?;
+    Ok(session)
+}
+
+/// What one turn changed about a session, with the event that says so.
+///
+/// A struct rather than a column and a value, because doc 14 section 3.3 has
+/// every trigger move the status and append to one list at once, and two writes
+/// would let a session's status and its content disagree.
+pub struct LearnUpdate<'a> {
+    pub session_id: &'a str,
+    pub board_id: &'a str,
+    pub status: Option<&'a str>,
+    /// Column name to the whole new value. Doc 14 section 2's five json columns.
+    pub set: Vec<(&'a str, Value)>,
+    pub event: &'a str,
+    pub payload: Value,
+    /// Who did this, named at every write rather than defaulted.
+    pub actor: Actor<'a>,
+}
+
+/// Who a session write belongs to.
+///
+/// Doc 12's walkthrough asks for the right actor on every act, and a Learn
+/// session is the one place where two of them take turns inside one feature:
+/// the learner names a topic and answers, the tutor plans and asks.
+pub enum Actor<'a> {
+    Learner,
+    /// Agent id and the run it decided in.
+    Agent(&'a str, &'a str),
+}
+
+pub fn update_learn_session(store: &mut Store, u: LearnUpdate<'_>) -> Result<()> {
+    let now = now_iso8601();
+    let (id, status, at) = (
+        u.session_id.to_string(),
+        u.status.map(str::to_string),
+        now.clone(),
+    );
+    // Column names come from this file and never from a caller's input, so the
+    // format below cannot carry anything a caller wrote.
+    let set: Vec<(String, String)> = u
+        .set
+        .iter()
+        .filter(|(column, _)| matches!(*column, "intake" | "plan" | "checks" | "opened" | "mastery"))
+        .map(|(column, value)| ((*column).to_string(), value.to_string()))
+        .collect();
+
+    let who = match u.actor {
+        Actor::Learner => Provenance::user(),
+        Actor::Agent(agent_id, run_id) => Provenance::agent(agent_id, run_id),
+    };
+
+    store.append_with(
+        NewEvent::new(u.event, u.payload, who).on_board(u.board_id),
+        move |tx| {
+            for (column, value) in &set {
+                tx.execute(
+                    &format!("UPDATE learn_session SET {column} = ?1, updated_at = ?2 WHERE id = ?3"),
+                    params![value, at, id],
+                )?;
+            }
+            if let Some(status) = &status {
+                tx.execute(
+                    "UPDATE learn_session SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![status, at, id],
+                )?;
+            }
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+/// Doc 14 section 3.6's mastery: plus one on a correct check, minus one on a
+/// wrong one, floored at zero.
+///
+/// Floored rather than allowed negative, because a score below zero would say
+/// something about a learner that the counting cannot support: three wrong
+/// answers in a row on one concept is the same signal as thirty.
+pub fn score_mastery(mastery: &Value, concept_ids: &[String], correct: bool) -> Value {
+    let mut map = mastery.as_object().cloned().unwrap_or_default();
+    for id in concept_ids {
+        let now = map.get(id).and_then(Value::as_i64).unwrap_or(0);
+        let next = if correct { now + 1 } else { (now - 1).max(0) };
+        map.insert(id.clone(), json!(next));
+    }
+    Value::Object(map)
+}
+
+/// The cards a Tutor packet carries. Doc 14 section 3.2.
+///
+/// Question, answer, visual labels and citations. Never the passages behind
+/// them: doc 14 section 3.1 keeps retrieval out of the Tutor's scope, and a
+/// packet carrying a passage would be the first step towards it writing content.
+pub fn cards_for_tutor(store: &Store, board_id: &str) -> Result<Vec<Value>> {
+    let cards = cards_for_exercise(store, board_id, 12)?;
+    Ok(cards
+        .into_iter()
+        .map(|c| {
+            let labels: Vec<Value> = c["visual"]["block_index"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|b| b["label"].as_str().map(|l| json!(l)))
+                .collect();
+            json!({
+                "card_id": c["card_id"],
+                "question": c["question"],
+                "answer": c["answer"],
+                "visual_labels": labels,
+                "citations": c["citations"],
+            })
+        })
+        .collect())
+}
+
+/// Store an image and the row that points at it. Doc 01 section 4.6.
+///
+/// The bytes go to the blob store by hash, so a board forked from a bundle never
+/// duplicates a picture, and the row carries the size the Reader's packet needs.
+pub struct NewImage<'a> {
+    pub board_id: &'a str,
+    pub origin: &'a str,
+    pub bytes: &'a [u8],
+    pub mime: &'a str,
+    pub width: u32,
+    pub height: u32,
+    pub source_ink_ids: Option<&'a str>,
+}
+
+pub fn write_image(store: &mut Store, image: NewImage<'_>) -> Result<String> {
+    let blob_ref = store.blobs().put(image.bytes)?;
+    let id = new_id();
+    let now = now_iso8601();
+    let (row, board, origin, blob, mime, ink) = (
+        id.clone(),
+        image.board_id.to_string(),
+        image.origin.to_string(),
+        blob_ref.clone(),
+        image.mime.to_string(),
+        image.source_ink_ids.map(str::to_string),
+    );
+    let (w, h) = (image.width as i64, image.height as i64);
+
+    let event = match image.origin {
+        // Doc 01 section 6.3 has two names here and they mean different things:
+        // one is a person putting a picture on a board, the other is the product
+        // making one.
+        "generated" => "image.generated.v1",
+        "sketch_raster" => "sketch.rasterised.v1",
+        _ => "image.pasted.v1",
+    };
+
+    store.append_with(
+        NewEvent::new(
+            event,
+            json!({
+                "image_id": id, "origin": image.origin, "blob_ref": blob_ref,
+                "mime": image.mime, "width": image.width, "height": image.height
+            }),
+            Provenance::user(),
+        )
+        .on_board(image.board_id),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO image (id, board_id, origin, blob_ref, mime, width, height,
+                                    position, source_ink_ids, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '{\"x\":0,\"y\":0}', ?8, ?9)",
+                params![row, board, origin, blob, mime, w, h, ink, now],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(id)
+}
+
+/// One image row, with its bytes. What doc 07 section A4's packet is built from.
+pub fn read_image(store: &Store, image_id: &str) -> Result<Option<(Value, Vec<u8>)>> {
+    let row: Option<(String, String, String, i64, i64, String)> = store
+        .conn()
+        .query_row(
+            "SELECT id, origin, blob_ref, width, height, mime FROM image WHERE id = ?1",
+            params![image_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .optional()?;
+
+    let Some((id, origin, blob_ref, width, height, mime)) = row else {
+        return Ok(None);
+    };
+    let bytes = store.blobs().get(&blob_ref)?;
+    Ok(Some((
+        json!({
+            "image_id": id,
+            "origin": origin,
+            "blob_ref": blob_ref,
+            "mime": mime,
+            "width": width,
+            "height": height,
+        }),
+        bytes,
+    )))
+}
+
+/// The ink a board holds, for the sketch raster path.
+pub fn read_ink(store: &Store, board_id: &str) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt =
+        conn.prepare("SELECT points, colour, width FROM ink WHERE board_id = ?1 ORDER BY created_at")?;
+    Ok(stmt
+        .query_map(params![board_id], |r| {
+            let points: String = r.get(0)?;
+            Ok(json!({
+                "points": serde_json::from_str::<Value>(&points).unwrap_or_else(|_| json!([])),
+                "colour": r.get::<_, String>(1)?,
+                "width": r.get::<_, f64>(2)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Finish a Reader card. Doc 07 section A7's `read.completed.v1`.
+pub struct ReadResult<'a> {
+    pub image_id: &'a str,
+    pub kind: &'a str,
+    pub legibility: f64,
+    pub injection_suspected: bool,
+    pub notable: &'a Value,
+}
+
+pub fn finish_read(store: &mut Store, at: CardRef<'_>, result: ReadResult<'_>) -> Result<()> {
+    store.append(
+        NewEvent::new(
+            "read.completed.v1",
+            json!({
+                "card_id": at.card_id,
+                "image_id": result.image_id,
+                "kind": result.kind,
+                "legibility": result.legibility,
+                "injection_suspected": result.injection_suspected,
+                "notable_count": result.notable.as_array().map(Vec::len).unwrap_or(0),
+            }),
+            Provenance::agent("reader", at.run_id.to_string()),
+        )
+        .on_board(at.board_id)
+        .on_card(at.card_id),
+    )?;
+    Ok(())
+}
+
+/// The cards an exercise may draw from. Doc 08 section 2.
+///
+/// "Cards (status done or flagged with only warn flags; blocked content is
+/// excluded)". A blocked card is one the Verifier held back, and a question
+/// whose answer is held back is a question with no right answer.
+pub fn cards_for_exercise(store: &Store, board_id: &str, limit: i64) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.question, c.answer, c.findings, c.visual_id
+         FROM card c
+         WHERE c.board_id = ?1
+           AND c.status IN ('done', 'flagged')
+           AND c.answer IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM flag f
+             WHERE f.card_id = c.id AND f.status = 'open' AND f.severity = 'block'
+           )
+         ORDER BY c.created_at
+         LIMIT ?2",
+    )?;
+
+    /// One card row, before its visual and citations are read.
+    type CardRow = (String, String, String, Option<String>, Option<String>);
+    let rows: Vec<CardRow> = stmt
+        .query_map(params![board_id, limit], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut out = Vec::new();
+    for (card_id, question, answer, findings, visual_id) in rows {
+        // Doc 08 section 4 carries the visual's type and block index, never its
+        // payload: the payload is what a visual draws, the labels are what an
+        // item can ask about.
+        let visual: Value = match visual_id {
+            Some(id) => conn
+                .query_row(
+                    "SELECT type, block_index FROM visual WHERE id = ?1",
+                    params![id],
+                    |r| {
+                        let t: String = r.get(0)?;
+                        let blocks: String = r.get(1)?;
+                        Ok(json!({
+                            "type": t,
+                            "block_index": serde_json::from_str::<Value>(&blocks)
+                                .unwrap_or_else(|_| json!([])),
+                        }))
+                    },
+                )
+                .optional()?
+                .unwrap_or(Value::Null),
+            None => Value::Null,
+        };
+
+        let mut citations = conn.prepare(
+            "SELECT c.ordinal, s.title FROM citation c
+             JOIN passage p ON p.id = c.passage_id
+             JOIN source s ON s.id = p.source_id
+             WHERE c.card_id = ?1
+             ORDER BY c.ordinal",
+        )?;
+        let cites: Vec<Value> = citations
+            .query_map(params![card_id], |r| {
+                Ok(json!({ "n": r.get::<_, i64>(0)?, "source_title": r.get::<_, String>(1)? }))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        out.push(json!({
+            "card_id": card_id,
+            "question": question,
+            "answer": answer,
+            "findings": findings
+                .and_then(|f| serde_json::from_str::<Value>(&f).ok())
+                .unwrap_or_else(|| json!([])),
+            "visual": visual,
+            "citations": cites,
+        }));
+    }
+    Ok(out)
+}
+
+/// Write one Exercise. Doc 08 section 7's `exercise.generated.v1`.
+/// Everything one exercise row holds. Doc 08 section 5's output, plus where it
+/// came from.
+pub struct NewExercise<'a> {
+    pub board_id: &'a str,
+    pub run_id: &'a str,
+    pub template_id: &'a str,
+    pub audience_id: Option<&'a str>,
+    pub scope: &'a [String],
+    pub items: &'a Value,
+    pub produced_by: &'a Value,
+}
+
+pub fn write_exercise(store: &mut Store, e: NewExercise<'_>) -> Result<String> {
+    let NewExercise {
+        board_id,
+        run_id,
+        template_id,
+        audience_id,
+        scope,
+        items,
+        produced_by,
+    } = e;
+    let id = new_id();
+    let kinds: Vec<&str> = items
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i["kind"].as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let (row, board, scope_json, template, audience, items_json, produced, now) = (
+        id.clone(),
+        board_id.to_string(),
+        serde_json::to_string(scope).unwrap_or_else(|_| "[]".into()),
+        template_id.to_string(),
+        audience_id.map(str::to_string),
+        items.to_string(),
+        produced_by.to_string(),
+        now_iso8601(),
+    );
+
+    store.append_with(
+        NewEvent::new(
+            "exercise.generated.v1",
+            json!({
+                "exercise_id": id,
+                "board_id": board_id,
+                "item_count": items.as_array().map(Vec::len).unwrap_or(0),
+                "kinds": kinds,
+                "audience_id": audience_id,
+            }),
+            Provenance::agent("exercise", run_id.to_string()),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO exercise (id, board_id, scope, template_id, audience_id, items,
+                                       produced_by, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    row, board, scope_json, template, audience, items_json, produced, now
+                ],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(id)
+}
+
+/// Record one attempt. Doc 08 section 7: `attempt.recorded.v1` comes from the
+/// UI, because grading a multiple choice answer needs no agent.
+///
+/// Attempts stay local to the profile and are excluded from bundles by default,
+/// which the initial migration already says in a comment: what a reader got
+/// wrong is theirs.
+pub fn record_attempt(store: &mut Store, exercise_id: &str, answers: &Value) -> Result<(String, i64, i64)> {
+    let (items, board_id): (String, String) = store.conn().query_row(
+        "SELECT items, board_id FROM exercise WHERE id = ?1",
+        params![exercise_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let items: Value = serde_json::from_str(&items).unwrap_or_else(|_| json!([]));
+
+    // Graded here rather than trusted from the caller, so a score is a fact
+    // about the exercise rather than a number the shell sent.
+    let total = items.as_array().map(Vec::len).unwrap_or(0) as i64;
+    let mut correct = 0i64;
+    for item in items.as_array().into_iter().flatten() {
+        let Some(id) = item["id"].as_str() else { continue };
+        if answers[id].as_str() == item["answer_id"].as_str() {
+            correct += 1;
+        }
+    }
+
+    let id = new_id();
+    let score = json!({ "correct": correct, "total": total });
+    let (row, ex, answers_json, score_json, now) = (
+        id.clone(),
+        exercise_id.to_string(),
+        answers.to_string(),
+        score.to_string(),
+        now_iso8601(),
+    );
+
+    store.append_with(
+        NewEvent::new(
+            "attempt.recorded.v1",
+            json!({
+                "attempt_id": id,
+                "exercise_id": exercise_id,
+                "correct": correct,
+                "total": total,
+            }),
+            Provenance::user(),
+        )
+        .on_board(&board_id),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO attempt (id, exercise_id, answers, score, taken_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![row, ex, answers_json, score_json, now],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok((id, correct, total))
+}
+
+/// Doc 08 section 11: a wrong item is reported by the user from the card, and
+/// the report feeds pack maintenance rather than changing the exercise.
+pub fn report_exercise_item(
+    store: &mut Store,
+    exercise_id: &str,
+    item_id: &str,
+    reason: Option<&str>,
+) -> Result<()> {
+    let board_id: String = store.conn().query_row(
+        "SELECT board_id FROM exercise WHERE id = ?1",
+        params![exercise_id],
+        |r| r.get(0),
+    )?;
+    store.append(
+        NewEvent::new(
+            "exercise.item_reported.v1",
+            json!({
+                "exercise_id": exercise_id,
+                "item_id": item_id,
+                "reason": reason,
+            }),
+            Provenance::user(),
+        )
+        .on_board(&board_id),
+    )?;
+    Ok(())
+}
+
+/// The exercises a board holds, newest first, with the last attempt on each.
+pub fn list_exercises(store: &Store, board_id: &str) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.items, e.template_id, e.audience_id, e.created_at,
+                (SELECT a.score FROM attempt a WHERE a.exercise_id = e.id
+                 ORDER BY a.taken_at DESC LIMIT 1) AS last_score
+         FROM exercise e WHERE e.board_id = ?1
+         ORDER BY e.created_at DESC",
+    )?;
+    Ok(stmt
+        .query_map(params![board_id], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "items": serde_json::from_str::<Value>(&r.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| json!([])),
+                "template_id": r.get::<_, String>(2)?,
+                "audience_id": r.get::<_, Option<String>>(3)?,
+                "created_at": r.get::<_, String>(4)?,
+                "last_score": r.get::<_, Option<String>>(5)?
+                    .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                    .unwrap_or(Value::Null),
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Library, Sources tab. Doc 09 section 9.
+///
+/// "title, issuer, class, trust rank, cited on n cards, last verified, stale
+/// state". The card count is the column that decides whether a source can be
+/// removed: doc 09 section 5 allows Remove on a source only if it is uncited.
+pub fn list_sources(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.title, s.class, s.site_or_issuer, s.locator, s.trust_rank,
+                s.last_verified_at, s.stale, s.stale_reason, s.freshness_class, s.version_ref,
+                -- A citation names a passage, and a passage names its source,
+                -- so the count of cards citing a source is two joins rather
+                -- than a column the citation does not carry.
+                (SELECT COUNT(DISTINCT c.card_id) FROM citation c
+                 JOIN passage pg ON pg.id = c.passage_id
+                 WHERE pg.source_id = s.id) AS cards
+         FROM source s
+         WHERE s.profile_id = ?1
+         ORDER BY s.stale DESC, s.trust_rank, s.title
+         LIMIT ?2",
+    )?;
+    Ok(stmt
+        .query_map(params![profile_id, limit], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "title": r.get::<_, String>(1)?,
+                "class": r.get::<_, String>(2)?,
+                "issuer": r.get::<_, Option<String>>(3)?,
+                "locator": r.get::<_, String>(4)?,
+                "trust_rank": r.get::<_, i64>(5)?,
+                "last_verified_at": r.get::<_, Option<String>>(6)?,
+                "stale": r.get::<_, i64>(7)? == 1,
+                "stale_reason": r.get::<_, Option<String>>(8)?,
+                "freshness_class": r.get::<_, String>(9)?,
+                "version_ref": r.get::<_, Option<String>>(10)?,
+                "cards": r.get::<_, i64>(11)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Propose the concepts a card named, and link them to it.
+///
+/// Doc 01 section 4.10: "Agents propose; the user confirms." The Router already
+/// returns the entities a question names, and until M9 they went into the log
+/// and nowhere else, so the Planner packet's `concepts` was an empty array and
+/// entity resolution degraded to literals marked `unknown` exactly as doc 04
+/// says it should when the graph is empty.
+///
+/// A term the profile already knows is reused rather than duplicated, which is
+/// what doc 01 section 4.11 means by "two boards that both cite the same Concept
+/// share it". Matching is case insensitive on the canonical spelling; an alias
+/// pass belongs with the Concept editor, not here.
+///
+/// Returns how many concepts were newly proposed.
+pub fn propose_concepts(
+    store: &mut Store,
+    at: CardRef<'_>,
+    profile_id: &str,
+    doctrine_pack_id: &str,
+    terms: &[String],
+    proposed_by: &str,
+) -> Result<usize> {
+    let mut proposed = 0usize;
+
+    for term in terms {
+        let term = term.trim();
+        // A one character entity is noise, and an empty one is a model slip.
+        if term.chars().count() < 2 || term.chars().count() > 120 {
+            continue;
+        }
+
+        let existing: Option<String> = store
+            .conn()
+            .query_row(
+                "SELECT id FROM concept WHERE profile_id = ?1 AND lower(term) = lower(?2)",
+                params![profile_id, term],
+                |r| r.get(0),
+            )
+            .optional()?;
+
+        let concept_id = match existing {
+            Some(id) => {
+                // Doc 01 section 6.3's `entity.resolved.v1`: the entity named a
+                // node the profile already has, which is the whole point of the
+                // graph being shared across boards.
+                store.append(
+                    NewEvent::new(
+                        "entity.resolved.v1",
+                        json!({ "concept_id": id, "term": term, "card_id": at.card_id }),
+                        Provenance::agent(proposed_by, at.run_id.to_string()),
+                    )
+                    .on_board(at.board_id)
+                    .on_card(at.card_id),
+                )?;
+                id
+            }
+            None => {
+                let id = new_id();
+                let now = now_iso8601();
+                let (row, profile, pack, name, at_time) = (
+                    id.clone(),
+                    profile_id.to_string(),
+                    doctrine_pack_id.to_string(),
+                    term.to_string(),
+                    now,
+                );
+                store.append_with(
+                    NewEvent::new(
+                        "concept.proposed.v1",
+                        json!({ "concept_id": id, "term": term, "card_id": at.card_id }),
+                        Provenance::agent(proposed_by, at.run_id.to_string()),
+                    )
+                    .on_board(at.board_id)
+                    .on_card(at.card_id),
+                    move |tx| {
+                        tx.execute(
+                            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                                                  created_at, updated_at)
+                             VALUES (?1, ?2, ?3, ?4, 'proposed', ?5, ?5)",
+                            params![row, profile, name, pack, at_time],
+                        )?;
+                        Ok(())
+                    },
+                )?;
+                proposed += 1;
+                id
+            }
+        };
+
+        // One link per concept per card. A card asked twice about the same term
+        // should touch the node once.
+        let linked: i64 = store.conn().query_row(
+            "SELECT COUNT(*) FROM concept_link
+             WHERE concept_id = ?1 AND target_type = 'card' AND target_ref = ?2",
+            params![concept_id, at.card_id],
+            |r| r.get(0),
+        )?;
+        if linked > 0 {
+            continue;
+        }
+
+        let link_id = new_id();
+        let (row, cid, card, by, now) = (
+            link_id.clone(),
+            concept_id.clone(),
+            at.card_id.to_string(),
+            json!({ "agent_id": proposed_by }).to_string(),
+            now_iso8601(),
+        );
+        store.append_with(
+            NewEvent::new(
+                "concept.linked.v1",
+                json!({
+                    "link_id": link_id,
+                    "concept_id": concept_id,
+                    "target_type": "card",
+                    "target_ref": at.card_id,
+                    "relation": "mentions",
+                }),
+                Provenance::agent(proposed_by, at.run_id.to_string()),
+            )
+            .on_board(at.board_id)
+            .on_card(at.card_id),
+            move |tx| {
+                tx.execute(
+                    "INSERT INTO concept_link (id, concept_id, target_type, target_ref, relation,
+                                               proposed_by, status, created_at)
+                     VALUES (?1, ?2, 'card', ?3, 'mentions', ?4, 'proposed', ?5)",
+                    params![row, cid, card, by, now],
+                )?;
+                Ok(())
+            },
+        )?;
+    }
+
+    Ok(proposed)
+}
+
+/// Confirm or reject a proposed concept. Doc 09 section 9's row actions.
+///
+/// `None` means no proposed concept had that id, so nothing was decided and the
+/// caller can say so rather than reporting a decision that never happened.
+pub fn decide_concept(store: &mut Store, concept_id: &str, accept: bool) -> Result<Option<String>> {
+    let term: Option<String> = store
+        .conn()
+        .query_row(
+            "SELECT term FROM concept WHERE id = ?1 AND status = 'proposed'",
+            params![concept_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(term) = term else { return Ok(None) };
+
+    let (id, now) = (concept_id.to_string(), now_iso8601());
+    if accept {
+        store.append_with(
+            NewEvent::new(
+                "concept.confirmed.v1",
+                json!({ "concept_id": concept_id, "term": term }),
+                Provenance::user(),
+            ),
+            move |tx| {
+                tx.execute(
+                    "UPDATE concept SET status = 'confirmed', updated_at = ?1 WHERE id = ?2",
+                    params![now, id],
+                )?;
+                Ok(())
+            },
+        )?;
+    } else {
+        // A rejected concept leaves, and its links leave with it. Doc 01 section
+        // 4.11: links are how boards touch a node, so a node nobody kept has
+        // nothing left to touch. There is no `concept.rejected.v1` in the
+        // vocabulary and this does not invent one: the link rows carry the
+        // status the model has for a rejection, and `concept.linked.v1` already
+        // said they existed.
+        store.append_with(
+            NewEvent::new(
+                "concept.linked.v1",
+                json!({ "concept_id": concept_id, "term": term, "status": "rejected" }),
+                Provenance::user(),
+            ),
+            move |tx| {
+                tx.execute(
+                    "UPDATE concept_link SET status = 'rejected' WHERE concept_id = ?1",
+                    params![id],
+                )?;
+                Ok(())
+            },
+        )?;
+    }
+    Ok(Some(term))
+}
+
+/// The concepts the Planner packet carries. Doc 04 section 4.
+///
+/// Confirmed terms first, because those are the ones a person has stood behind,
+/// then proposed ones, so a fresh profile still gets the graph it has.
+pub fn concepts_for_packet(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, term, definition, status FROM concept
+         WHERE profile_id = ?1
+         ORDER BY CASE status WHEN 'confirmed' THEN 0 ELSE 1 END, term
+         LIMIT ?2",
+    )?;
+    Ok(stmt
+        .query_map(params![profile_id, limit], |r| {
+            Ok(json!({
+                "concept_id": r.get::<_, String>(0)?,
+                "term": r.get::<_, String>(1)?,
+                "definition": r.get::<_, Option<String>>(2)?,
+                "status": r.get::<_, String>(3)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Library, Concepts tab. Doc 09 section 9.
+///
+/// "term, status (proposed or confirmed), definition, audience definitions,
+/// linked cards". The link count is what doc 09 section 5's Remove on a concept
+/// checks: only if unlinked.
+pub fn list_concepts(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.term, c.status, c.definition, c.aliases, c.audience_definitions,
+                c.definition_card_id, c.updated_at,
+                (SELECT COUNT(*) FROM concept_link l
+                 WHERE l.concept_id = c.id AND l.status != 'rejected') AS links
+         FROM concept c
+         WHERE c.profile_id = ?1
+         ORDER BY CASE c.status WHEN 'proposed' THEN 0 ELSE 1 END, c.term
+         LIMIT ?2",
+    )?;
+    Ok(stmt
+        .query_map(params![profile_id, limit], |r| {
+            let json_col = |v: Option<String>| {
+                v.and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                    .unwrap_or(Value::Null)
+            };
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "term": r.get::<_, String>(1)?,
+                "status": r.get::<_, String>(2)?,
+                "definition": r.get::<_, Option<String>>(3)?,
+                "aliases": json_col(r.get::<_, Option<String>>(4)?),
+                "audience_definitions": json_col(r.get::<_, Option<String>>(5)?),
+                "definition_card_id": r.get::<_, Option<String>>(6)?,
+                "updated_at": r.get::<_, String>(7)?,
+                "links": r.get::<_, i64>(8)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Profile, Diagnostics page. Doc 11 section 6.
+///
+/// Counts rather than a health verdict: what the page is for is telling a user
+/// whether the thing they think happened happened, and a green tick that
+/// summarises six numbers hides the one that is wrong.
+pub fn profile_counts(store: &Store, profile_id: &str) -> Result<Value> {
+    let conn = store.conn();
+    let one = |sql: &str| -> Result<i64> { Ok(conn.query_row(sql, params![profile_id], |r| r.get(0))?) };
+
+    Ok(json!({
+        "boards": one("SELECT COUNT(*) FROM board WHERE profile_id = ?1 AND status = 'active'")?,
+        "boards_trashed": one("SELECT COUNT(*) FROM board WHERE profile_id = ?1 AND status = 'trashed'")?,
+        "cards": one(
+            "SELECT COUNT(*) FROM card c JOIN board b ON b.id = c.board_id WHERE b.profile_id = ?1",
+        )?,
+        "open_flags": one(
+            "SELECT COUNT(*) FROM flag f JOIN card c ON c.id = f.card_id
+             JOIN board b ON b.id = c.board_id WHERE b.profile_id = ?1 AND f.status = 'open'",
+        )?,
+        "sources": one("SELECT COUNT(*) FROM source WHERE profile_id = ?1")?,
+        "sources_stale": one("SELECT COUNT(*) FROM source WHERE profile_id = ?1 AND stale = 1")?,
+        "concepts": one("SELECT COUNT(*) FROM concept WHERE profile_id = ?1")?,
+        "events": conn.query_row("SELECT COUNT(*) FROM event", [], |r| r.get::<_, i64>(0))?,
+    }))
+}
+
 /// Bump a board's last activity, which is what the Home grid sorts on.
 pub fn touch_board(store: &Store, board_id: &str) -> Result<()> {
     store.conn().execute(
@@ -992,6 +2250,11 @@ pub struct Retained {
     pub source_ids: Vec<String>,
     pub sources_created: usize,
     pub sources_deduplicated: usize,
+    /// Why each passage's source is stale, in passage order, or `None` where it
+    /// is not. A source reached again after a re-verification marked it stale is
+    /// still stale, and the Verifier's freshness check reads this rather than
+    /// assuming that anything just retrieved is current.
+    pub stale: Vec<Option<String>>,
 }
 
 /// Doc 05 section 7's `retrieval.started.v1`, emitted before anything is
@@ -1014,6 +2277,64 @@ pub fn start_retrieval(store: &mut Store, at: RetrievalRef<'_>, query: &str) -> 
     Ok(())
 }
 
+/// Mark a cited source stale and say why. Doc 05 section 7's `source.stale.v1`,
+/// carrying one of the three reasons that section names: `content_changed`,
+/// `locator_gone`, `superseded_version`.
+///
+/// The number of cards citing the source rides on the event, because doc 07
+/// section B14 open question 2 makes a batch of stale citations one notice
+/// rather than one per card. Returns that count, so a caller re-verifying a
+/// whole corpus can report what it touched.
+///
+/// Marking is idempotent: re-verifying a source already stale for the same
+/// reason writes the same row and appends no second event, so a run repeated
+/// against an unchanged corpus does not fill the log with duplicates.
+pub fn mark_source_stale(store: &mut Store, source_id: &str, reason: &str, run_id: &str) -> Result<usize> {
+    let already: Option<String> = store
+        .conn()
+        .query_row(
+            "SELECT stale_reason FROM source WHERE id = ?1 AND stale = 1",
+            params![source_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let affected: i64 = store.conn().query_row(
+        "SELECT COUNT(DISTINCT c.card_id)
+           FROM citation c JOIN passage p ON p.id = c.passage_id
+          WHERE p.source_id = ?1",
+        params![source_id],
+        |r| r.get(0),
+    )?;
+    let affected = affected.max(0) as usize;
+
+    if already.as_deref() == Some(reason) {
+        return Ok(affected);
+    }
+
+    let owned = (source_id.to_string(), reason.to_string(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "source.stale.v1",
+            json!({
+                "source_id": source_id,
+                "reason": reason,
+                "affected_cards": affected,
+            }),
+            Provenance::retriever("reverify", run_id),
+        ),
+        move |tx| {
+            let (sid, reason, now) = owned;
+            tx.execute(
+                "UPDATE source SET stale = 1, stale_reason = ?2, last_verified_at = ?3
+                  WHERE id = ?1",
+                params![sid, reason, now],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(affected)
+}
+
 /// Persist what a retriever found, and say so. Doc 05 sections 5 and 7.
 ///
 /// Sources are deduplicated on the normalised locator, so a page reached twice
@@ -1034,19 +2355,21 @@ pub fn record_retrieval(
     for passage in passages {
         let dedupe = normalise_locator(passage.locator);
 
-        let existing: Option<String> = store
+        let existing: Option<(String, Option<String>)> = store
             .conn()
             .query_row(
-                "SELECT id FROM source WHERE profile_id = ?1 AND dedupe_key = ?2",
+                "SELECT id, CASE WHEN stale = 1 THEN stale_reason END
+                   FROM source WHERE profile_id = ?1 AND dedupe_key = ?2",
                 params![profile_id, dedupe],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
 
-        let (id, created) = match existing {
-            Some(id) => (id, false),
-            None => (new_id(), true),
+        let (id, created, stale_reason) = match existing {
+            Some((id, reason)) => (id, false, reason),
+            None => (new_id(), true, None),
         };
+        retained.stale.push(stale_reason);
 
         if created {
             let owned = (
@@ -1097,8 +2420,8 @@ pub fn record_retrieval(
                              freshness_class, trust_rank, dedupe_key, version_ref, created_at)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, ?12, ?13, ?8)",
                         params![
-                            sid, profile, class, title, locator, issuer, published, now, hash,
-                            freshness, rank, dedupe, version
+                            sid, profile, class, title, locator, issuer, published, now, hash, freshness,
+                            rank, dedupe, version
                         ],
                     )?;
                     Ok(())

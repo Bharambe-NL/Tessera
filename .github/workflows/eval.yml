@@ -1,0 +1,116 @@
+# The eval against real providers. Doc 12 phase 11.
+#
+# This one spends money, so it never runs on a push. `workflow_dispatch` means a
+# person clicks it and says how much of the question set to run; the schedule
+# below is commented out until someone decides the nightly cost is worth it, and
+# uncommenting it is the decision rather than a default.
+#
+# Keys come from repository secrets and reach the process as environment
+# variables read by the eval's keychain shim. They are never arguments: an
+# argument appears in `ps`, in a crash dump and in the runner's own log of the
+# command it ran.
+
+name: eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      questions:
+        description: 'How many questions to run. The full set is 400 and costs accordingly.'
+        required: true
+        default: '40'
+      pack:
+        description: 'Doctrine pack'
+        required: true
+        default: 'finance-eu-synthetic'
+        type: choice
+        options:
+          - finance-eu-synthetic
+          - finance-eu
+          - general
+      bulk_provider:
+        description: 'The provider carrying the bulk of the sweep'
+        required: true
+        default: 'moonshot'
+
+  # Doc 12 phase 11 asks for a nightly. Uncomment when the cost of one is
+  # agreed, and not before: a scheduled job that bills an account is a decision
+  # somebody has to make on purpose.
+  #
+  # schedule:
+  #   - cron: '0 3 * * *'
+
+concurrency:
+  # Never two live sweeps at once. They cost money and they would race on the
+  # same results directory.
+  group: eval
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  sweep:
+    name: live sweep
+    runs-on: ubuntu-latest
+    # A live run against a frontier model is not a five minute job.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98'
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: install the generator
+        run: python -m pip install --editable gen
+
+      - name: build the corpus
+        run: python -m tessera_gen build --seed 42 --out synthetic
+
+      # The synthetic web corpus is served locally so the web retriever has
+      # something to reach that is not the real internet. Doc 02 section 8.
+      - name: serve the synthetic web
+        run: python -m tessera_gen serve --corpus synthetic/42 &
+
+      - name: sweep
+        env:
+          # `TESSERA_CI` is what makes the eval read keys from here rather than
+          # from a keychain the runner does not have. Asked for explicitly, so a
+          # locked keychain on a person's machine never silently falls through
+          # to an environment that has nothing in it.
+          TESSERA_CI: '1'
+          TESSERA_KEY_MOONSHOT: ${{ secrets.TESSERA_KEY_MOONSHOT }}
+          TESSERA_KEY_ANTHROPIC: ${{ secrets.TESSERA_KEY_ANTHROPIC }}
+          TESSERA_KEY_OPENAI: ${{ secrets.TESSERA_KEY_OPENAI }}
+        run: |
+          cargo run -p tessera-eval -- \
+            --corpus synthetic/42 \
+            --out eval/results \
+            --limit "${{ inputs.questions }}" \
+            --pack "${{ inputs.pack }}" \
+            --bulk-provider "${{ inputs.bulk_provider }}" \
+            --policy live
+
+      - name: score it
+        run: |
+          run=$(ls -d eval/results/42/live/run-* | tail -1)
+          python -m tessera_gen score --results "$run"
+
+      # Kept for thirty days whatever the outcome. A live sweep cost money and
+      # cannot be reproduced exactly, so its record is the only account of what
+      # the product scored that day.
+      - name: keep the run record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-sweep
+          path: eval/results/42/live/
+          retention-days: 30

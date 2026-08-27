@@ -4,13 +4,16 @@
 //! everything else is admitted without review, so the Verifier's misses are the
 //! product's risk and its false positives are the product's friction."
 //!
-//! This build runs doc 07 section B8.1, the deterministic checks that always run
-//! in every mode. The support check (B8.2) and the doctrine model checks (B8.5)
-//! need a model call and arrive with M8, at which point the agreement threshold
-//! in doc 02 section 10.3 can be measured. Until then every deep and research
-//! card carries the `verifier_below_threshold` info flag, which is doc 07
-//! section B9's own fallback: "the product back into draft mode without changing
-//! any other agent."
+//! This build runs doc 07 section B8.1's deterministic checks and B8.2's support
+//! check. The doctrine model checks (B8.5) still need their dispatcher.
+//!
+//! The support check is one batched call followed by a deterministic override,
+//! and the override is the part that matters: a claim carrying a value is never
+//! admitted against a passage that does not state it, whatever the model says.
+//! Every deep and research card still carries the `verifier_below_threshold`
+//! info flag, because doc 07 section B9 withholds full automation until
+//! agreement with the ledger check is measured at 0.90 on a real provider, and
+//! a mock that quotes what it cites cannot measure that.
 //!
 //! Doc 07 section B10 fixes the posture: fail closed. When the Verifier cannot
 //! decide, the card is flagged, never admitted. Every path here that cannot
@@ -18,8 +21,11 @@
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use tessera_harness::{Agent, AgentContext, Failure, sequences};
+use tessera_harness::{Agent, AgentContext, Failure, Recovery, sequences};
+use tessera_providers::{CompletionRequest, Effort};
 use tessera_schema::ids;
+
+use crate::prompts;
 
 pub struct Verifier;
 
@@ -69,6 +75,7 @@ impl Agent for Verifier {
         let mut flags: Vec<Value> = Vec::new();
         let mut checks: Vec<Value> = Vec::new();
         let mut block_actions: Vec<Value> = Vec::new();
+        let mut model_rules: Vec<Value> = Vec::new();
 
         advance(ctx, "deterministic_checks")?;
 
@@ -77,13 +84,28 @@ impl Agent for Verifier {
             let severity = rule["severity"].as_str().unwrap_or("info");
             let detector = rule["detector"].as_str().unwrap_or_default();
 
+            // Doc 07 section B8.5's model backed rules. The rule's own
+            // description is the check, so the pack decides what is looked for
+            // and this decides only when to ask.
+            if detector.starts_with("model:") {
+                if runs_in_mode(rule, mode) {
+                    model_rules.push(rule.clone());
+                } else {
+                    checks.push(skipped(
+                        rule_id,
+                        detector,
+                        &format!("The rule does not apply in {mode} mode."),
+                    ));
+                }
+                continue;
+            }
             // Doc 07 section B10 `doctrine_rule_missing_detector`: skip, list it,
             // and tell the Profile the pack is malformed.
             if !detector.starts_with("deterministic:") {
                 checks.push(skipped(
                     rule_id,
                     detector,
-                    "This build runs deterministic detectors only.",
+                    "A detector name has to start with `deterministic:` or `model:`.",
                 ));
                 continue;
             }
@@ -109,6 +131,7 @@ impl Agent for Verifier {
                 "fast_mode_notice" => fast_mode_notice(mode),
                 "injection_suspected" => injection_suspected(&passages),
                 "stale_source" => stale_source(&passages),
+                "own_card_sole_support" => own_card_sole_support(answer, &citations, &passages),
                 "verifier_below_threshold" => below_threshold(mode),
                 // An unknown deterministic name is a malformed pack, not a pass.
                 other => {
@@ -146,28 +169,109 @@ impl Agent for Verifier {
             }
         }
 
-        // Doc 07 section B8.2. Not run in this build, and said so rather than
-        // left to look like a pass.
+        // Doc 07 section B8.2, one batched call on the medium alias.
         advance(ctx, "support_check")?;
+        let citation_verdicts = support_check(ctx, answer, &citations, &passages, mode).await;
+        let support_unavailable = citation_verdicts
+            .iter()
+            .any(|v| v["reason"] == json!(SUPPORT_UNAVAILABLE));
+        if support_unavailable {
+            // Doc 07 section B10: fall back to the alias once, then flag the
+            // card and never admit a citation as supported.
+            flags.push(support_flag(
+                "support_check_unavailable",
+                "warn",
+                json!({ "kind": "whole_card" }),
+                "Support check did not complete, so a spot check is advised.",
+                json!({ "stage": "support_check" }),
+            ));
+        }
+
+        // Doc 07 section B8.2's failure actions: "`unsupported` raises a flag on
+        // the claim span (severity warn; block for numeric claims). `weak` on a
+        // numeric claim raises warn."
+        for verdict in &citation_verdicts {
+            let Some(n) = verdict["n"].as_u64() else { continue };
+            let claim = claim_text(answer, &citations, n);
+            let numeric = !numeric_spans(&claim).is_empty();
+            let target = json!({ "kind": "citation", "ref": passage_for(&citations, n) });
+            match verdict["verdict"].as_str() {
+                Some("unsupported") => flags.push(support_flag(
+                    "citation_unsupported",
+                    if numeric { "block" } else { "warn" },
+                    target,
+                    "The cited passage does not state this claim.",
+                    json!({ "n": n, "reason": verdict["reason"].clone() }),
+                )),
+                Some("weak") if numeric => flags.push(support_flag(
+                    "citation_weak_numeric",
+                    "warn",
+                    target,
+                    "The cited passage does not state this figure plainly.",
+                    json!({ "n": n, "reason": verdict["reason"].clone() }),
+                )),
+                _ => {}
+            }
+        }
+
         advance(ctx, "visual_binding_check")?;
         advance(ctx, "freshness_check")?;
+
+        // Doc 07 section B8.5, one batched call for every model backed rule the
+        // pack declares for this mode. They were listed as skipped from the day
+        // the Verifier was written, so the finance pack's three shipped and
+        // never ran.
         advance(ctx, "doctrine_model_checks")?;
+        if !model_rules.is_empty() {
+            match doctrine_model_checks(ctx, answer, constraints, &model_rules).await {
+                Ok(matched) => {
+                    for rule in &model_rules {
+                        let rule_id = rule["rule_id"].as_str().unwrap_or_default();
+                        let detector = rule["detector"].as_str().unwrap_or_default();
+                        match matched.get(rule_id) {
+                            Some(reason) => {
+                                checks.push(json!({
+                                    "rule_id": rule_id, "outcome": "fail", "detector": detector
+                                }));
+                                flags.push(support_flag(
+                                    rule_id,
+                                    // Capped at warn: a model's reading of a
+                                    // doctrine rule holds a card back for review,
+                                    // it does not block one.
+                                    "warn",
+                                    json!({ "kind": "whole_card" }),
+                                    rule["description"].as_str().unwrap_or("A doctrine rule matched."),
+                                    json!({ "reason": reason }),
+                                ));
+                            }
+                            None => checks.push(json!({
+                                "rule_id": rule_id, "outcome": "pass", "detector": detector
+                            })),
+                        }
+                    }
+                }
+                Err(f) => {
+                    // Fail closed as everywhere else: a rule that could not be
+                    // checked is listed as unchecked, never as passed.
+                    for rule in &model_rules {
+                        checks.push(skipped(
+                            rule["rule_id"].as_str().unwrap_or_default(),
+                            rule["detector"].as_str().unwrap_or_default(),
+                            &format!("The check did not complete. {}", f.detail),
+                        ));
+                    }
+                    flags.push(support_flag(
+                        "doctrine_checks_unavailable",
+                        "warn",
+                        json!({ "kind": "whole_card" }),
+                        "Some doctrine checks did not complete, so a spot check is advised.",
+                        json!({ "rules": model_rules.len() }),
+                    ));
+                }
+            }
+        }
 
         advance(ctx, "deciding")?;
-
-        // Doc 07 section B5: every citation in the packet has a verdict. Without
-        // the support check they are all unchecked, which is what the card header
-        // then shows.
-        let citation_verdicts: Vec<Value> = citations
-            .iter()
-            .map(|c| {
-                json!({
-                    "n": c["n"].clone(),
-                    "verdict": "unchecked",
-                    "reason": "The support check runs from the milestone that measures its agreement."
-                })
-            })
-            .collect();
 
         let card_confidence = confidence(&citation_verdicts, &flags, &visual, mode);
         let card_status = if flags
@@ -195,6 +299,314 @@ impl Agent for Verifier {
             "caveats": [],
         }))
     }
+}
+
+/// Marks a verdict the model never produced, so the caller can flag the card
+/// rather than read a fallback as a judgment.
+const SUPPORT_UNAVAILABLE: &str = "The support check did not complete.";
+
+/// A flag the support check raises directly.
+///
+/// The doctrine rules are data and reach the flag list through the loop above,
+/// which stamps each hit with the rule's own id and severity. The support check
+/// is a built in check rather than a pack rule, in the same way
+/// `verification_failed` is, so it names its own and carries the same shape.
+fn support_flag(rule_id: &str, severity: &str, target: Value, reason: &str, evidence: Value) -> Value {
+    json!({
+        "rule_id": rule_id,
+        "severity": severity,
+        "target": target,
+        "reason": reason,
+        "evidence": evidence,
+    })
+}
+
+/// Doc 07 section B8.2. One batched call, then a deterministic override.
+///
+/// "The prompt asks for `supported`, `weak` (the passage is related but does not
+/// state the claim), or `unsupported`, with a one sentence reason. Then a
+/// deterministic override: if the claim contains a value and the normalised
+/// value appears in the passage, the verdict is at least `weak`; if it does not
+/// appear, the verdict is at most `weak`. The model's judgment never upgrades a
+/// value claim to `supported` when the value is absent from the passage."
+///
+/// Fast mode returns `unchecked` for everything, per B5: there are no passages
+/// to check against.
+async fn support_check(
+    ctx: &mut AgentContext<'_>,
+    answer: &str,
+    citations: &[Value],
+    passages: &[Value],
+    mode: &str,
+) -> Vec<Value> {
+    if mode == "fast" || citations.is_empty() {
+        return citations
+            .iter()
+            .map(|c| {
+                json!({
+                    "n": c["n"].clone(),
+                    "verdict": "unchecked",
+                    "reason": "Fast mode reads no passages, so nothing was checked."
+                })
+            })
+            .collect();
+    }
+
+    // Every citation in the packet gets a verdict, doc 07 section B5, so one
+    // whose passage is missing is reported rather than dropped from the list.
+    let mut unpaired: Vec<Value> = Vec::new();
+    let mut pairs: Vec<(u64, String, String)> = Vec::new();
+    for c in citations {
+        let Some(n) = c["n"].as_u64() else { continue };
+        let passage = passages
+            .iter()
+            .find(|p| p["passage_id"] == c["passage_id"])
+            .or_else(|| passages.get(n.saturating_sub(1) as usize));
+        match passage {
+            Some(p) => pairs.push((
+                n,
+                claim_text(answer, citations, n),
+                p["text"].as_str().unwrap_or_default().to_string(),
+            )),
+            None => unpaired.push(json!({
+                "n": n,
+                "verdict": "unsupported",
+                "reason": "No passage in the packet carries this citation."
+            })),
+        }
+    }
+
+    let judged = match ask_support(ctx, &pairs).await {
+        Ok(judged) => judged,
+        Err(_) => {
+            // B10: every citation weak, never supported, and the caller flags
+            // the card. A check that could not run is not a check that passed.
+            return pairs
+                .iter()
+                .map(|(n, _, _)| json!({ "n": n, "verdict": "weak", "reason": SUPPORT_UNAVAILABLE }))
+                .collect();
+        }
+    };
+
+    let mut verdicts: Vec<Value> = unpaired;
+    verdicts.extend(pairs.iter().map(|(n, claim, passage)| {
+        let (verdict, reason) = judged
+            .get(n)
+            .cloned()
+            .unwrap_or_else(|| ("weak".into(), SUPPORT_UNAVAILABLE.into()));
+
+        // The override. A value claim is never admitted on a passage that
+        // does not state the value, whatever the model said.
+        let values = numeric_spans(claim);
+        let verdict = if values.is_empty() {
+            verdict
+        } else if values.iter().all(|(_, _, v)| contains_value(passage, v)) {
+            if verdict == "unsupported" {
+                "weak".to_string()
+            } else {
+                verdict
+            }
+        } else if verdict == "supported" {
+            "weak".to_string()
+        } else {
+            verdict
+        };
+
+        json!({ "n": n, "verdict": verdict, "reason": reason })
+    }));
+    verdicts.sort_by_key(|v| v["n"].as_u64().unwrap_or(0));
+    verdicts
+}
+
+/// Doc 07 section B8.5. Ask the pack's model backed rules in one call.
+///
+/// Doctrine stays data: each rule's own `description` is what is looked for, and
+/// nothing here knows what `jurisdiction_drift` means. Returns the rules that
+/// matched, with the model's one sentence reason.
+async fn doctrine_model_checks(
+    ctx: &mut AgentContext<'_>,
+    answer: &str,
+    constraints: &Value,
+    rules: &[Value],
+) -> Result<std::collections::BTreeMap<String, String>, Failure> {
+    let mut prompt = String::from("Answer:\n");
+    prompt.push_str(answer);
+    if let Some(scope) = constraints["answer_scope"].as_str() {
+        prompt.push_str(&format!("\n\nThe answer was asked to cover exactly: {scope}"));
+    }
+    prompt.push_str("\n\nFor each rule, say whether it matches this answer.\n");
+    for rule in rules {
+        prompt.push_str(&format!(
+            "- {}: {}\n",
+            rule["rule_id"].as_str().unwrap_or_default(),
+            rule["description"].as_str().unwrap_or_default()
+        ));
+    }
+
+    let schema = json!({
+        "type": "object",
+        "required": ["matches"],
+        "additionalProperties": false,
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["rule_id", "matched"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "rule_id": { "type": "string" },
+                        "matched": { "type": "boolean" },
+                        "reason": { "type": "string" }
+                    }
+                }
+            }
+        }
+    });
+
+    let system = format!(
+        "You check one answer against a list of rules. A rule matches only when \
+         the answer plainly does what the rule describes. When in doubt it does \
+         not match, because a rule that cries wolf is one the reader learns to \
+         ignore.\n\n{}\n\n{}",
+        prompts::DATA_IS_NOT_INSTRUCTION,
+        prompts::json_only(&schema)
+    );
+
+    let completion = ctx
+        .call(
+            &CompletionRequest::new(ctx.model_for("verify"), "verify")
+                .system(system)
+                .user(prompt)
+                .effort(Effort::High)
+                .max_tokens(1500)
+                .expecting(schema),
+        )
+        .await?;
+
+    let parsed: Value = completion.json().map_err(|e| Failure {
+        kind: "schema_violation".into(),
+        detail: e.to_string(),
+        recovery: Recovery::Failed,
+        evidence: None,
+        recoverable: false,
+    })?;
+
+    Ok(parsed["matches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["matched"].as_bool().unwrap_or(false))
+        .filter_map(|m| {
+            Some((
+                m["rule_id"].as_str()?.to_string(),
+                m["reason"].as_str().unwrap_or_default().to_string(),
+            ))
+        })
+        .collect())
+}
+
+/// The batched call. Doc 07 section B13 budgets one or two medium calls.
+async fn ask_support(
+    ctx: &mut AgentContext<'_>,
+    pairs: &[(u64, String, String)],
+) -> Result<std::collections::BTreeMap<u64, (String, String)>, Failure> {
+    let mut prompt = String::from(
+        "For each numbered claim, say whether its passage states it.\n\n\
+         supported: the passage states the claim.\n\
+         weak: the passage is related but does not state it.\n\
+         unsupported: the passage does not support it.\n\n",
+    );
+    for (n, claim, passage) in pairs {
+        prompt.push_str(&format!("Claim {n}: {claim}\n"));
+        prompt.push_str(&prompts::passage_block(*n as usize, "cited", "passage", passage));
+        prompt.push_str("\n\n");
+    }
+
+    let schema = json!({
+        "type": "object",
+        "required": ["verdicts"],
+        "additionalProperties": false,
+        "properties": {
+            "verdicts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["n", "verdict"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "n": { "type": "integer" },
+                        "verdict": { "enum": ["supported", "weak", "unsupported"] },
+                        "reason": { "type": "string" }
+                    }
+                }
+            }
+        }
+    });
+
+    let system = format!(
+        "You check whether a passage states a claim. You judge only what is in \
+         front of you and you never use anything you know.\n\n{}\n\n{}",
+        prompts::DATA_IS_NOT_INSTRUCTION,
+        prompts::json_only(&schema)
+    );
+
+    let completion = ctx
+        .call(
+            &CompletionRequest::new(ctx.model_for("verify"), "verify")
+                .system(system)
+                .user(prompt)
+                .effort(Effort::High)
+                .max_tokens(2000)
+                .expecting(schema),
+        )
+        .await?;
+
+    let parsed: Value = completion.json().map_err(|e| Failure {
+        kind: "schema_violation".into(),
+        detail: e.to_string(),
+        recovery: Recovery::Failed,
+        evidence: None,
+        recoverable: false,
+    })?;
+
+    Ok(parsed["verdicts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| {
+            Some((
+                v["n"].as_u64()?,
+                (
+                    v["verdict"].as_str()?.to_string(),
+                    v["reason"].as_str().unwrap_or_default().to_string(),
+                ),
+            ))
+        })
+        .collect())
+}
+
+/// The sentence a citation is bound to, which is what the support check judges.
+fn claim_text(answer: &str, citations: &[Value], n: u64) -> String {
+    let Some(citation) = citations.iter().find(|c| c["n"].as_u64() == Some(n)) else {
+        return String::new();
+    };
+    let start = citation["claim_span"]["start"].as_u64().unwrap_or(0) as usize;
+    let end = citation["claim_span"]["end"].as_u64().unwrap_or(0) as usize;
+    if end > start && end <= answer.len() {
+        answer[start..end].to_string()
+    } else {
+        // A finding's span is into the finding rather than the answer, so there
+        // is nothing to slice. The passage still gets judged against the answer.
+        answer.to_string()
+    }
+}
+
+fn passage_for(citations: &[Value], n: u64) -> Option<&str> {
+    citations
+        .iter()
+        .find(|c| c["n"].as_u64() == Some(n))
+        .and_then(|c| c["passage_id"].as_str())
 }
 
 fn advance(ctx: &mut AgentContext<'_>, state: &str) -> Result<(), Failure> {
@@ -555,16 +967,102 @@ fn injection_suspected(passages: &[Value]) -> Option<Vec<Value>> {
 
 /// Doc 07 section B8.4. In `verify_only` mode this is the only check that runs,
 /// and it can flip a done card to flagged months after it was written.
+/// Doc 05 v0.2 line 106: a numeric or regulatory claim whose only support is a
+/// prior card of this profile's own.
+///
+/// The memory rule, in the words HANDOFF section 2 uses: a prior card is
+/// context, never evidence. A card that answered a question in March is not a
+/// source for the same figure in August; the source it cited is, and it travels
+/// in the packet beside it, so the Synthesizer had one to cite and chose the
+/// card instead.
+///
+/// Numeric or regulatory, not every claim, because a prior card summarising what
+/// a rule is about is the kind of context memory exists to supply. It is the
+/// figures and the citations to instruments that have to rest on the thing
+/// itself.
+///
+/// Doc 16 line 69 extends the same rule to `page` sources when the vault lands.
+/// Both classes are listed here rather than one, so that arrival is a pack edit
+/// rather than a code edit.
+fn own_card_sole_support(answer: &str, citations: &[Value], passages: &[Value]) -> Option<Vec<Value>> {
+    /// Classes that carry a claim but never support one.
+    const CONTEXT_ONLY: [&str; 2] = ["own_card", "page"];
+
+    let class_of: std::collections::BTreeMap<&str, &str> = passages
+        .iter()
+        .filter_map(|p| Some((p["passage_id"].as_str()?, p["source"]["class"].as_str()?)))
+        .collect();
+
+    let mut out = Vec::new();
+    for (start, end, text) in numeric_spans(answer) {
+        // Every citation whose span covers this figure. A figure with none is
+        // `numeric_without_citation`'s finding, not this one: two rules firing
+        // on one absence would put two flags on one span.
+        let covering: Vec<&Value> = citations
+            .iter()
+            .filter(|c| {
+                let (Some(s), Some(e)) = (c["claim_span"]["start"].as_u64(), c["claim_span"]["end"].as_u64())
+                else {
+                    return false;
+                };
+                start >= s as usize && end <= e as usize
+            })
+            .collect();
+        if covering.is_empty() {
+            continue;
+        }
+
+        // Sole support means every one of them is context only. One external
+        // source among them is what the rule asks for, and the others are then
+        // the prior work they are meant to be.
+        let all_context = covering.iter().all(|c| {
+            c["passage_id"]
+                .as_str()
+                .and_then(|id| class_of.get(id))
+                .is_some_and(|class| CONTEXT_ONLY.contains(class))
+        });
+        if !all_context {
+            continue;
+        }
+
+        out.push(hit(
+            "answer_span",
+            None,
+            "A figure rests only on this profile's own earlier work, which is context rather than \
+             evidence.",
+            json!({
+                "value": text,
+                "start": start,
+                "end": end,
+                "classes": covering
+                    .iter()
+                    .filter_map(|c| c["passage_id"].as_str())
+                    .filter_map(|id| class_of.get(id).copied())
+                    .collect::<Vec<_>>(),
+            }),
+        ));
+    }
+    Some(out)
+}
+
 fn stale_source(passages: &[Value]) -> Option<Vec<Value>> {
     Some(
         passages
             .iter()
             .filter(|p| p["source"]["stale"].as_bool().unwrap_or(false))
             .map(|p| {
+                // Doc 05 section 7 names three reasons, and they read differently
+                // to whoever opens the flag. A superseded regulation did not
+                // change, and a page that stopped resolving cannot be compared.
+                let reason = match p["source"]["stale_reason"].as_str() {
+                    Some("superseded_version") => "A newer version of the cited source applies now.",
+                    Some("locator_gone") => "The cited source no longer resolves.",
+                    _ => "A cited source has changed since it was read.",
+                };
                 hit(
                     "citation",
                     p["passage_id"].as_str(),
-                    "A cited source has changed since it was read.",
+                    reason,
                     json!({
                         "source": p["source"]["title"].clone(),
                         "reason": p["source"]["stale_reason"].clone()
@@ -582,10 +1080,20 @@ fn below_threshold(mode: &str) -> Option<Vec<Value>> {
     if mode == "fast" {
         return Some(vec![]);
     }
+    // Doc 07 section B9: while a pack has not reached 0.90 agreement with the
+    // ledger check, every deep and research card carries this, which turns the
+    // product back into draft mode without changing any other agent. No pack
+    // has been measured against a live provider yet, so it fires on all of them.
+    //
+    // The wording was "the support check is not enabled yet", which stopped
+    // being true at M8 when that check was built. A person reading it would
+    // conclude nothing had checked their card, when what is actually pending is
+    // the measurement that would let the checking run unsupervised.
     Some(vec![hit(
         "whole_card",
         None,
-        "The support check is not enabled yet, so a spot check is advised.",
+        "This pack's Verifier has not been measured against a live provider yet, so a spot check \
+         is advised.",
         json!({}),
     )])
 }
@@ -643,8 +1151,15 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
 
 /// Numbers carrying a unit or a percent sign, with their offsets.
 fn numeric_spans(text: &str) -> Vec<(usize, usize, String)> {
+    // Two alternatives rather than one, because the trailing `\b` cannot follow
+    // `%`: a word boundary needs a word character on one side, and `%` is not
+    // one, so `2.5 %` and `2.5%` matched nothing at all. Every figure written
+    // with the symbol escaped this and every rule built on it. The synthetic
+    // corpus spells percentages as `%` in all 147 of them and the unit tests
+    // spelled them out as `percent`, so nothing on either side of the build had
+    // ever put the two together.
     let Ok(re) = regex::Regex::new(
-        r"(?i)\b\d[\d,.]*\s*(%|percent|per cent|bps|basis points|eur|usd|gbp|million|billion|days?|months?|years?)\b",
+        r"(?i)\b\d[\d,.]*\s*(?:%|(?:percent|per cent|bps|basis points|eur|usd|gbp|million|billion|days?|months?|years?)\b)",
     ) else {
         return Vec::new();
     };
@@ -715,6 +1230,30 @@ mod tests {
                 .as_str()
                 .is_some_and(|v| v.contains('3'))
         );
+    }
+
+    #[test]
+    fn a_percentage_written_with_the_symbol_is_a_figure_like_any_other() {
+        // The hole this closes: the span regex ended in `\b`, which cannot
+        // follow `%` because a word boundary needs a word character on one side.
+        // So `2.5 %` and `2.5%` matched nothing, and every rule built on
+        // `numeric_spans` skipped them in silence. The synthetic corpus writes
+        // all 147 of its percentages with the symbol and the tests above wrote
+        // theirs as `percent`, so neither side ever met the other.
+        for answer in [
+            "The buffer is 2.5 % for these firms.",
+            "The buffer is 2.5% for these firms.",
+            "The buffer is 2.5 %.",
+        ] {
+            let hits = numeric_without_citation(answer, &[]).expect("ran");
+            assert_eq!(hits.len(), 1, "{answer:?} produced {hits:?}");
+            assert!(
+                hits[0]["evidence"]["value"]
+                    .as_str()
+                    .is_some_and(|v| v.contains("2.5")),
+                "{answer:?} produced {hits:?}"
+            );
+        }
     }
 
     #[test]
@@ -817,6 +1356,99 @@ mod tests {
         let hits = injection_suspected(passages.as_array().expect("a")).expect("ran");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0]["evidence"]["source"], "Internal memo");
+    }
+
+    /// Doc 05 v0.2 line 106, the rule HANDOFF section 2 states as "a prior card
+    /// is context, never evidence".
+    mod memory_is_not_evidence {
+        use super::*;
+
+        const ANSWER: &str = "The capital conservation buffer is 2.5 % for these firms.";
+
+        fn passages(classes: &[(&str, &str)]) -> Value {
+            json!(
+                classes
+                    .iter()
+                    .map(|(id, class)| json!({
+                        "passage_id": id,
+                        "text": "The buffer is 2.5 %.",
+                        "source": { "title": "A source", "class": class }
+                    }))
+                    .collect::<Vec<_>>()
+            )
+        }
+
+        /// The figure's span in ANSWER, so the citation actually covers it.
+        fn cite(passage_id: &str) -> Value {
+            let start = ANSWER.find("2.5 %").expect("the fixture states a figure");
+            json!({
+                "n": 1,
+                "passage_id": passage_id,
+                "claim_span": { "start": start, "end": start + "2.5 %".len() },
+                "binding": "answer"
+            })
+        }
+
+        #[test]
+        fn a_figure_resting_only_on_a_prior_card_is_blocked() {
+            let passages = passages(&[("p1", "own_card")]);
+            let hits =
+                own_card_sole_support(ANSWER, &[cite("p1")], passages.as_array().expect("a")).expect("ran");
+            assert_eq!(hits.len(), 1, "the rule did not fire: {hits:?}");
+            assert_eq!(hits[0]["evidence"]["value"], "2.5 %");
+        }
+
+        #[test]
+        fn one_external_source_among_them_is_enough() {
+            // The rule is about sole support. A prior card beside the source it
+            // cited is memory doing its job, and flagging that would make the
+            // boards retriever useless rather than careful.
+            let passages = passages(&[("p1", "own_card"), ("p2", "regulatory")]);
+            let mut second = cite("p2");
+            second["n"] = json!(2);
+            let hits = own_card_sole_support(ANSWER, &[cite("p1"), second], passages.as_array().expect("a"))
+                .expect("ran");
+            assert!(hits.is_empty(), "a well sourced figure was blocked: {hits:?}");
+        }
+
+        #[test]
+        fn a_figure_with_no_citation_at_all_belongs_to_the_other_rule() {
+            // `numeric_without_citation` owns that absence. Two rules firing on
+            // one span would put two flags on one figure and read as two faults.
+            let passages = passages(&[("p1", "own_card")]);
+            let hits = own_card_sole_support(ANSWER, &[], passages.as_array().expect("a")).expect("ran");
+            assert!(hits.is_empty());
+            let missing = numeric_without_citation(ANSWER, &[]).expect("ran");
+            assert_eq!(missing.len(), 1, "nothing claimed the uncited figure");
+        }
+
+        #[test]
+        fn prose_with_no_figure_in_it_is_left_alone() {
+            // A prior card explaining what a rule is about is exactly the
+            // context memory exists to supply.
+            let passages = passages(&[("p1", "own_card")]);
+            let prose = "The buffer applies to significant institutions.";
+            let hits = own_card_sole_support(
+                prose,
+                &[json!({
+                    "n": 1, "passage_id": "p1",
+                    "claim_span": { "start": 0, "end": prose.len() }, "binding": "answer"
+                })],
+                passages.as_array().expect("a"),
+            )
+            .expect("ran");
+            assert!(hits.is_empty());
+        }
+
+        #[test]
+        fn a_vault_page_counts_as_context_too() {
+            // Doc 16 line 69 extends the same rule to `page`, and listing both
+            // classes now makes that arrival a pack edit rather than a code one.
+            let passages = passages(&[("p1", "page")]);
+            let hits =
+                own_card_sole_support(ANSWER, &[cite("p1")], passages.as_array().expect("a")).expect("ran");
+            assert_eq!(hits.len(), 1);
+        }
     }
 
     #[test]

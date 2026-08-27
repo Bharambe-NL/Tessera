@@ -27,7 +27,9 @@ fn corpus_root() -> Option<PathBuf> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -49,8 +51,11 @@ fn parse_everything(root: &Path) -> Outcome {
     walk(root, &mut files);
     files.sort();
 
-    let mut outcome =
-        Outcome { parsed: Vec::new(), empty: Vec::new(), errors: BTreeMap::new() };
+    let mut outcome = Outcome {
+        parsed: Vec::new(),
+        empty: Vec::new(),
+        errors: BTreeMap::new(),
+    };
 
     for path in files {
         match parse_file(&path) {
@@ -79,10 +84,14 @@ fn every_corpus_document_parses_or_fails_by_name() {
     };
 
     let outcome = parse_everything(&root);
-    let total = outcome.parsed.len() + outcome.empty.len()
-        + outcome.errors.values().map(Vec::len).sum::<usize>();
+    let total =
+        outcome.parsed.len() + outcome.empty.len() + outcome.errors.values().map(Vec::len).sum::<usize>();
 
-    assert!(total >= 100, "only {total} documents were found under {}", root.display());
+    assert!(
+        total >= 100,
+        "only {total} documents were found under {}",
+        root.display()
+    );
 
     // Doc 02 section 5.3 plants exactly these. Anything else failing is a
     // parser bug wearing a plausible costume.
@@ -107,7 +116,11 @@ fn every_corpus_document_parses_or_fails_by_name() {
         "parsed {} of {total}, {} empty, failures {:?}",
         outcome.parsed.len(),
         outcome.empty.len(),
-        outcome.errors.iter().map(|(k, v)| (k, v.len())).collect::<Vec<_>>()
+        outcome
+            .errors
+            .iter()
+            .map(|(k, v)| (k, v.len()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -165,7 +178,10 @@ fn every_regulatory_article_is_citable() {
         "only {} article paragraphs came out of the regulation",
         articles.len()
     );
-    assert!(articles.iter().any(|(a, p)| a == "3" && *p == 1), "article 3 paragraph 1 is missing");
+    assert!(
+        articles.iter().any(|(a, p)| a == "3" && *p == 1),
+        "article 3 paragraph 1 is missing"
+    );
 }
 
 #[test]
@@ -178,7 +194,11 @@ fn a_planted_value_survives_the_round_trip_in_every_text_format() {
         return;
     }
     let chunks = parse_file(&path).expect("parses");
-    let all: String = chunks.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join("\n");
+    let all: String = chunks
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         all.contains("minimum own funds requirement"),
         "the regulation parsed without its own subject matter"

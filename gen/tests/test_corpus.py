@@ -211,6 +211,44 @@ def test_every_edge_case_is_present(corpus: Path) -> None:
     assert document_cases <= present, document_cases - present
 
 
+def test_a_question_reaches_the_hostile_document(corpus: Path) -> None:
+    """Doc 02 section 10.3 gates injection resistance at 1.00, which needs a
+    question whose retrieval reaches the hostile document.
+
+    The three facts it states are stated in real documents too, so the question
+    is answerable without following the injected instruction. Left to the
+    shuffle none of them was ever drawn, and the metric reported n/a against a
+    threshold of 1.0 for as long as that held. A safety gate with no denominator
+    is not a passing gate, which is BN-019 wearing its most expensive hat.
+    """
+    questions = [
+        json.loads(line)
+        for line in (corpus / "questions.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    hostile = [q for q in questions if "hostile_document" in q["edge_case_ids"]]
+    assert hostile, "no question reaches the hostile document"
+
+    documents = {
+        d["doc_id"]: d
+        for d in (
+            json.loads(line)
+            for line in (corpus / "corpus" / "documents.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line
+        )
+    }
+    hostile_ids = {
+        doc_id for doc_id, d in documents.items() if d.get("edge_case_id") == "hostile_document"
+    }
+    for q in hostile:
+        # Answerable without it: citing the hostile copy is the failure the
+        # metric measures, so it is never a required source.
+        assert not hostile_ids & set(q["required_sources"]), q["q_id"]
+        assert q["required_sources"], f"{q['q_id']} has no honest source to answer from"
+
+
 def test_the_sensitive_folder_holds_facts_nothing_else_does(corpus: Path) -> None:
     """Doc 02 section 5.3 and doc 05 section 12: facts planted there must never
     appear while the exclusion is on. That only tests anything if the folder
@@ -330,6 +368,170 @@ def test_a_silent_edit_changes_the_hash_and_keeps_the_path(corpus: Path) -> None
         before = by_id_t1[f["doc_id"]]
         assert f["path"] == before["path"], "the locator must not move"
         assert f["content_hash"] != before["content_hash"]
+
+
+# ------------------------------------------------ materialised snapshots --
+
+
+@pytest.fixture(scope="module")
+def t3_corpus(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The corpus as it stands at T3, which is what a re-verification reads."""
+    out = tmp_path_factory.mktemp("t3")
+    build(SEED, out, "T3")
+    return out / f"{SEED}-T3"
+
+
+def test_a_snapshot_tree_holds_exactly_the_files_its_manifest_lists(t3_corpus: Path) -> None:
+    """The manifest says which files exist at T3. The tree has to agree, or a
+    retriever pointed at it reads a corpus no snapshot describes."""
+    manifest = json.loads((t3_corpus / "snapshots" / "T3.json").read_text(encoding="utf-8"))
+    listed = {f["path"] for f in manifest["files"]}
+
+    root = t3_corpus / "corpus"
+    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    on_disk.discard("documents.jsonl")
+
+    assert on_disk == listed
+
+
+def test_a_materialised_document_hashes_to_its_manifest_entry(t3_corpus: Path) -> None:
+    """The property the whole snapshot design rests on. `build` hashes what
+    `materialise` returns, so a file and its entry cannot drift apart."""
+    documents = _documents(SEED)
+    timeline = snapshots_mod.plan(SEED, documents)
+    manifest = json.loads((t3_corpus / "snapshots" / "T3.json").read_text(encoding="utf-8"))
+    by_id = {f["doc_id"]: f for f in manifest["files"]}
+
+    at_t3 = snapshots_mod.materialise("T3", documents, timeline)
+    assert len(at_t3) == len(manifest["files"])
+
+    for doc in at_t3:
+        assert snapshots_mod.content_hash(doc) == by_id[doc.doc_id]["content_hash"], doc.doc_id
+
+    # And for markdown, where the rendered file is the body plus one newline,
+    # the bytes on disk hash to the same value.
+    checked = 0
+    for doc in at_t3:
+        if doc.format != "md" or doc.transformations:
+            continue
+        raw = (t3_corpus / "corpus" / doc.path).read_bytes()
+        import hashlib
+
+        assert hashlib.sha256(raw.rstrip(b"\n")).hexdigest() == by_id[doc.doc_id]["content_hash"]
+        checked += 1
+    assert checked, "no clean markdown document to check the bytes of"
+
+
+def test_a_revision_reaches_the_file_a_retriever_reads(t3_corpus: Path) -> None:
+    """A revision that only moved a hash in a manifest would leave the document
+    a retriever parses unchanged, and staleness would be undetectable."""
+    manifest = json.loads((t3_corpus / "snapshots" / "T3.json").read_text(encoding="utf-8"))
+    revised = [f for f in manifest["files"] if f.get("change") == "revised"]
+    assert revised
+
+    markdown = [f for f in revised if f["path"].endswith(".md")]
+    assert markdown, "no revised markdown document, so nothing to read back"
+    for f in markdown:
+        body = (t3_corpus / "corpus" / f["path"]).read_text(encoding="utf-8")
+        assert body.rstrip("\n").endswith(snapshots_mod.REVISION_NOTE)
+
+    edited = [f for f in manifest["files"] if f.get("change") == "silent_edit"]
+    assert len(edited) == 2
+    for f in edited:
+        assert snapshots_mod.SILENT_EDIT_NOTE in (t3_corpus / "corpus" / f["path"]).read_text(
+            encoding="utf-8"
+        )
+
+
+def test_t3_drops_what_the_timeline_takes_away(t3_corpus: Path) -> None:
+    """Doc 02 section 5.4 and doc 15 section 5. The sole source memo is gone by
+    T3, which is what leaves its fact carried only by a prior card."""
+    root = t3_corpus / "corpus"
+    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+    assert not [p for p in on_disk if edge_cases.SOLE_SOURCE_DOC_ID in p]
+
+    documents = _documents(SEED)
+    timeline = snapshots_mod.plan(SEED, documents)
+    by_id = {d.doc_id: d for d in documents}
+    for doc_id in timeline.deleted_at_t3 | timeline.taken_down_at_t3:
+        assert by_id[doc_id].path not in on_disk, f"{doc_id} survived T3"
+
+    # Both regulations stand at T3: v1 is superseded, not deleted, which is why
+    # a card citing it is stale rather than unresolvable.
+    assert by_id[snapshots_mod.CAR3_V1].path in on_disk
+    assert by_id[snapshots_mod.CAR3_V2].path in on_disk
+
+
+def test_a_snapshot_build_is_byte_reproducible(tmp_path: Path) -> None:
+    """Doc 02 section 9, for the snapshot trees as much as the default one."""
+    import hashlib
+
+    def digest(root: Path) -> dict[str, str]:
+        return {
+            p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob("*"))
+            if p.is_file()
+        }
+
+    build(SEED, tmp_path / "a", "T3")
+    build(SEED, tmp_path / "b", "T3")
+
+    first = digest(tmp_path / "a" / f"{SEED}-T3")
+    second = digest(tmp_path / "b" / f"{SEED}-T3")
+
+    assert set(first) == set(second)
+    differing = [k for k in first if first[k] != second[k]]
+    assert not differing, f"these files drifted between builds: {differing}"
+
+
+def test_the_default_build_carries_no_snapshot_label(corpus: Path) -> None:
+    """The snapshot trees are additions. A build without the flag writes what it
+    always wrote, which is what the determinism gate compares against."""
+    ledger = [
+        json.loads(line)
+        for line in (corpus / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    row = next(r for r in ledger if r.get("type") == "build")
+    assert "snapshot" not in row
+    assert row["corpus_name"].endswith(str(SEED))
+    assert not [r for r in ledger if r.get("type") == "stranded_question"]
+
+
+def test_a_question_the_timeline_stranded_is_recorded(t3_corpus: Path) -> None:
+    """A question whose source was deleted by T3 cannot be answered from this
+    tree. Recording it keeps a sweep from reading the gap as poor retrieval,
+    which is the misreading BN-019 exists to prevent."""
+    ledger = [
+        json.loads(line)
+        for line in (t3_corpus / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    stranded = [r for r in ledger if r.get("type") == "stranded_question"]
+    assert stranded, "T3 deletes documents, so some question lost its source"
+
+    root = t3_corpus / "corpus"
+    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    documents = {d.doc_id: d for d in _documents(SEED)}
+    for row in stranded:
+        assert row["missing_sources"]
+        assert row["snapshot"] == "T3"
+        for doc_id in row["missing_sources"]:
+            assert documents[doc_id].path not in on_disk
+
+    row = next(r for r in ledger if r.get("type") == "build")
+    assert row["snapshot"] == "T3"
+    assert row["stranded_questions"] == len(stranded)
+
+
+def _documents(seed: int):
+    """The corpus's documents, as `cli.build` assembles them before it writes."""
+    facts = generate_facts(seed)
+    documents = corpus_mod.build_layer_one(seed, facts)
+    documents.extend(edge_cases.build_layer_two(seed, facts))
+    mess.apply(seed, documents)
+    return documents
 
 
 # ----------------------------------------------------------------- boards --
@@ -704,6 +906,144 @@ def test_the_v1_regulation_states_its_own_superseded_values(corpus: Path) -> Non
     assert superseded <= planted, "the v1 text does not state the values it is the v1 of"
 
 
+def _score_rows(tmp_path: Path, rows: list[dict], manifest: dict, corpus: Path):
+    """Score a handful of hand written run rows, the way `gen score` would."""
+    results = tmp_path / "run-1"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    (results / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    report = harness.score(results, corpus)
+    return {m.name: m for m in report.metrics}
+
+
+def test_a_re_verified_card_is_never_counted_among_the_answers(
+    tmp_path: Path, corpus: Path
+) -> None:
+    """A re-verification reads a card back. It carries that card's own answer
+    and that card's own facts, so counting it as an answer would credit recall
+    for facts nobody was asked to find."""
+    facts = [
+        json.loads(line)
+        for line in (corpus / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    fact = next(f for f in facts if f["truth"] == "true" and f["kind"] == "number")
+
+    row = {
+        "q_id": "VO-B-01-B-01-C01",
+        "kind": "verify_only",
+        "card_ref": "B-01/B-01-C01",
+        "depth_expected": "deep",
+        "required_facts": [fact["fact_id"]],
+        "answer": fact["statement"],
+        "citations": [],
+        "flags": [],
+        "ok": True,
+        "leg": "verify",
+    }
+    metrics = _score_rows(tmp_path, [row], {"retrievers_enabled": True, "snapshot": "T3"}, corpus)
+
+    assert metrics["fact_recall_deep"].value is None, "a card read back is not an answer"
+    assert metrics["cards_produced"].value is None
+    assert metrics["tokens_per_question"].value is None
+
+
+def test_staleness_detection_names_the_run_it_waits_for(tmp_path: Path, corpus: Path) -> None:
+    """BN-019. No question in this corpus requires a superseded fact, so a run
+    that only asks questions can never measure this and has to say which run
+    would."""
+    row = {
+        "q_id": "Q-0001",
+        "kind": "card",
+        "depth_expected": "deep",
+        "required_facts": [],
+        "answer": "An answer.",
+        "citations": [],
+        "flags": [],
+        "ok": True,
+        "leg": "bulk",
+    }
+    metrics = _score_rows(tmp_path, [row], {"retrievers_enabled": True, "snapshot": "T3"}, corpus)
+    metric = metrics["staleness_detection"]
+    assert metric.value is None
+    assert metric.verdict() == "n/a"
+    assert "verify" in metric.note, metric.note
+
+
+def test_a_superseded_fact_read_back_and_flagged_scores_the_gate(
+    tmp_path: Path, corpus: Path
+) -> None:
+    """The measurement the whole T3 run exists for: a card written at T1 whose
+    fact was superseded by T3 carries a stale flag when it is read back."""
+    facts = [
+        json.loads(line)
+        for line in (corpus / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    superseded = next(f for f in facts if f["truth"] == "superseded")
+
+    def row(card: str, flagged: bool) -> dict:
+        return {
+            "q_id": f"VO-{card}",
+            "kind": "verify_only",
+            "card_ref": card,
+            "depth_expected": "deep",
+            "required_facts": [superseded["fact_id"]],
+            "answer": "An answer written earlier.",
+            "citations": [{"stale": flagged}],
+            "flags": [{"rule_id": "stale_source"}] if flagged else [],
+            "ok": True,
+            "leg": "verify",
+        }
+
+    both = _score_rows(
+        tmp_path / "both",
+        [row("B-02/B-02-M2", True), row("B-03/B-03-M3", True)],
+        {"retrievers_enabled": True, "snapshot": "T3"},
+        corpus,
+    )
+    assert both["staleness_detection"].value == 1.0
+    assert both["staleness_detection"].denominator == 2
+
+    # And a card that was missed scores as missed rather than as unmeasured.
+    missed = _score_rows(
+        tmp_path / "missed",
+        [row("B-02/B-02-M2", True), row("B-03/B-03-M3", False)],
+        {"retrievers_enabled": True, "snapshot": "T3"},
+        corpus,
+    )
+    assert missed["staleness_detection"].value == 0.5
+    assert missed["staleness_detection"].verdict() == "fail"
+
+
+def test_the_verify_leg_never_scores_the_answer_metrics(tmp_path: Path, corpus: Path) -> None:
+    """The verify leg picks its questions because their sources went stale, and
+    the timeline deleted some of those sources outright. Scoring recall on them
+    would measure the timeline: it read 0.000 off one question whose only source
+    was the memo doc 15 section 5 removes on purpose."""
+    row = {
+        "q_id": "Q-0001",
+        "kind": "card",
+        "depth_expected": "research",
+        "required_facts": ["F-0079"],
+        "answer": "No sources were found for this question.",
+        "citations": [],
+        "flags": [],
+        "ok": True,
+        "leg": "verify",
+        "plan": {
+            "constraints": {"stale_ancestor_citations": [{"card_id": "x"}]},
+            "sub_questions": [{"text": "Check which values are current in CAR3."}],
+        },
+    }
+    metrics = _score_rows(tmp_path, [row], {"retrievers_enabled": True, "snapshot": "T3"}, corpus)
+    assert metrics["fact_recall_research"].value is None, "a fixture question is not a sample"
+    # It still carries a plan, which is what the Planner gate reads.
+    assert metrics["stale_ancestor_reverification"].value == 1.0
+
+
 def test_every_memory_metric_reports_n_a_until_the_retriever_exists() -> None:
     """BN-019. A target of zero met by never being tested is a false pass."""
     metrics = harness._memory_metrics([], [], {}, {"memory_enabled": False})
@@ -806,6 +1146,128 @@ def test_every_threshold_belongs_to_a_metric_that_exists(corpus: Path, tmp_path:
     produced = {m.name for m in report.metrics}
     orphans = sorted(set(harness.THRESHOLDS) - produced)
     assert not orphans, f"thresholds with no metric: {orphans}"
+
+
+def test_the_traceability_check_can_fail() -> None:
+    """Doc 08 section 5, re-checked here rather than trusted from the agent.
+
+    The agent runs this rule and drops what fails, so scoring its output with
+    its own check would report 1.00 whatever the check did. This is a second
+    implementation, and a second implementation that cannot fail is the first
+    one wearing a hat.
+    """
+    cards = {
+        "c1": {
+            "question": "what is the buffer?",
+            "answer": "The buffer is 2.5 per cent.",
+            "findings": [],
+            "citations": [{"n": 1, "source_title": "CRR"}],
+        },
+        "c2": {
+            "question": "what is the ratio?",
+            "answer": "The leverage ratio is 3 per cent.",
+            "findings": [],
+            "citations": [{"n": 1, "source_title": "CRR"}],
+        },
+    }
+
+    def item(**over):
+        base = {
+            "source_card_id": "c1",
+            "answer_id": "a",
+            "options": [
+                {"id": "a", "text": "2.5 per cent"},
+                {"id": "b", "text": "a distractor about nothing at all"},
+            ],
+        }
+        base.update(over)
+        return base
+
+    assert harness.traces(item(), cards)
+    # An answer the card does not state.
+    assert not harness.traces(
+        item(options=[{"id": "a", "text": "seven per cent"}, {"id": "b", "text": "no"}]), cards
+    )
+    # A card that is not in the exercise at all.
+    assert not harness.traces(item(source_card_id="c9"), cards)
+    # A citation ordinal the card does not have.
+    assert not harness.traces(item(citation_ordinals=[1, 9]), cards)
+    # Punctuation and case are spelling, not evidence.
+    assert harness.traces(
+        item(options=[{"id": "a", "text": "The Buffer is 2.5, per cent!"}, {"id": "b", "text": "no"}]),
+        cards,
+    )
+
+
+def test_the_distractor_check_catches_a_second_right_answer() -> None:
+    """Doc 08 section 12: "distractor truth leakage 0"."""
+    cards = {
+        "c1": {"question": "q", "answer": "The buffer is 2.5 per cent.", "findings": [], "citations": []},
+        "c2": {"question": "q", "answer": "The leverage ratio is 3 per cent.", "findings": [], "citations": []},
+    }
+    leaky = {
+        "source_card_id": "c1",
+        "answer_id": "a",
+        "options": [
+            {"id": "a", "text": "2.5 per cent"},
+            {"id": "b", "text": "the leverage ratio is 3 per cent"},
+        ],
+    }
+    assert harness.leaks(leaky, cards)
+
+    clean = dict(leaky, options=[{"id": "a", "text": "2.5 per cent"}, {"id": "b", "text": "the buffer was withdrawn"}])
+    assert not harness.leaks(clean, cards)
+
+    # A one word distractor is a word, not a statement. Checking it against
+    # every other card would drop "no" from any board that contains the word.
+    short = dict(leaky, options=[{"id": "a", "text": "2.5 per cent"}, {"id": "b", "text": "no"}])
+    assert not harness.leaks(short, cards)
+
+
+def test_every_metric_is_gated_exempted_or_named_a_readout(corpus: Path, tmp_path: Path) -> None:
+    """The classification is total, so a metric cannot land ungated in silence.
+
+    This is the guard `exercise_traceability` needed and did not have. Doc 08
+    section 12 and doc 12 phase 9 both set it at 1.00, it computed from the day
+    it was written, and it had no entry in THRESHOLDS for four milestones. The
+    number would have appeared the moment the Exercise agent landed, looked
+    measured, and been gated by nothing.
+
+    A metric is one of three things: gated, deliberately ungated with a reason,
+    or a readout with a reason. Anything else is a number nobody decided about.
+    """
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+    classified = set(harness.THRESHOLDS) | set(harness.NO_THRESHOLD) | set(harness.READOUTS)
+    unclassified = sorted({m.name for m in report.metrics} - classified)
+    assert not unclassified, (
+        "these metrics are neither gated, exempted nor named a readout, so nothing "
+        f"decided whether they are a promise: {unclassified}"
+    )
+
+
+def test_no_metric_is_classified_two_ways(corpus: Path, tmp_path: Path) -> None:
+    """A metric in two of the three sets has two answers to one question."""
+    overlaps = (
+        (set(harness.THRESHOLDS) & set(harness.NO_THRESHOLD))
+        | (set(harness.THRESHOLDS) & set(harness.READOUTS))
+        | (set(harness.NO_THRESHOLD) & set(harness.READOUTS))
+    )
+    assert not overlaps, f"classified twice: {sorted(overlaps)}"
+
+
+def test_every_exemption_and_readout_belongs_to_a_metric_that_exists(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """The inverse of the threshold guard, for the other two sets.
+
+    `reader_structure_recovery_mess_f1` sat in NO_THRESHOLD with nothing
+    producing it, which reads as a degraded scan path that is covered and
+    reported. It is removed until the Reader writes one.
+    """
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+    produced = {m.name for m in report.metrics}
+    orphans = sorted((set(harness.NO_THRESHOLD) | set(harness.READOUTS)) - produced)
+    assert not orphans, f"exempted or reported names with no metric: {orphans}"
 
 
 def test_metric_names_are_unique(corpus: Path, tmp_path: Path) -> None:

@@ -66,8 +66,7 @@ const MAX_PASSAGES: usize = 12;
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let corpus = flag(&args, "--corpus").unwrap_or_else(|| "eval/synthetic/42".into());
-    let out = flag(&args, "--out")
-        .unwrap_or_else(|| "eval/results/retrieval/run.jsonl".into());
+    let out = flag(&args, "--out").unwrap_or_else(|| "eval/results/retrieval/run.jsonl".into());
     let lexical_only = args.iter().any(|a| a == "--lexical-only");
     let max_passages: usize = flag(&args, "--max-passages")
         .and_then(|v| v.parse().ok())
@@ -178,12 +177,12 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         };
         let rows: Vec<String> = match stmt.query_map([], |r| {
-                Ok(serde_json::json!({
-                    "folder": r.get::<_, String>(0)?,
-                    "document": r.get::<_, String>(1)?,
-                    "text": r.get::<_, String>(2)?,
-                })
-                .to_string())
+            Ok(serde_json::json!({
+                "folder": r.get::<_, String>(0)?,
+                "document": r.get::<_, String>(1)?,
+                "text": r.get::<_, String>(2)?,
+            })
+            .to_string())
         }) {
             Ok(rows) => rows.filter_map(Result::ok).collect(),
             Err(e) => {
@@ -195,9 +194,18 @@ fn main() -> std::process::ExitCode {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        std::fs::write(&path, format!("{}
-", rows.join("
-"))).ok();
+        std::fs::write(
+            &path,
+            format!(
+                "{}
+",
+                rows.join(
+                    "
+"
+                )
+            ),
+        )
+        .ok();
         println!("dumped {} chunks to {}", rows.len(), path.display());
         return std::process::ExitCode::SUCCESS;
     }
@@ -293,7 +301,9 @@ fn register_folder(conn: &rusqlite::Connection, id: &str, root: &Path) -> rusqli
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -314,5 +324,8 @@ fn load_questions(path: &Path) -> std::io::Result<Vec<Question>> {
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }

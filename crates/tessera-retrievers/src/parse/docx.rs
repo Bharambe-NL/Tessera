@@ -19,10 +19,14 @@ use crate::parse::ParseError;
 pub fn parse(path: &Path) -> Result<Vec<Chunk>, ParseError> {
     let file = std::fs::File::open(path).map_err(|e| ParseError::Io(e.to_string()))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| match e {
-        zip::result::ZipError::InvalidArchive(detail) => {
-            ParseError::Malformed { format: "docx", detail: detail.to_string() }
-        }
-        other => ParseError::Malformed { format: "docx", detail: other.to_string() },
+        zip::result::ZipError::InvalidArchive(detail) => ParseError::Malformed {
+            format: "docx",
+            detail: detail.to_string(),
+        },
+        other => ParseError::Malformed {
+            format: "docx",
+            detail: other.to_string(),
+        },
     })?;
 
     let mut document = archive
@@ -37,7 +41,10 @@ pub fn parse(path: &Path) -> Result<Vec<Chunk>, ParseError> {
         use std::io::Read;
         document
             .read_to_string(&mut xml)
-            .map_err(|e| ParseError::Malformed { format: "docx", detail: e.to_string() })?;
+            .map_err(|e| ParseError::Malformed {
+                format: "docx",
+                detail: e.to_string(),
+            })?;
     }
 
     Ok(chunks_from_xml(&xml))

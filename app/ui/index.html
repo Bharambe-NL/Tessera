@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- The webview loads no remote resource. Fonts are bundled from node_modules
-         at M9; until then the stack falls back to the system sans. -->
+    <!-- The webview loads no remote resource. IBM Plex is bundled from
+         node_modules and served from the app's own origin, so `default-src
+         'self'` covers the fonts and needs no `font-src` of its own. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
@@ -12,6 +13,31 @@
     <title>Tessera</title>
   </head>
   <body>
+    <!-- Doc 11 section 5: left rail 56px collapsed, 240px open. Doc 09 open
+         question 1, adopted by doc 11: Trash is a filter on Home, so it is
+         absent here and present as a toggle on the Home page. -->
+    <nav id="rail" aria-label="Sections" data-no-pan>
+      <button class="rail-item on" data-view="board" aria-current="page">
+        <span class="glyph" aria-hidden="true">▣</span><span class="label">Board</span>
+      </button>
+      <button class="rail-item" data-view="home">
+        <span class="glyph" aria-hidden="true">▤</span><span class="label">Home</span>
+      </button>
+      <button class="rail-item" data-view="flags">
+        <span class="glyph" aria-hidden="true">▲</span><span class="label">Flags</span>
+        <span class="count" id="rail-flags" hidden></span>
+      </button>
+      <button class="rail-item" data-view="library">
+        <span class="glyph" aria-hidden="true">▥</span><span class="label">Library</span>
+      </button>
+      <button class="rail-item" data-view="profile">
+        <span class="glyph" aria-hidden="true">◍</span><span class="label">Profile</span>
+      </button>
+      <button id="rail-toggle" class="rail-item wide" aria-expanded="false">
+        <span class="glyph" aria-hidden="true">»</span><span class="label">Collapse</span>
+      </button>
+    </nav>
+
     <main id="main" aria-label="Board">
       <div id="grid" aria-hidden="true"></div>
 
@@ -27,6 +53,10 @@
 
       <div id="titlebar" data-no-pan>
         <input id="title" aria-label="Board title" value="Untitled board" />
+        <!-- Doc 11 section 10: the canvas list view alternative, reachable from
+             the title. A canvas is a spatial arrangement and a screen reader
+             has no way to convey one, so the same cards render as a document. -->
+        <button id="reading-toggle" aria-pressed="false">Read as a document</button>
       </div>
 
       <div id="toolbar" data-no-pan>
@@ -34,12 +64,16 @@
         <button id="zoom-in" aria-label="Zoom in">+</button>
         <button id="tidy">Tidy</button>
         <button id="fit">Fit</button>
+        <!-- Doc 09 section 4: the exercise entry sits in the toolbar. -->
+        <button id="check">Check understanding</button>
       </div>
 
       <div id="empty" hidden>Ask something to start a board.</div>
 
       <form id="composer" data-no-pan>
         <textarea id="ask" rows="1" placeholder="Ask something" aria-label="Ask a question"></textarea>
+        <!-- Doc 14 section 4: a Learn toggle left of the depth selector. -->
+        <button id="learn" type="button" aria-pressed="false">Learn</button>
         <div id="modes" role="group" aria-label="Depth">
           <button type="button" data-depth="fast" class="on">fast</button>
           <button type="button" data-depth="deep">deep</button>
@@ -52,9 +86,62 @@
         </button>
       </form>
 
+      <!-- Doc 09 section 3: the highlight popover and the block investigate
+           popover. One element in two states, following the prototype: offer
+           first, then compose. It sits outside #world on purpose, so it holds
+           its size when the board is zoomed. -->
+      <div id="anchor-pop" role="dialog" aria-label="Ask about this" data-no-pan hidden>
+        <div class="offer">
+          <span class="anchor-label"></span>
+          <button id="anchor-ask" type="button"></button>
+        </div>
+        <form class="compose" hidden>
+          <input id="anchor-question" aria-label="Ask about this" autocomplete="off" />
+          <div class="acts">
+            <button id="anchor-cancel" type="button">Not now</button>
+            <button id="anchor-branch" type="submit" class="primary">Branch here</button>
+          </div>
+        </form>
+      </div>
+
+      <article id="reading" aria-label="This board as a document" tabindex="-1" data-no-pan hidden></article>
+
+      <!-- Doc 14 section 3.9: the Tutor panel, right dock, 320px. Closing it
+           ends the session and the board keeps everything. -->
+      <aside id="tutor" aria-label="Tutor" data-no-pan hidden>
+        <header>
+          <span id="tutor-stage"></span>
+          <button id="tutor-close" aria-label="End the session">✕</button>
+        </header>
+        <div id="tutor-body"></div>
+      </aside>
+
+      <!-- Doc 11 section 6: the exercise is a modal over the board, because it
+           is a thing you do to a board rather than a place you go. -->
+      <div id="exercise" role="dialog" aria-modal="true" aria-labelledby="ex-title" tabindex="-1" data-no-pan hidden>
+        <div class="sheet">
+          <header>
+            <h2 id="ex-title">Check your understanding</h2>
+            <button id="ex-dismiss" aria-label="Close">✕</button>
+          </header>
+          <div id="ex-body"></div>
+        </div>
+      </div>
+
       <div id="toasts" role="status" aria-live="polite"></div>
       <pre id="gate" hidden></pre>
     </main>
+
+    <!-- The pages doc 11 section 6 lists, over the canvas rather than beside it,
+         so the board keeps its own camera while a page is open. -->
+    <section id="page" aria-live="polite" hidden>
+      <header class="page-head">
+        <h1 id="page-title"></h1>
+        <div id="page-tools"></div>
+      </header>
+      <div id="page-body"></div>
+    </section>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,0 +1,127 @@
+# Packaged builds. Doc 12 phase 11.
+#
+# `tauri.conf.json` targets msi and dmg, so the two jobs below are the two
+# platforms that produce them. Linux is not a target in v1 and is absent here
+# rather than built and thrown away.
+#
+# Signing and notarisation are conditional on the certificates being present,
+# and the job says in its output which one it produced. An unsigned build that
+# claimed to be signed is worse than one that says it is not: on macOS the
+# first thing a person learns is Gatekeeper refusing it, and by then they are
+# holding a file nobody told them was unsigned.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag, for example v0.1.0'
+        required: true
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One platform failing should not cancel the other: knowing that the msi
+      # built and the dmg did not is what tells you where to look.
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            label: macos
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            label: windows
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: app/ui/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98'
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: install the ui
+        run: pnpm --dir app/ui install --frozen-lockfile
+
+      # The whole workspace, not just the shell. A release built from a tree
+      # whose tests were never run is a release nobody checked.
+      - name: test
+        run: cargo test --workspace
+
+      - name: say whether this build will be signed
+        shell: bash
+        run: |
+          if [ "${{ matrix.label }}" = "macos" ]; then
+            if [ -n "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+              echo "signing and notarising with the Apple certificate"
+            else
+              echo "::warning::no Apple certificate: this dmg is unsigned and Gatekeeper will refuse it"
+            fi
+          else
+            if [ -n "${{ secrets.WINDOWS_CERTIFICATE }}" ]; then
+              echo "signing with the Windows certificate"
+            else
+              echo "::warning::no Windows certificate: this msi is unsigned and SmartScreen will warn"
+            fi
+          fi
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          # Absent on a fork and on any run whose repository has no certificate
+          # loaded. `tauri-action` signs when it finds these and does not when
+          # it does not, which is why the step above says which happened.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          projectPath: app/src-tauri
+          args: --target ${{ matrix.target }}
+          # A draft, so a person looks at what was produced before anyone can
+          # download it. Doc 12 phase 11's acceptance is a fresh install, and
+          # nobody has performed one at this point in the workflow.
+          releaseDraft: true
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: Tessera ${{ inputs.tag || github.ref_name }}
+
+      - name: keep the installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessera-${{ matrix.label }}
+          path: |
+            app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            app/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+          if-no-files-found: warn
+          retention-days: 14

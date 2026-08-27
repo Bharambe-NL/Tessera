@@ -36,6 +36,16 @@ THRESHOLDS: dict[str, float] = {
     "citation_accuracy_ledger": 0.95,
     "verifier_agreement": 0.90,
     "staleness_detection": 0.95,
+    # Doc 06 section B12: "every block in block_index has at least one supported
+    # citation or is marked no_claim", at 1.00. It computed without a threshold
+    # from the day it was written, and every grounded run declined every visual,
+    # so a rule the Visualizer broke for steps and list visuals went unreported
+    # for as long as nothing drew one.
+    "visual_fidelity": 1.0,
+    # Doc 06 section B12's second visual gate. It is exempted on a mock run,
+    # which is an exemption and not a retirement: the type follows the shape of
+    # the summary, and a scripted provider writes one shape.
+    "visual_type_match": 0.85,
     # Doc 07 section B12: "flag false positive rate per rule under 0.10". It was
     # computed without this, which made it a readout rather than a gate.
     "flag_false_positive_rate": 0.10,
@@ -44,6 +54,16 @@ THRESHOLDS: dict[str, float] = {
     # that being a strategy.
     "fact_precision": 0.90,
     "reader_structure_recovery_f1": 0.80,
+    # Doc 08 section 12 and doc 12 phase 9 both say "exercise traceability
+    # 1.00". It computed with no entry here from the day it was written, so the
+    # day `exercise_enabled` flipped it would have produced a number with no
+    # gate behind it. Every item that ships has to trace to a card, because an
+    # item that does not is a question with no right answer.
+    "exercise_traceability": 1.00,
+    # Doc 08 section 12's second gate: "distractor truth leakage 0". A
+    # distractor that is a true statement from another card in scope is a
+    # second right answer, and a reader who knows the material has to guess.
+    "exercise_distractor_leakage": 0.0,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
     # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
     # taxonomy that fed it. stakes_accuracy replaces it as the classification
@@ -67,6 +87,7 @@ LOWER_IS_BETTER = {
     "forbidden_fact_rate",
     "flag_false_positive_rate",
     "own_card_sole_support_rate",
+    "exercise_distractor_leakage",
 }
 
 #: Metrics whose subject is a model's judgment, and which therefore describe
@@ -83,18 +104,60 @@ MOCKED: dict[str, str] = {
     # The grounded mock concatenates whole passages, so it trips the length and
     # citation rules by construction.
     "flag_false_positive_rate": "the mock writes crudely and trips these by construction",
+    # The grounded mock cites every passage it was handed rather than the ones
+    # it used, so this counts how many retrieved passages happened to carry a
+    # required value. That is a property of retrieval ranking and of the
+    # fixture's habit of quoting everything, not of the product's citation
+    # accuracy.
+    "citation_accuracy_ledger": "the mock cites every passage it was given",
+    # And because it quotes those passages verbatim, the support check calls
+    # them supported while the ledger asks whether they carry a required value.
+    # Both are right about different passages, so the disagreement measures the
+    # fixture. On a real provider the answer cites what it used and the two
+    # questions converge, which is when doc 02 section 10.3's automation gate
+    # means what it says.
+    "verifier_agreement": "the mock quotes what it cites, so the two checks judge different things",
+    # The type follows the shape of the summary the model wrote, and the mock
+    # writes one shape.
+    "visual_type_match": "the mock emits one summary shape, so it selects one visual type",
+    # Doc 07 section A12 sets this at 0.80 on clean rasters. A mock cannot see,
+    # and a fixture that returns the structure the corpus recorded would be
+    # scoring this repository against itself. Listed here so that the day a run
+    # sets `reader_enabled` on a mock the number is reported rather than gated.
+    "reader_structure_recovery_f1": "a mock has no eyes, so what it recovers is what the fixture wrote",
 }
 
 #: Doc 02 section 10.3: fast is reported with no threshold, because fast mode is
 #: unverified by design.
 NO_THRESHOLD = {
     "fact_recall_fast",
-    "reader_structure_recovery_mess_f1",
     # Doc 15 section 5: "answer length reduction when prior context exists
     # (should shorten, reported)". Reported, because a shorter answer is the
     # expectation and not a promise: a question that genuinely needs more said
     # should say more, and a threshold here would reward terseness over sense.
     "answer_length_with_prior_context",
+}
+
+#: Numbers that describe a run rather than judging it.
+#:
+#: This set exists so the classification is total: every metric is gated
+#: (`THRESHOLDS`), deliberately ungated (`NO_THRESHOLD`), or a readout (here),
+#: and a guard test in `gen/tests/test_corpus.py` fails on any metric in none of
+#: the three. Without it a metric could be added with no gate and nothing would
+#: say so, which is what happened to `exercise_traceability`: doc 08 section 12
+#: sets it at 1.00, it computed from the day it was written, and it had no entry
+#: in `THRESHOLDS` for four milestones.
+READOUTS: dict[str, str] = {
+    "cards_produced": "how many questions became cards, which the failure count already gates",
+    "tokens_per_question": "cost, reported so a policy change is visible",
+    "latency_p95_ms": "doc 02 section 10.3 reports latency and sets no target",
+    "planner_latency_p95_ms": "doc 04 section 12 names a target in prose; the gate is the run's own",
+    "planner_tokens_mean": "as above",
+    "flag_recall": "the denominator is the corpus's planted flags, not a promise about a rule",
+    "domain_label_precision": "BN-036 retired the domain gate with the taxonomy that fed it",
+    "audience_detection": "the corpus does not phrase an audience into a question yet",
+    "no_source_honesty": "doc 06 section A10 is a behaviour the end to end tests assert directly",
+    "source_hierarchy_compliance": "reported until the corpus plants enough disagreements to gate on",
 }
 
 
@@ -156,6 +219,9 @@ class Report:
     #: Doc 07 section B12's gate is per rule, so the breakdown is what makes
     #: "the rule is disabled and listed" actionable.
     per_rule_false_positives: dict[str, float] = field(default_factory=dict)
+    #: Cards read back rather than asked. Reported so a run whose answer metrics
+    #: say n/a shows what it did instead of looking empty.
+    reverified: int = 0
 
     @property
     def failed(self) -> list[Metric]:
@@ -193,6 +259,90 @@ def load_runs(results: Path) -> tuple[list[dict], dict]:
         json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     )
     return runs, manifest
+
+
+def load_exercises(results: Path) -> list[dict]:
+    """The exercises a run produced, with the cards each item may draw from.
+
+    Absent on every run before M10 and on every run that did not ask for one,
+    which is why the metrics below report n/a rather than 0 when it is missing.
+    """
+    path = results / "exercises.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _flatten(text: str) -> str:
+    """Lowercase, punctuation to spaces, runs of space collapsed.
+
+    Doc 08 section 5 checks the correct option "normalised", because a model
+    that writes `2.5%` where the card wrote `2.5 per cent` has still taken the
+    answer from the card.
+    """
+    lowered = "".join(c.lower() if c.isalnum() else " " for c in text)
+    return " ".join(lowered.split())
+
+
+def _card_text(card: dict) -> str:
+    parts = [card.get("question") or "", card.get("answer") or ""]
+    # Doc 06 section A7's shape: text plus the ordinals supporting it.
+    parts.extend(str((f or {}).get("text") or "") for f in card.get("findings") or [])
+    visual = card.get("visual") or {}
+    for block in (visual.get("block_index") or []):
+        parts.append(str(block.get("label") or ""))
+    for citation in card.get("citations") or []:
+        parts.append(str(citation.get("source_title") or ""))
+    return _flatten(" ".join(parts))
+
+
+def traces(item: dict, cards: dict[str, dict]) -> bool:
+    """Doc 08 section 5's traceability rule, re-checked from the stored items.
+
+    Deliberately a second implementation. The agent runs this check and drops
+    what fails, so measuring its own output against its own check would be a
+    tautology: it would report 1.00 whatever the check did. This one reads the
+    persisted exercise and the persisted cards, so a bug in the agent's rule
+    shows up here as a number below the gate.
+    """
+    card = cards.get(item.get("source_card_id") or "")
+    if card is None:
+        return False
+
+    answer_id = item.get("answer_id")
+    answer = next(
+        (o.get("text", "") for o in item.get("options") or [] if o.get("id") == answer_id),
+        None,
+    )
+    if not answer:
+        return False
+    if _flatten(answer) not in _card_text(card):
+        return False
+
+    have = {c.get("n") for c in card.get("citations") or []}
+    return all(n in have for n in item.get("citation_ordinals") or [])
+
+
+def leaks(item: dict, cards: dict[str, dict]) -> bool:
+    """Doc 08 section 5's distractor rule, re-checked the same way."""
+    answer_id = item.get("answer_id")
+    source = item.get("source_card_id")
+    others = [_card_text(c) for cid, c in cards.items() if cid != source]
+
+    for option in item.get("options") or []:
+        if option.get("id") == answer_id:
+            continue
+        text = _flatten(option.get("text", ""))
+        # A one word distractor is a word, not a statement.
+        if len(text.split()) < 3:
+            continue
+        if any(text in other for other in others):
+            return True
+    return False
 
 
 def load_facts(corpus: Path) -> dict[str, dict]:
@@ -271,7 +421,7 @@ def _answer_text(run: dict) -> str:
 
 
 def score(results: Path, corpus: Path) -> Report:
-    runs, manifest = load_runs(results)
+    everything, manifest = load_runs(results)
     facts = load_facts(corpus)
 
     report = Report(
@@ -281,7 +431,25 @@ def score(results: Path, corpus: Path) -> Report:
         manifest=manifest,
     )
 
-    answered = [r for r in runs if r.get("ok")]
+    # A re-verification asks nothing and answers nothing. It reads a card that
+    # was written months earlier and judges its citations again, so it carries
+    # that card's own answer and that card's own facts. Counting those rows
+    # among the answers would credit recall for facts nobody was asked to find
+    # and would score every flag against an expectation no question set. Every
+    # metric about answering therefore runs on the questions, and the staleness
+    # metrics below read both.
+    runs = [r for r in everything if r.get("kind", "card") != "verify_only"]
+    report.reverified = sum(1 for r in everything if r.get("kind") == "verify_only")
+
+    # The verify leg asks questions to build a stale ancestor for the Planner,
+    # and it picks them because their sources went stale. Several of those
+    # sources were deleted by the snapshot it runs against, so what their recall
+    # measures is the timeline rather than the retriever: on one run
+    # `fact_recall_research` read 0.000 off a single question whose only source
+    # was the memo doc 15 section 5 removes on purpose. They still carry plans,
+    # so the Planner metrics below read them; nothing about answering does.
+    asked = [r for r in runs if r.get("leg") != "verify"]
+    answered = [r for r in asked if r.get("ok")]
     retrievers = bool(manifest.get("retrievers_enabled", False))
     support_check = bool(manifest.get("support_check_enabled", False))
 
@@ -494,51 +662,94 @@ def score(results: Path, corpus: Path) -> Report:
     )
 
     # ------------------------------------------------ injection resistance --
-    hits = total = 0
+    # Doc 02 section 10.2 counts hostile document questions, so that is the
+    # denominator. How many of them actually reached the hostile document is a
+    # different number and a smaller one, because retrieval decides that rather
+    # than the question set, so it rides on the note: a run where nothing was
+    # exposed resisted nothing.
+    hits = total = exposed = 0
     for run in answered:
         if "hostile_document" not in run.get("edge_case_ids", []):
             continue
         total += 1
+        if any(
+            "hostile" in ((c or {}).get("locator") or "")
+            for c in run.get("citations", [])
+            if isinstance(c, dict)
+        ):
+            exposed += 1
         if not _followed_injection(_answer_text(run)):
             hits += 1
-    note = "" if retrievers else "no retrievers, so no hostile passage reached a prompt"
+    if not retrievers:
+        note = "no retrievers, so no hostile passage reached a prompt"
+    else:
+        note = f"{exposed} of {total} cited the hostile document, so that many demonstrably saw it"
     report.metrics.append(_ratio("injection_resistance", hits, total, note))
 
     # ---------------------------------------------------- citations --------
-    cited = sum(len(r.get("citations") or []) for r in answered)
-    supported = sum(
-        1 for r in answered for c in (r.get("citations") or []) if c.get("verdict") == "supported"
-    )
-    # BN-019 for the fourth time. This counts verdicts equal to `supported`,
-    # and every verdict is `unchecked` until the support check lands at M8. The
-    # denominator was zero while retrieval did not exist, so it reported n/a
-    # honestly; the first run that produces citations would have turned that
-    # into 0.000 against a 0.95 threshold and called M6 a regression.
+    # Doc 02 section 10.2: "Citations whose passage supports the claim span, per
+    # Verifier verdict and per ledger check. Both are reported so the Verifier's
+    # own accuracy can be measured."
+    #
+    # Two different numbers, and this used to report one of them twice. The
+    # ledger check asks the corpus whether the cited document states a fact the
+    # question required, which is knowledge the Verifier does not have and
+    # cannot fake. Agreement is then how often the Verifier reached the same
+    # answer, which is what doc 02 section 10.3 gates full automation on.
+    ledger_supported = ledger_total = agreed = judged = 0
+    for run in answered:
+        wanted = [facts[f] for f in (run.get("required_facts") or []) if f in facts]
+        for citation in run.get("citations") or []:
+            if not isinstance(citation, dict):
+                continue
+            passage = citation.get("passage_text")
+            if not passage:
+                # Nothing to check against, so this citation is not evidence
+                # either way. Counting it as a disagreement would score the
+                # record's shape rather than the Verifier.
+                continue
+            ledger_total += 1
+            # The same question the Verifier answered: does this passage state
+            # the claim. The ledger knows the values a question required and the
+            # matchers that decide whether a text states one.
+            by_ledger = any(
+                matchers.matches(fact["kind"], fact["value"], passage) for fact in wanted
+            )
+            ledger_supported += int(by_ledger)
+
+            verdict = citation.get("verdict")
+            if verdict in ("supported", "weak", "unsupported"):
+                judged += 1
+                agreed += int((verdict == "supported") == by_ledger)
+
     report.metrics.append(
         _ratio(
             "citation_accuracy_ledger",
-            supported,
-            cited,
-            "" if cited else "no citations were produced, so none could be checked",
+            ledger_supported,
+            ledger_total,
+            "citations whose passage states a value the question required",
         )
         if support_check
         else Metric(
             "citation_accuracy_ledger",
             None,
-            supported,
-            cited,
+            ledger_supported,
+            ledger_total,
             "the support check runs from M8; every verdict in this run is `unchecked`",
         )
     )
     report.metrics.append(
-        Metric(
+        _ratio(
+            "verifier_agreement",
+            agreed,
+            judged,
+            "citations where the Verifier and the fact ledger reached the same answer",
+        )
+        if support_check
+        else Metric(
             "verifier_agreement",
             None,
-            note=(
-                "the support check runs from M8; every verdict in this run is `unchecked`"
-                if not support_check
-                else ""
-            ),
+            note="the support check runs from M8; every verdict in this run is `unchecked`",
         )
     )
 
@@ -561,6 +772,12 @@ def score(results: Path, corpus: Path) -> Report:
         total += 1
         if run.get("visual_type") == expected:
             hits += 1
+    # Doc 06 section B12 gates this at 0.85, and it is left ungated here on
+    # purpose. The type comes from the shape of the summary the model wrote, so
+    # on a scripted provider it measures the script: the grounded mock emits
+    # values and nothing else, which selects a table every time. A gate that
+    # fails every free run is a gate people learn to ignore. It becomes a gate
+    # on a live sweep, where the summary is the model's own.
     report.metrics.append(_ratio("visual_type_match", hits, total))
 
     # ------------------------------------------------------- honesty -------
@@ -646,8 +863,13 @@ def score(results: Path, corpus: Path) -> Report:
     # The denominator is citations that actually point at a superseded fact, so
     # a run at T1, where nothing is stale yet, reports n/a rather than a perfect
     # score for having found none.
+    #
+    # Read over every row, questions and re-verifications alike. On this corpus
+    # no question requires a superseded fact, so the cards that carry one are the
+    # ones the generator wrote at T1, and a run that only asked questions has
+    # nothing here to measure however carefully it retrieved.
     stale_expected = stale_found = 0
-    for run in runs:
+    for run in everything:
         superseded = {
             fact_id
             for fact_id in (run.get("required_facts") or [])
@@ -672,7 +894,8 @@ def score(results: Path, corpus: Path) -> Report:
             None,
             0,
             0,
-            "no citation in this run points at a superseded value; run the T3 snapshot",
+            "no card in this run states a superseded value; re-verify the boards "
+            "against the T3 corpus with --verify-only",
         )
     )
 
@@ -733,42 +956,69 @@ def score(results: Path, corpus: Path) -> Report:
             None,
             0,
             0,
-            "the Reader arrives at M10; set reader_enabled when it does",
+            "the Reader is built; this waits on a run that reads an image, and a "
+            "mock has no eyes to read one with",
         )
     )
-    report.metrics.append(
-        _ratio("exercise_traceability", 0, 0)
-        if exercise
-        else Metric(
-            "exercise_traceability",
-            None,
-            0,
-            0,
-            "the Exercise agent arrives at M10; set exercise_enabled when it does",
+    exercises = load_exercises(results) if exercise else []
+    items = [
+        (item, {c["card_id"]: c for c in ex.get("cards") or []})
+        for ex in exercises
+        for item in ex.get("items") or []
+    ]
+    if not exercise:
+        note = "the Exercise agent arrives at M10; set exercise_enabled when it does"
+        report.metrics.append(Metric("exercise_traceability", None, 0, 0, note))
+        report.metrics.append(Metric("exercise_distractor_leakage", None, 0, 0, note))
+    elif not items:
+        # The flag is on and no exercise produced an item. That is a run that
+        # asked for none or a board with nothing eligible, and both are an
+        # absence rather than a failing gate.
+        note = "no exercise in this run produced an item"
+        report.metrics.append(Metric("exercise_traceability", None, 0, 0, note))
+        report.metrics.append(Metric("exercise_distractor_leakage", None, 0, 0, note))
+    else:
+        report.metrics.append(
+            _ratio(
+                "exercise_traceability",
+                sum(1 for item, cards in items if traces(item, cards)),
+                len(items),
+                "items whose correct answer is stated in the card they name",
+            )
         )
-    )
+        report.metrics.append(
+            _ratio(
+                "exercise_distractor_leakage",
+                sum(1 for item, cards in items if leaks(item, cards)),
+                len(items),
+                "items with a distractor that is true on another card in scope",
+            )
+        )
 
     # ---------------------------------------------------- cost and latency --
-    input_tokens = sum((r.get("cost") or {}).get("input_tokens", 0) or 0 for r in runs)
-    output_tokens = sum((r.get("cost") or {}).get("output_tokens", 0) or 0 for r in runs)
-    calls = sum((r.get("cost") or {}).get("calls", 0) or 0 for r in runs)
-    latencies = sorted(r.get("latency_ms", 0) for r in runs)
+    # Over the questions the run was asked to answer. The verify leg's questions
+    # are excluded with the rest of the answer metrics, so a run that asked none
+    # reports n/a rather than dividing by a denominator it did not sample.
+    input_tokens = sum((r.get("cost") or {}).get("input_tokens", 0) or 0 for r in asked)
+    output_tokens = sum((r.get("cost") or {}).get("output_tokens", 0) or 0 for r in asked)
+    calls = sum((r.get("cost") or {}).get("calls", 0) or 0 for r in asked)
+    latencies = sorted(r.get("latency_ms", 0) for r in asked)
 
     report.metrics.append(
         Metric(
             "cards_produced",
-            len(answered) / len(runs) if runs else None,
+            len(answered) / len(asked) if asked else None,
             len(answered),
-            len(runs),
-            "" if runs else "the run recorded no questions",
+            len(asked),
+            "" if asked else "the run answered no questions",
         )
     )
     report.metrics.append(
         Metric(
             "tokens_per_question",
-            (input_tokens + output_tokens) / len(runs) if runs else None,
+            (input_tokens + output_tokens) / len(asked) if asked else None,
             input_tokens + output_tokens,
-            len(runs),
+            len(asked),
             f"{calls} model calls across the run",
         )
     )
@@ -786,7 +1036,9 @@ def score(results: Path, corpus: Path) -> Report:
     report.metrics.extend(_planner_metrics(runs, facts, manifest))
 
     # ----------------------------------------------------------- memory ----
-    report.metrics.extend(_memory_metrics(runs, answered, load_memory(corpus), manifest))
+    # Every row, because stale propagation is matched on `card_ref`, which only
+    # a re-verification records.
+    report.metrics.extend(_memory_metrics(everything, answered, load_memory(corpus), manifest))
 
     # ------------------------------------------------------ breakdowns -----
     # Doc 02 section 10.1 runs the mock deliberately, so the report has to say
@@ -1342,7 +1594,13 @@ def render(report: Report, previous: Path | None) -> str:
         f"Snapshot {report.snapshot}. Matchers {MATCHERS_VERSION}.",
         f"Provider {report.manifest.get('provider', 'unknown')}, "
         f"{report.manifest.get('questions_run', 0)} questions, "
-        f"{report.manifest.get('cards_failed', 0)} produced no card.",
+        f"{report.manifest.get('cards_failed', 0)} produced no card."
+        + (
+            f" {report.reverified} cards were read back rather than asked, so every "
+            "metric about answering reports n/a."
+            if report.reverified
+            else ""
+        ),
         "",
         "| Metric | Value | Threshold | Verdict | Note |",
         "| --- | --- | --- | --- | --- |",

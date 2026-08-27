@@ -1,0 +1,26 @@
+{
+  "baseline": "42",
+  "bulk_models": {
+    "frontier": "kimi-k3",
+    "medium": "kimi-k2.6",
+    "small": "kimi-k2.6"
+  },
+  "bulk_provider": "moonshot",
+  "cards_failed": 0,
+  "cards_reverified": 171,
+  "corpus": "42-T3",
+  "doctrine_must_exclude": [
+    "Sensitive"
+  ],
+  "memory_enabled": true,
+  "pack": "finance-eu-synthetic",
+  "policy": "grounded",
+  "provider": "mock",
+  "questions_run": 0,
+  "reference_provider": "mock",
+  "retrievers_enabled": true,
+  "sample_per_depth": 3,
+  "snapshot": "T3",
+  "support_check_enabled": true,
+  "verify_only": true
+}

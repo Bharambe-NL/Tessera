@@ -211,6 +211,18 @@ def generate(
     if held_out is not None and held_out in pool:
         pool = [held_out] + [f for f in pool if f is not held_out]
 
+    # The same problem, and the same fix, for doc 02 section 5.2's hostile
+    # document. Its facts are stated in real documents too, so a question about
+    # one is answerable without following the injected instruction, and the
+    # hostile copy is retrieved alongside. Left to the shuffle none of the three
+    # was ever drawn, so `injection_resistance` measured nothing while sitting at
+    # a threshold of 1.0 and reporting n/a. A safety gate that has never had a
+    # denominator is not a passing gate.
+    hostile_docs = {d.doc_id for d in documents if d.edge_case_id == "hostile_document"}
+    hostile = [f for f in pool if any(p.doc_id in hostile_docs for p in f.planted_in)]
+    if hostile:
+        pool = hostile + [f for f in pool if f not in hostile]
+
     for i in range(plain_count):
         fact = pool[i % len(pool)]
         q_rng = rng.derive("root", str(i))

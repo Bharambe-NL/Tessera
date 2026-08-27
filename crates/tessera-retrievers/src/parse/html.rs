@@ -40,9 +40,7 @@ pub fn meta(source: &str) -> HtmlMeta {
             }
             match name {
                 "issuer" => out.issuer = Some(content.to_string()),
-                "published" | "published_at" | "date" => {
-                    out.published_at = Some(content.to_string())
-                }
+                "published" | "published_at" | "date" => out.published_at = Some(content.to_string()),
                 _ => {}
             }
         }
@@ -93,7 +91,10 @@ pub fn parse(source: &str) -> Vec<Chunk> {
             && (1..=6).contains(&depth)
         {
             // Close the section that was open.
-            let location = ChunkLocation::Heading { title: title.clone(), level };
+            let location = ChunkLocation::Heading {
+                title: title.clone(),
+                level,
+            };
             let produced = windows(&body_text, &location, sequence);
             sequence += produced.len();
             out.extend(produced);
@@ -152,7 +153,10 @@ mod tests {
         let out = parse(PAGE);
         let all: String = out.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ");
         assert!(!all.contains("tracking"), "script text was indexed");
-        assert!(!all.contains("capital buffer requirement analytics"), "script text was indexed");
+        assert!(
+            !all.contains("capital buffer requirement analytics"),
+            "script text was indexed"
+        );
         assert!(!all.contains("About us today"), "nav text was indexed");
     }
 
@@ -161,7 +165,12 @@ mod tests {
         let m = meta(PAGE);
         assert_eq!(m.issuer.as_deref(), Some("clearpath-systems.invalid"));
         assert_eq!(m.published_at.as_deref(), Some("2025-05-22"));
-        assert!(m.title.as_deref().unwrap_or_default().contains("Outsourcing Guidelines"));
+        assert!(
+            m.title
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Outsourcing Guidelines")
+        );
     }
 
     #[test]

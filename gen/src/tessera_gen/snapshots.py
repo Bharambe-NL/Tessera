@@ -11,14 +11,20 @@ harness runs the same question set at each snapshot and compares (doc 02 section
 A snapshot is a *view*: which files exist at that time, and what each one hashes
 to. The documents themselves are generated once, so the same document at two
 snapshots is the same bytes unless something deliberately changed it.
+
+`materialise` turns a view into a tree. It returns the documents as they stand
+at one label, so `gen build --snapshot T3` can write a corpus a retriever reads
+at T3 rather than a manifest describing one. `build` hashes what `materialise`
+returns, so a file's bytes and its manifest entry cannot disagree.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 from dataclasses import asdict, dataclass, field
 
-from .corpus import Document
+from .corpus import Document, Passage
 from .edge_cases import SOLE_SOURCE_DOC_ID
 from .rng import Rng
 
@@ -33,6 +39,15 @@ TIMELINE = {
 #: CAR3 v2 is published at T2 and applies from T3.
 CAR3_V2_PUBLISHED = "T2"
 CAR3_V2_APPLIES = "T3"
+
+#: What a revision and a silent edit add to a document body. A snapshot manifest
+#: hashes the body these produce, so they are named once and read from here by
+#: both the manifest and the tree.
+REVISION_NOTE = "Revised at T2."
+SILENT_EDIT_NOTE = "Silently edited."
+
+CAR3_V1 = "reg-car3-v1"
+CAR3_V2 = "reg-car3-v2"
 
 
 @dataclass
@@ -64,12 +79,25 @@ def content_hash(doc: Document) -> str:
     return hashlib.sha256(doc.body.encode("utf-8")).hexdigest()
 
 
-def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
-    """The four snapshots, each a list of the files that exist at that time."""
-    rng = Rng(seed, "snapshots")
+@dataclass(frozen=True)
+class SnapshotPlan:
+    """Which documents change, and when. Doc 02 section 5.4.
 
-    car3_v1 = "reg-car3-v1"
-    car3_v2 = "reg-car3-v2"
+    Drawn once and read by both the manifests and the materialised trees, so the
+    two describe one timeline. Every field holds doc ids.
+    """
+
+    added_at_t1: frozenset[str]
+    added_at_t2: frozenset[str]
+    revised_at_t2: frozenset[str]
+    deleted_at_t3: frozenset[str]
+    taken_down_at_t3: frozenset[str]
+    silent_edits: frozenset[str]
+
+
+def plan(seed: int, documents: list[Document]) -> SnapshotPlan:
+    """Draw the timeline: what appears, changes and goes away, and when."""
+    rng = Rng(seed, "snapshots")
 
     # Documents added, revised and deleted between snapshots. Chosen once, from
     # internal documents only, so a regulation never quietly disappears.
@@ -105,6 +133,84 @@ def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
     # T2 while keeping their locator, to test content_hash on re-verification.
     silent_edits = {d.doc_id for d in documents if d.edge_case_id == "silent_edit"}
 
+    return SnapshotPlan(
+        added_at_t1=frozenset(added_at_t1),
+        added_at_t2=frozenset(added_at_t2),
+        revised_at_t2=frozenset(revised_at_t2),
+        deleted_at_t3=frozenset(deleted_at_t3),
+        taken_down_at_t3=frozenset(taken_down_at_t3),
+        silent_edits=frozenset(silent_edits),
+    )
+
+
+def present_at(doc: Document, label: str, timeline: SnapshotPlan) -> bool:
+    """Whether a document exists at a label."""
+    if doc.doc_id == CAR3_V2 and _before(label, CAR3_V2_PUBLISHED):
+        return False
+    if doc.doc_id in timeline.added_at_t1 and _before(label, "T1"):
+        return False
+    if doc.doc_id in timeline.added_at_t2 and _before(label, "T2"):
+        return False
+    if doc.doc_id in timeline.deleted_at_t3 and not _before(label, "T3"):
+        return False
+    if doc.doc_id == SOLE_SOURCE_DOC_ID and not _before(label, "T2"):
+        return False
+    return not (doc.doc_id in timeline.taken_down_at_t3 and not _before(label, "T3"))
+
+
+def change_at(doc: Document, label: str, timeline: SnapshotPlan) -> str | None:
+    """Why this file looks different from the last snapshot, if it does.
+
+    An arrival is reported ahead of an edit, because a file that appears at a
+    label has no last snapshot to differ from.
+    """
+    if doc.doc_id in timeline.added_at_t1 and label == "T1":
+        return "added"
+    if doc.doc_id in timeline.added_at_t2 and label == "T2":
+        return "added"
+    if doc.doc_id in timeline.silent_edits and not _before(label, "T2"):
+        return "silent_edit"
+    if doc.doc_id in timeline.revised_at_t2 and not _before(label, "T2"):
+        return "revised"
+    return None
+
+
+def materialise(label: str, documents: list[Document], timeline: SnapshotPlan) -> list[Document]:
+    """The documents as they stand at one label, ready to write.
+
+    A revision and a silent edit each append a paragraph, so the body carries
+    the change a re-verification has to notice. `Document.body` joins passages
+    with a blank line, which is what the manifest hashes, so a materialised
+    document hashes to its manifest entry.
+    """
+    at_label: list[Document] = []
+    for doc in documents:
+        if not present_at(doc, label, timeline):
+            continue
+        current = copy.deepcopy(doc)
+        if doc.doc_id in timeline.revised_at_t2 and not _before(label, "T2"):
+            current.passages.append(_note(doc, "rev-t2", REVISION_NOTE))
+        if doc.doc_id in timeline.silent_edits and not _before(label, "T2"):
+            current.passages.append(_note(doc, "edit-t2", SILENT_EDIT_NOTE))
+        at_label.append(current)
+    return at_label
+
+
+def _note(doc: Document, suffix: str, text: str) -> Passage:
+    """The paragraph an edit adds. It plants nothing, because a fact planted
+    here would move the answers as well as the hash."""
+    return Passage(
+        passage_id=f"{doc.doc_id}-{suffix}",
+        text=text,
+        location={"section": "revision"},
+        plants=[],
+    )
+
+
+def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
+    """The four snapshots, each a list of the files that exist at that time."""
+    timeline = plan(seed, documents)
+
     superseded_ids = {f.fact_id for f in facts if f.truth == "superseded"}
     v2_ids = {f.fact_id for f in facts if f.supersedes and f.truth == "true"}
     stable_ids = {f.fact_id for f in facts if f.truth == "true" and f.fact_id not in v2_ids}
@@ -113,41 +219,19 @@ def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
     for label, at in TIMELINE.items():
         snap = Snapshot(label=label, at=at)
 
-        for doc in documents:
-            # CAR3 v2 does not exist before it is published.
-            if doc.doc_id == car3_v2 and _before(label, CAR3_V2_PUBLISHED):
-                continue
-            if doc.doc_id in added_at_t1 and _before(label, "T1"):
-                continue
-            if doc.doc_id in added_at_t2 and _before(label, "T2"):
-                continue
-            if doc.doc_id in deleted_at_t3 and not _before(label, "T3"):
-                continue
-            if doc.doc_id == SOLE_SOURCE_DOC_ID and not _before(label, "T2"):
-                continue
-            if doc.doc_id in taken_down_at_t3 and not _before(label, "T3"):
-                continue
-
-            digest = content_hash(doc)
-            change = None
-            if doc.doc_id in revised_at_t2 and not _before(label, "T2"):
-                # A revision that keeps the locator: the hash moves, the path
-                # does not, which is what a re-verification has to notice.
-                digest = hashlib.sha256(
-                    (doc.body + "\n\nRevised at T2.").encode("utf-8")
-                ).hexdigest()
-                change = "revised"
-            if doc.doc_id in silent_edits and not _before(label, "T2"):
-                digest = hashlib.sha256(
-                    (doc.body + "\n\nSilently edited.").encode("utf-8")
-                ).hexdigest()
-                change = "silent_edit"
-            if doc.doc_id in added_at_t1 and label == "T1":
-                change = "added"
-            if doc.doc_id in added_at_t2 and label == "T2":
-                change = "added"
-
-            snap.files.append(FileState(doc.doc_id, doc.path, digest, change))
+        # Hashed from the materialised documents, so a file that
+        # `gen build --snapshot` writes and its entry here state one hash. A
+        # revision keeps its locator and moves its hash, which is what a
+        # re-verification has to notice.
+        for doc in materialise(label, documents, timeline):
+            snap.files.append(
+                FileState(
+                    doc.doc_id,
+                    doc.path,
+                    content_hash(doc),
+                    change_at(doc, label, timeline),
+                )
+            )
 
         # Which facts are authoritative here. Before CAR3 v2 applies, the v1
         # values stand; from T3 the v2 values do, and a card citing v1 is stale.
@@ -162,13 +246,13 @@ def build(seed: int, documents: list[Document], facts) -> list[Snapshot]:
                 "prior card, which is context and never evidence."
             )
         if label == CAR3_V2_PUBLISHED:
-            snap.notes.append(f"{car3_v2} is published but does not apply until {CAR3_V2_APPLIES}.")
+            snap.notes.append(f"{CAR3_V2} is published but does not apply until {CAR3_V2_APPLIES}.")
         if label == CAR3_V2_APPLIES:
             snap.notes.append(
-                f"{car3_v2} applies. A card written before this that cites {car3_v1} for a "
+                f"{CAR3_V2} applies. A card written before this that cites {CAR3_V1} for a "
                 "changed value is stale."
             )
-            snap.notes.append(f"{len(taken_down_at_t3)} web pages no longer resolve.")
+            snap.notes.append(f"{len(timeline.taken_down_at_t3)} web pages no longer resolve.")
 
         snapshots.append(snap)
 
