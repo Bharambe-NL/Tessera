@@ -1972,6 +1972,89 @@ that found it were free.
 
 ---
 
+### BN-104 One forbidden value, two specs, and the number that would have sent work to the wrong place
+
+**Spec** 02 line 201, 07 line 233.
+
+**Measured** 2026-08-27, twelve questions on Anthropic, 74 model calls, 163k
+input and 52k output tokens, 4.53 US dollars.
+
+**The run reported `forbidden_fact_rate` 0.083 against a zero threshold**, which
+is a fail on the gate doc 07 section B12 calls a P0. Splitting it before
+reacting, as the standing rule requires, found one question: Q-0010, a
+superseded regulation case. The card stated a value planted as wrong.
+
+**And the Verifier caught it.** Status flagged, confidence 0.25, thirteen flags
+including `numeric_without_citation` and three `unsupported_claim`. Doc 07 line
+233 is explicit that the P0 is "a forbidden value that reaches an **unflagged**
+card", and this one reached a card nobody could mistake for verified.
+
+**The two specs disagree, and both are right about different things.** Doc 02
+line 201 counts answers containing any forbidden value, target zero. Doc 07 line
+233 counts one that survives verification. The scorer implemented doc 02's
+definition under doc 07's name, and cited doc 07's wording in the comment beside
+it.
+
+**Decision** Both, reported separately. `forbidden_fact_rate` keeps doc 02's
+definition and its zero gate. `forbidden_fact_unflagged` is doc 07's P0, gated
+at zero, and it passed.
+
+**Why not just fix the one.** Collapsing them loses what tells you where to
+work. A wrong value written and caught is a Synthesizer problem with a Verifier
+doing its job. A wrong value written and not caught is a Verifier problem. One
+number cannot say which, and this run is precisely the case where the difference
+matters: reacting to the single failing number would have sent the next stretch
+of work at the Verifier, which was the part that worked.
+
+**This is the sixth time a metric would have misdirected this project**, and the
+first time the rule caught it on a run that cost money.
+
+---
+
+### BN-105 What twelve live questions actually said
+
+**Measured** 2026-08-27, corpus 0.3.0-42, twelve questions, every one on
+Anthropic through the reference leg because Kimi is unreachable from the build
+container (BN-102). Haiku 4.5, Sonnet 5 and Opus 5 across the tiers.
+
+**Cost** 4.53 US dollars. Opus carried 28 of 74 calls and 4.14 of those dollars,
+which is what a frontier tier costs when the Synthesizer and the Verifier both
+sit on it. Extrapolated, the full four hundred question sweep is about 150
+dollars on this policy.
+
+**Every question produced a card**, eleven flagged and one clean. Median
+confidence 0.75.
+
+| Gate | Value | Reading |
+|---|---|---|
+| `fact_recall_deep` | 1.000 | ten of ten, the first real evidence the pipeline recalls what it retrieved |
+| `injection_resistance` | 1.000 | two of three demonstrably saw the hostile document and neither followed it |
+| `must_exclude_compliance` | 1.000 | doctrine held |
+| `forbidden_fact_unflagged` | 0.000 | nothing wrong survived verification |
+| `citation_accuracy_ledger` | 0.365 | fails, and now measures the product rather than the mock |
+| `verifier_agreement` | 0.542 | fails, and this is the 0.90 automation gate |
+| `route_accuracy` | 0.750 | fails, three of twelve routed to the wrong depth |
+| `visual_type_match` | 0.083 | fails hard, one of twelve |
+
+**The two advisory gates are advisory no longer.** BN-061 and the MOCKED list
+held `citation_accuracy_ledger` and `verifier_agreement` back because a mock
+cites everything it is handed and quotes what it cites, so both numbers
+described the fixture. On a real provider they describe the product, and both
+are a long way under. Doc 02 section 10.3's 0.90 automation gate is not met,
+which means the harness stays in draft mode and `verifier_below_threshold`
+keeps firing, exactly as doc 07 section B9 specifies.
+
+**Latency is the other finding.** Median 58 seconds a card, worst 122, against
+doc 07 line 233's 8 second p95 for deep. Planner p95 alone is 10.2 seconds
+against doc 04 section 12's 4 second target. Nothing about that was visible on a
+mock that answers instantly.
+
+**What twelve questions cannot say.** Three gates reported thin, and
+`fact_recall_research` at n=2 is not a measurement of anything. The numbers
+above are a direction, not a score.
+
+---
+
 ---
 
 ## Measured findings

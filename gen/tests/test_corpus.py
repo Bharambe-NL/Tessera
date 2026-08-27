@@ -1472,3 +1472,23 @@ def test_the_worst_rule_is_the_same_rule_every_time_it_is_scored() -> None:
     ranked = dict(tied, zzz_worse=1.0, aaa_better=0.5)
     assert min(ranked.items(), key=lambda kv: (-kv[1], kv[0]))[0] == "citation_unsupported"
     assert min({"aaa": 0.2, "zzz": 0.9}.items(), key=lambda kv: (-kv[1], kv[0]))[0] == "zzz"
+
+
+def test_a_forbidden_value_the_verifier_caught_is_not_the_p0() -> None:
+    # Doc 02 line 201 counts answers containing any forbidden value. Doc 07
+    # line 233 counts one that survives verification and calls only that a P0.
+    # The first live run was exactly the gap between them: one forbidden value,
+    # on a card the Verifier flagged with thirteen flags and a confidence of
+    # 0.25. Collapsing the two loses the thing that says where to work.
+    assert harness.THRESHOLDS["forbidden_fact_rate"] == 0.0
+    assert harness.THRESHOLDS["forbidden_fact_unflagged"] == 0.0
+    assert "forbidden_fact_unflagged" in harness.LOWER_IS_BETTER
+
+    caught = _metric("forbidden_fact_rate", 1, 12)
+    p0 = _metric("forbidden_fact_unflagged", 0, 12)
+    assert caught.verdict() == "fail", "a wrong value was written and that is still a failure"
+    assert p0.verdict() == "pass", "the Verifier caught it, so the P0 did not happen"
+
+    # And a value that does survive verification fails the P0 on one case,
+    # because an absolute gate is not withheld for a small sample.
+    assert _metric("forbidden_fact_unflagged", 1, 12).verdict() == "fail"
