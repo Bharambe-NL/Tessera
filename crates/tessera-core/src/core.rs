@@ -887,6 +887,41 @@ pub fn build_router() -> Router<Core> {
         Ok(summary)
     });
 
+    // Restore is deliberately not a method here. It replaces the database the
+    // running core is holding open, so a core cannot perform one on itself:
+    // the shell closes the core, calls `tessera_bundle::restore` against a
+    // folder, and opens a core on it. Registering a `profile.restore` that
+    // half worked would be worse than not having one, because the failure
+    // would land on someone whose database is already damaged.
+    //
+    // Doc 10 section 15. The profile folder is the unit, and the shell writes
+    // the file wherever the person chose, so the core hands back bytes rather
+    // than taking a path: a core that wrote to a path a caller named would be
+    // a file writer with the whole disk in reach.
+    r.register("profile.back_up", |core: &mut Core, _p| {
+        let mut archive = std::io::Cursor::new(Vec::new());
+        let manifest = tessera_bundle::back_up(&core.store, &mut archive)
+            .map_err(|e| RpcError::core("backup", e.to_string()))?;
+        Ok(json!({
+            "manifest": manifest,
+            "bytes": pipeline::base64(&archive.into_inner()),
+        }))
+    });
+
+    // Doc 10 section 11. The summary is returned beside the bytes so the shell
+    // can show what is in the file before anyone sends it: this is the one
+    // export whose recipient is a stranger, and a person deserves to see what
+    // they are handing over.
+    r.register("profile.diagnostics", |core: &mut Core, _p| {
+        let mut archive = std::io::Cursor::new(Vec::new());
+        let summary = tessera_bundle::diagnostics(&core.store, &mut archive)
+            .map_err(|e| RpcError::core("diagnostics", e.to_string()))?;
+        Ok(json!({
+            "summary": summary,
+            "bytes": pipeline::base64(&archive.into_inner()),
+        }))
+    });
+
     // Doc 01 section 4.6. The bytes arrive base64 because the boundary is
     // JSON-RPC and a webview has no path to the blob store; the core writes them
     // once, by hash, so a board forked from a bundle never duplicates a picture.

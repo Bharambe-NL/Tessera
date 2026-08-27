@@ -17,10 +17,14 @@
 //! sources merge by `dedupe_key`, concepts by `term`, and a term collision keeps
 //! both with the incoming one marked `proposed` and linked `related_to`.
 
+mod backup;
+mod diagnostics;
 mod export;
 mod import;
 mod rows;
 
+pub use backup::{BackupManifest, back_up, restore};
+pub use diagnostics::{DiagnosticsSummary, RECENT_RUNS, diagnostics};
 pub use export::{ExportOptions, LocalDocument, Preflight, export, preflight};
 pub use import::{ImportOutcome, import};
 

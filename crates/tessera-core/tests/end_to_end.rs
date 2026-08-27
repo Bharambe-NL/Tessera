@@ -2537,3 +2537,120 @@ fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
         "the sender's history did not travel"
     );
 }
+
+#[test]
+fn a_diagnostics_export_is_reachable_and_carries_no_answer() {
+    // Doc 10 section 11, through the RPC surface. The redaction itself is
+    // asserted in `tessera-bundle`; what this covers is that the shell can
+    // reach it at all, and that what comes back over the boundary is the same
+    // file the library wrote rather than one assembled again on the way out.
+    let router = build_router();
+    let mut core = core_with(repeating_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+
+    let out = call(&router, &mut core, "profile.diagnostics", json!({}));
+    assert!(out["summary"]["runs"].as_u64().unwrap_or(0) >= 1);
+    let bytes = out["bytes"].as_str().expect("bytes");
+    assert!(!bytes.is_empty());
+
+    // The question is what to look for, and the first draft of this test looked
+    // for the answer. `card.answered.v1` carries a count and an id and never
+    // the prose, so that test passed with the redaction switched off entirely:
+    // it was searching for a string the export could not have contained either
+    // way. `card.requested.v1` does carry the question a person typed, which
+    // makes it the one payload field here that a leak would actually show up in.
+    let question = "what are world models?";
+    let carried: i64 = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM event WHERE event_type = 'card.requested.v1'
+             AND payload LIKE '%world models%'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(
+        carried, 1,
+        "the fixture has no payload carrying what a person typed"
+    );
+
+    let raw = decode(bytes);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(raw)).expect("zip");
+    let mut all = String::new();
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).expect("entry");
+        let mut text = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut text).is_ok() {
+            all.push_str(&text);
+        }
+    }
+    assert!(
+        !all.contains(question),
+        "the diagnostics export carries what the person asked"
+    );
+    assert!(
+        all.contains("card.answered.v1"),
+        "the export says nothing about what ran"
+    );
+}
+
+#[test]
+fn a_backup_is_reachable_and_restores_into_an_empty_folder() {
+    // Doc 10 section 15, through the RPC surface.
+    let router = build_router();
+    let mut core = core_with(repeating_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+
+    let out = call(&router, &mut core, "profile.back_up", json!({}));
+    assert_eq!(out["manifest"]["counts"]["board"], 1);
+    let raw = decode(out["bytes"].as_str().expect("bytes"));
+
+    let into = std::env::temp_dir().join(format!("tessera-restore-{}", tessera_store::new_id()));
+    tessera_bundle::restore(std::io::Cursor::new(raw), &into).expect("restore");
+
+    // A working profile, not a file that merely landed.
+    let restored = tessera_store::Store::open(&into).expect("the restored profile opens");
+    let cards: i64 = restored
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM card WHERE board_id = ?1",
+            [&board_id],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(cards, 1);
+    let _ = std::fs::remove_dir_all(&into);
+}
+
+/// Base64 back to bytes, for the two exports that cross the boundary as text.
+fn decode(text: &str) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits = 0u32;
+    let mut have = 0u32;
+    let mut out = Vec::new();
+    for byte in text.bytes().filter(|b| *b != b'=') {
+        let Some(i) = ALPHABET.iter().position(|c| *c == byte) else {
+            continue;
+        };
+        bits = (bits << 6) | i as u32;
+        have += 6;
+        if have >= 8 {
+            have -= 8;
+            out.push((bits >> have) as u8);
+        }
+    }
+    out
+}
