@@ -1951,11 +1951,25 @@ fn write_records(
         }
     }
 
+    let mut counts = serde_json::Map::new();
+    for record in records {
+        let seen = counts.get(&record.provider).and_then(Value::as_u64).unwrap_or(0);
+        counts.insert(record.provider.clone(), json!(seen + 1));
+    }
+    let by_provider = Value::Object(counts);
+
     let manifest = json!({
         "corpus": corpus_name(&args.corpus),
         "policy": args.policy,
         "pack": pack,
         "snapshot": args.snapshot,
+        // What was configured. `questions_by_provider` below says where the
+        // questions actually went, which is not the same thing: a run with
+        // `--sample-per-depth` high enough sends every question to the
+        // reference leg while this still names the bulk provider. Doc 02
+        // section 10.1 keeps this field so two runs' numbers stay comparable
+        // instead of mixed, and a run recorded as one provider that ran on
+        // another is the mixing it exists to prevent.
         "provider": if args.mock { "mock" } else { args.bulk_provider.as_str() },
         "bulk_provider": args.bulk_provider,
         "bulk_models": {
@@ -1994,6 +2008,10 @@ fn write_records(
         // list and never remove from it. The scorer needs the floor to check
         // compliance, and the pack is loaded here, not there.
         "doctrine_must_exclude": doctrine_must_exclude(pack),
+        // Counted from the records rather than from the arguments, so the
+        // manifest says where the questions went and not where they were meant
+        // to go.
+        "questions_by_provider": by_provider,
     });
     std::fs::write(
         dir.join("manifest.json"),
