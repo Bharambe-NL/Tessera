@@ -1457,3 +1457,18 @@ def test_every_planted_case_metric_is_one_that_exists_and_is_gated() -> None:
         assert harness.THRESHOLDS[name] not in (0.0, 1.0), (
             f"{name} is already exempt by being absolute, so listing it says nothing"
         )
+
+
+def test_the_worst_rule_is_the_same_rule_every_time_it_is_scored() -> None:
+    # Six rules sat at 1.0 on the grounded sweep, and `max` over a dict returned
+    # whichever came first: the rule this metric names changed between two
+    # scorings of one run, and so did the denominator reported with it. A run
+    # record whose numbers move when it is read again is not a record.
+    tied = {"unsupported_claim": 1.0, "citation_unsupported": 1.0, "injection_suspected": 1.0}
+    picked = {min(tied.items(), key=lambda kv: (-kv[1], kv[0]))[0] for _ in range(20)}
+    assert picked == {"citation_unsupported"}, "the tie break is not by name"
+
+    # And a genuinely worse rule still wins, whatever it is called.
+    ranked = dict(tied, zzz_worse=1.0, aaa_better=0.5)
+    assert min(ranked.items(), key=lambda kv: (-kv[1], kv[0]))[0] == "citation_unsupported"
+    assert min({"aaa": 0.2, "zzz": 0.9}.items(), key=lambda kv: (-kv[1], kv[0]))[0] == "zzz"

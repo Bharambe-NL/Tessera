@@ -891,10 +891,15 @@ def score(results: Path, corpus: Path) -> Report:
     # across rules would hide it behind the well behaved ones.
     per_rule = {rule: wrongly.get(rule, 0) / count for rule, count in fired.items() if count}
     report.per_rule_false_positives = dict(
-        sorted(per_rule.items(), key=lambda kv: kv[1], reverse=True)
+        sorted(per_rule.items(), key=lambda kv: (-kv[1], kv[0]))
     )
     if per_rule:
-        worst_rule, worst_rate = max(per_rule.items(), key=lambda kv: kv[1])
+        # Ties broken by name, so scoring one run twice names the same rule.
+        # Six rules sat at 1.0 on the grounded sweep and `max` over a dict
+        # returned whichever came first, which changed the rule this metric
+        # names and the denominator it reports with it. A run record whose
+        # numbers move when it is read again is not a record.
+        worst_rule, worst_rate = min(per_rule.items(), key=lambda kv: (-kv[1], kv[0]))
         offenders = [r for r, v in per_rule.items() if v > THRESHOLDS["flag_false_positive_rate"]]
         report.metrics.append(
             Metric(
