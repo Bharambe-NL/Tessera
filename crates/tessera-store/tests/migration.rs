@@ -495,3 +495,136 @@ fn a_rebuilt_table_keeps_the_rows_that_pointed_into_it() {
 
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn the_learning_columns_arrive_empty_and_mean_it() {
+    // 0009. Doc 17 section 2.1's six columns, and doc 17 section 2.4's reason
+    // for leaving them null: the self rating prior applies "only when mastery
+    // is null", so a default would erase the difference between a concept
+    // nobody has been checked on and one that failed every check.
+    let root = temp_root();
+    let ids = write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+
+    // Read as text whatever the column's type, because what is being asserted
+    // is that all six are absent rather than what each would hold.
+    for column in [
+        "learning_state",
+        "self_rating",
+        "mastery",
+        "difficulty_level",
+        "last_evidence_at",
+        "path_ids",
+    ] {
+        let value: Option<String> = conn
+            .query_row(
+                &format!("SELECT CAST({column} AS TEXT) FROM concept WHERE id = ?1"),
+                params![ids.concept],
+                |r| r.get(0),
+            )
+            .expect("the concept still reads");
+        assert_eq!(
+            value, None,
+            "a concept written before the learning layer claims a {column}"
+        );
+    }
+
+    // The checks are what stop a projection writing nonsense into them.
+    conn.execute(
+        "UPDATE concept SET learning_state = 'mastered', self_rating = 3, mastery = 0.9,
+             difficulty_level = 4 WHERE id = ?1",
+        params![ids.concept],
+    )
+    .expect("the six states and the four levels are accepted");
+
+    for (column, value) in [
+        ("learning_state", "'fluent'"),
+        ("self_rating", "4"),
+        ("mastery", "1.4"),
+        ("difficulty_level", "0"),
+    ] {
+        assert!(
+            conn.execute(
+                &format!("UPDATE concept SET {column} = {value} WHERE id = ?1"),
+                params![ids.concept],
+            )
+            .is_err(),
+            "{column} accepted {value}"
+        );
+    }
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn an_edge_is_not_a_link_and_says_so_once() {
+    // Doc 17 section 2.1 keeps `concept_edge` apart from `concept_link`: a link
+    // binds a concept to content that mentions it, an edge says one concept has
+    // to be understood before another.
+    let root = temp_root();
+    let ids = write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+    let now = now_iso8601();
+
+    // The pack the seeded concept already names, so the new one is a sibling
+    // rather than a second doctrine.
+    let pack: String = conn
+        .query_row(
+            "SELECT doctrine_pack_id FROM concept WHERE id = ?1",
+            params![ids.concept],
+            |r| r.get(0),
+        )
+        .expect("the concept's pack");
+
+    let second = new_id();
+    conn.execute(
+        "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status, created_at, updated_at)
+         VALUES (?1, ?2, 'liquidity coverage ratio', ?3, 'confirmed', ?4, ?4)",
+        params![second, ids.profile, pack, now],
+    )
+    .expect("a second concept");
+
+    conn.execute(
+        "INSERT INTO concept_edge (id, from_concept_id, to_concept_id, relation, proposed_by,
+             status, weight, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 'prerequisite_of', 'learning_planner', 'proposed', 0.8, ?4, ?4)",
+        params![new_id(), ids.concept, second, now],
+    )
+    .expect("an edge is a row");
+
+    // A planner that proposes the same prerequisite twice is proposing it once.
+    assert!(
+        conn.execute(
+            "INSERT INTO concept_edge (id, from_concept_id, to_concept_id, relation, proposed_by,
+                 status, weight, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'prerequisite_of', 'learning_planner', 'confirmed', 1.0, ?4, ?4)",
+            params![new_id(), ids.concept, second, now],
+        )
+        .is_err(),
+        "the same prerequisite was proposed twice and both were kept"
+    );
+
+    // The other two relations are their own edges between the same pair, which
+    // is why the index names the relation.
+    for relation in ["part_of", "contrasts_with"] {
+        conn.execute(
+            "INSERT INTO concept_edge (id, from_concept_id, to_concept_id, relation, proposed_by,
+                 status, weight, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'learner', 'confirmed', 1.0, ?5, ?5)",
+            params![new_id(), ids.concept, second, relation, now],
+        )
+        .unwrap_or_else(|e| panic!("{relation} was rejected: {e}"));
+    }
+
+    // A mission is why the learner wants any of it.
+    conn.execute(
+        "INSERT INTO mission (id, profile_id, statement, target_concept_ids, created_at, updated_at)
+         VALUES (?1, ?2, 'I review liquidity policies and keep guessing at the ratios.', ?3, ?4, ?4)",
+        params![new_id(), ids.profile, format!("[\"{second}\"]"), now],
+    )
+    .expect("a mission is a row");
+
+    std::fs::remove_dir_all(&root).ok();
+}
