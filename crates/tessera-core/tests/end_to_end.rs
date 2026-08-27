@@ -300,6 +300,103 @@ fn garbage_from_the_provider_never_becomes_a_card() {
     assert!(!types.contains(&"card.answered.v1".to_string()));
 }
 
+/// A card whose summary is a loop, and one whose summary is two quantities.
+///
+/// Both shapes arrive with doc 16 section 3.5, and both are reached through the
+/// whole pipeline rather than through the Visualizer alone, because the type is
+/// chosen from the summary and stored through a schema that has to accept the
+/// payload the choice produces.
+fn shaped_mock(summary: Value, visual: Value) -> Arc<MockProvider> {
+    let mut synth = synth_output();
+    synth["structured_summary"] = summary;
+    Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(move |request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "synthesize" => MockResponse::Json(synth.clone()),
+                "visualize" => MockResponse::Json(visual.clone()),
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    )
+}
+
+#[test]
+fn a_summary_that_loops_becomes_a_flow() {
+    // Doc 16 section 3.5: a tree has no cycles, so a summary where the review
+    // goes back to the draft cannot be drawn as one.
+    let provider = shaped_mock(
+        json!({
+            "entities": ["Draft", "Review"],
+            "relations": [
+                { "from": "Draft", "to": "Review", "kind": "goes to" },
+                { "from": "Review", "to": "Draft", "kind": "returns to" }
+            ]
+        }),
+        json!({
+            "title": "The review loop",
+            "payload": {
+                "nodes": [{ "id": "a", "label": "Draft" }, { "id": "b", "label": "Review" }],
+                "edges": [
+                    { "from": "a", "to": "b", "label": "goes to" },
+                    { "from": "b", "to": "a", "label": "returns to" }
+                ]
+            }
+        }),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+    core.ask(&board_id, "how does review work?", None)
+        .expect("the card runs");
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board exists");
+    let visual = board.cards[0].visual.as_ref().expect("a visual was produced");
+    assert_eq!(visual["type"], "flow");
+    assert_eq!(visual["payload"]["edges"].as_array().expect("edges").len(), 2);
+
+    // Every node is a block, and so is every edge that says something.
+    let blocks = visual["block_index"].as_array().expect("block index");
+    assert_eq!(blocks.len(), 4, "two nodes and two edge labels");
+    assert!(blocks.iter().any(|b| b["ref"] == "/nodes/0"));
+    assert!(blocks.iter().any(|b| b["ref"] == "/edges/1"));
+}
+
+#[test]
+fn two_quantities_become_tiles() {
+    // Doc 16 section 3.5's own example: a year beside a size.
+    let provider = shaped_mock(
+        json!({
+            "entities": ["The hall"],
+            "values": [
+                { "label": "opened", "value": "1949", "unit": "" },
+                { "label": "floor space", "value": "120", "unit": "m" }
+            ]
+        }),
+        json!({
+            "title": "The hall in numbers",
+            "payload": { "tiles": [
+                { "value": "1949", "unit": "", "label": "opened" },
+                { "value": "120", "unit": "m", "label": "floor space" }
+            ]}
+        }),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+    core.ask(&board_id, "tell me about the hall", None)
+        .expect("the card runs");
+
+    let board = tessera_store::repo::read_board(&core.store, &board_id)
+        .expect("read")
+        .expect("board exists");
+    let visual = board.cards[0].visual.as_ref().expect("a visual was produced");
+    assert_eq!(visual["type"], "stats");
+    assert_eq!(visual["payload"]["tiles"].as_array().expect("tiles").len(), 2);
+    let blocks = visual["block_index"].as_array().expect("block index");
+    assert_eq!(blocks.len(), 2, "one block per tile, label and value together");
+}
+
 #[test]
 fn a_visualizer_failure_degrades_the_card_rather_than_killing_it() {
     // Doc 06 section B10: a card without a visual is acceptable.

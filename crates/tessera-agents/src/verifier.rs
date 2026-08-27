@@ -121,7 +121,7 @@ impl Agent for Verifier {
             let found = match detector.trim_start_matches("deterministic:") {
                 "marker_integrity" => marker_integrity(answer, &citations),
                 "scope_exclusion" => scope_exclusion(answer, &visual, constraints),
-                "numeric_without_citation" => numeric_without_citation(answer, &citations),
+                "numeric_without_citation" => numeric_without_citation(answer, &citations, &visual),
                 "computed_value" => computed_value(packet, &citations, &passages),
                 "advice_language" => advice_language(answer, &packet["early_flags"]),
                 "forbidden_reference" => forbidden_reference(&citations, &passages, packet),
@@ -720,7 +720,12 @@ fn scope_exclusion(answer: &str, visual: &Value, constraints: &Value) -> Option<
 
 /// Any number with a unit, without a citation, in deep or research. Doc 07
 /// section B8.1, block severity.
-fn numeric_without_citation(answer: &str, citations: &[Value]) -> Option<Vec<Value>> {
+///
+/// Doc 16 section 3.5 sends the stats tiles here too: a tile is a large numeral
+/// with nothing around it to qualify it, so an uncited one is this rule's
+/// finding rather than `visual_block_unbound`'s. Two rules firing on one
+/// absence would put two flags on one tile.
+fn numeric_without_citation(answer: &str, citations: &[Value], visual: &Value) -> Option<Vec<Value>> {
     let cited_spans: Vec<(usize, usize)> = citations
         .iter()
         .filter_map(|c| {
@@ -743,7 +748,39 @@ fn numeric_without_citation(answer: &str, citations: &[Value]) -> Option<Vec<Val
             ));
         }
     }
+
+    for block in tiles(visual) {
+        if block["citation_ordinals"]
+            .as_array()
+            .is_some_and(|c| !c.is_empty())
+        {
+            continue;
+        }
+        out.push(hit(
+            "block",
+            block["ref"].as_str(),
+            "A tile shows a figure with no source behind it.",
+            json!({ "label": block["label"].clone() }),
+        ));
+    }
     Some(out)
+}
+
+/// The block index entries that are stats tiles.
+///
+/// Read from the block index rather than the payload, because the index is what
+/// the Visualizer bound and what the canvas hides a failing block by. A tile
+/// that never reached the index is `visual_block_unbound`'s business.
+fn tiles(visual: &Value) -> Vec<&Value> {
+    if visual["type"].as_str() != Some("stats") {
+        return Vec::new();
+    }
+    visual["block_index"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["ref"].as_str().is_some_and(|r| r.starts_with("/tiles/")))
+        .collect()
 }
 
 /// A numeric claim whose cited passage does not contain the value. Doc 07
@@ -879,13 +916,18 @@ fn unsupported_claim(unsupported: &[Value], mode: &str) -> Option<Vec<Value>> {
 /// B8.3: blocks that fail are hidden, never silently removed.
 fn visual_block_unbound(visual: &Value) -> Option<Vec<Value>> {
     let blocks = visual["block_index"].as_array()?;
+    let tiles: std::collections::BTreeSet<&str> =
+        tiles(visual).iter().filter_map(|b| b["ref"].as_str()).collect();
     Some(
         blocks
             .iter()
             .filter(|b| {
                 let cited = b["citation_ordinals"].as_array().is_some_and(|c| !c.is_empty());
                 let no_claim = b["no_claim"].as_bool().unwrap_or(false);
-                !cited && !no_claim
+                // An uncited tile belongs to `numeric_without_citation`, doc 16
+                // section 3.5, and one absence carries one flag.
+                let tile = b["ref"].as_str().is_some_and(|r| tiles.contains(r));
+                !cited && !no_claim && !tile
             })
             .map(|b| {
                 hit(
@@ -1223,7 +1265,7 @@ mod tests {
         // Doc 07 section B8.1 numeric_without_citation, block severity.
         let answer = "The buffer rose to 2.5 percent [1]. The floor is 3 percent.";
         let cited_end = answer.find("The floor").expect("split") as u64;
-        let hits = numeric_without_citation(answer, &[citation(1, 0, cited_end)]).expect("ran");
+        let hits = numeric_without_citation(answer, &[citation(1, 0, cited_end)], &Value::Null).expect("ran");
         assert_eq!(hits.len(), 1, "got {hits:?}");
         assert!(
             hits[0]["evidence"]["value"]
@@ -1245,7 +1287,7 @@ mod tests {
             "The buffer is 2.5% for these firms.",
             "The buffer is 2.5 %.",
         ] {
-            let hits = numeric_without_citation(answer, &[]).expect("ran");
+            let hits = numeric_without_citation(answer, &[], &Value::Null).expect("ran");
             assert_eq!(hits.len(), 1, "{answer:?} produced {hits:?}");
             assert!(
                 hits[0]["evidence"]["value"]
@@ -1259,8 +1301,12 @@ mod tests {
     #[test]
     fn a_bare_year_is_not_treated_as_an_uncited_figure() {
         // A detector that fires on every date would be disabled within a week.
-        let hits =
-            numeric_without_citation("The rule was published in 2026 and applies widely.", &[]).expect("ran");
+        let hits = numeric_without_citation(
+            "The rule was published in 2026 and applies widely.",
+            &[],
+            &Value::Null,
+        )
+        .expect("ran");
         assert!(hits.is_empty(), "got {hits:?}");
     }
 
@@ -1293,6 +1339,34 @@ mod tests {
         let hits = visual_block_unbound(&visual).expect("ran");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0]["target"]["ref"], "/rows/1/1");
+    }
+
+    #[test]
+    fn an_uncited_tile_is_flagged_once_and_by_the_numeric_rule() {
+        // Doc 16 section 3.5: "a tile without a citation is a
+        // numeric_without_citation block flag". One absence, one flag, so the
+        // unbound block rule leaves the tile alone.
+        let visual = json!({
+            "type": "stats",
+            "block_index": [
+                { "ref": "/tiles/0", "label": "founded", "citation_ordinals": [] },
+                { "ref": "/tiles/1", "label": "floor space", "citation_ordinals": [2] }
+            ]
+        });
+        let hits = numeric_without_citation("", &[], &visual).expect("ran");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["target"]["ref"], "/tiles/0");
+        assert_eq!(hits[0]["target"]["kind"], "block");
+        assert!(visual_block_unbound(&visual).expect("ran").is_empty());
+
+        // And a block on a visual that is not a stats one is still the unbound
+        // rule's, whatever its path says.
+        let table = json!({
+            "type": "table",
+            "block_index": [{ "ref": "/tiles/0", "label": "x", "citation_ordinals": [] }]
+        });
+        assert!(numeric_without_citation("", &[], &table).expect("ran").is_empty());
+        assert_eq!(visual_block_unbound(&table).expect("ran").len(), 1);
     }
 
     #[test]
@@ -1418,7 +1492,7 @@ mod tests {
             let passages = passages(&[("p1", "own_card")]);
             let hits = own_card_sole_support(ANSWER, &[], passages.as_array().expect("a")).expect("ran");
             assert!(hits.is_empty());
-            let missing = numeric_without_citation(ANSWER, &[]).expect("ran");
+            let missing = numeric_without_citation(ANSWER, &[], &Value::Null).expect("ran");
             assert_eq!(missing.len(), 1, "nothing claimed the uncited figure");
         }
 

@@ -2861,6 +2861,61 @@ the bundle round trip.
 
 ---
 
+### BN-121 Two shapes a tree cannot draw, and the enum that would have refused them
+
+**Spec** 16 section 3.5, 06 sections B5 and B8.
+
+**Built** 2026-08-27, M15 12e-i.
+
+**What decides a flow.** Doc 16 section 3.5 gives the reason in one line: a tree has no cycles and
+no cross links. So the selection rule is not "relations, therefore tree" any more, it is whether
+the relation set is a strict hierarchy, meaning every node has at most one parent and some node has
+none. A node reached twice is a cross link and a set with no root is a cycle; both are flows.
+Drawing either as a tree would have drawn one node twice or dropped one of the edges, silently.
+
+**What decides a stats tile, and why it is not "few numbers".** Doc 16's own example is "1949,
+120m", which is a year beside a size: two quantities, a tile each. Eight beside ten is one quantity
+measured twice, and those want a table where they can be read against each other. So the test is
+whether the units differ, not whether the values are few. That keeps every existing table a table,
+including the shape the grounded mock writes, and it means a stats visual arrives only where the
+summary genuinely carries separate figures.
+
+**The uncited tile belongs to one rule, not two.** Doc 16 section 3.5 makes a tile without a
+citation a `numeric_without_citation` block flag. The Visualizer therefore never marks a tile
+`no_claim`, because that marking is what excuses a block from `visual_block_unbound`, and excusing
+it is exactly the case the rule exists to catch. The numeric rule now reads the stats tiles out of
+the block index, and the unbound rule skips them: one absence, one flag, which is the rule BN's own
+`own_card_sole_support` comment already states for figures in prose.
+
+**The enum that would have refused both.** `schemas/output/visualizer.v1.json` types the agent's
+answer with its own list of shapes, shorter than doc 01 section 4.3.1's because the harness makes
+some of them and v1.1 reserves others. It had no `flow` and no `stats`, so the first flow the
+Visualizer selected was declined at the boundary with a valid payload in hand. The store enum, the
+common types and the entity schema all carried the two names since migration 0004; the output
+schema was the one place that did not, and only an end to end test could find it, because every
+unit test stops before that validation.
+
+**Not hintable, on purpose.** The Router's `visual_hint` keeps its six values. A hint is a guess
+made before anything is retrieved, and both new shapes are chosen from structure the Synthesizer
+grounded: a flow needs edges and a tile needs a figure with a unit, so a hint for either would name
+a shape with nothing to put in it.
+
+**The mock answers in the shape it was asked for.** The grounded mock composed a table whatever the
+Visualizer requested, which was invisible while a table was the only thing ever selected. It now
+parses the summary out of the prompt as json rather than scraping five prefixes line by line, and
+lays it out as whichever shape the prompt names, still using the summary's own labels verbatim so
+doc 06 section B8.3 can trace them.
+
+**Measured** 2026-08-27, 400 questions on the grounded mock. Unchanged: every visual is still a
+table, `visual_fidelity` 1.000, `fact_recall_deep` 0.923, no measured metric below its threshold.
+The corpus has no question that asks for a flow or a set of tiles yet, which is 12e-ii's work, so
+`visual_type_match` stays at 0.250 and stays advisory.
+
+**Verified** Full battery green, 107 agent tests, 59 end to end tests, 60 Playwright tests, the
+grounded sweep and the bundle round trip.
+
+---
+
 ---
 
 ## Measured findings
