@@ -1649,7 +1649,12 @@ fn build_plan(args: &Args, questions: &[Question], total: usize) -> Result<Plan,
         });
     }
 
-    let keys = OsKeychain;
+    // The same choice the Core makes, rather than a second one. This read
+    // `OsKeychain` directly while `keystore` honoured `TESSERA_CI` beside it, so
+    // the environment path existed, was tested, and could never actually fetch a
+    // provider secret: the plan builder is what reaches for one. BN-095 recorded
+    // the CI eval as written and unproven, and this is what unproven was hiding.
+    let keys = keystore(false);
 
     // Fail before spending anything. Doc 03 section 8.3's posture: a missing key
     // stops the run rather than being discovered halfway through it.
