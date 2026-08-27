@@ -1,0 +1,8 @@
+{
+  "//": "The driver runs in node, so it needs node globals. They stay out of the browser typecheck on purpose: a `process.env` that reaches `app/ui/src` is a runtime crash in the webview, and the narrower types field above is what catches it.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["../tests", "../playwright.config.ts"]
+}
