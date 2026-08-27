@@ -299,6 +299,24 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     "context.stale_noted.v1",
     "run.compacted.v1",
     // learn mode, doc 14 section 2
+    // The learning system, doc 17 section 9. The three names doc 17 gives as
+    // `lesson.planned`, `check.asked` and `check.answered` are the `learn.*`
+    // trio below rather than new names beside them: two names for one meaning
+    // in an append only log is the BN-086 failure class. Their payloads gain
+    // `{concept_id, level}` where the Tutor knows them, which is 13c.
+    "mission.created.v1",
+    "mission.updated.v1",
+    "path.loaded.v1",
+    "concept.rated.v1",
+    "concept.edge_proposed.v1",
+    "concept.edge_confirmed.v1",
+    "concept.state_changed.v1",
+    "frontier.computed.v1",
+    "learning_record.saved.v1",
+    // Doc 17 section 2.2: reading a card is what moves a concept from unseen to
+    // exposed, so exploring an ordinary board fills the map without anyone
+    // opening a lesson.
+    "card.viewed.v1",
     "learn.started.v1",
     "learn.intake_answered.v1",
     "learn.planned.v1",
