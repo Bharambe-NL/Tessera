@@ -127,11 +127,16 @@ impl Agent for Planner {
         let notebook = packet["context"]["board_mode"] == "notebook";
         let counts = |id: &String| id != "boards" && (notebook || id != "vault");
         if !enabled.iter().any(counts) {
-            return Err(Failure::new(
-                "no_retriever_enabled",
-                "No retriever is enabled. Enable at least web or local in Profile.",
-                Recovery::Failed,
-            ));
+            // The message names what would actually help, which depends on
+            // what this run may open. Doc 17 section 5 leaves local out of a
+            // lesson, so telling a learner to add a folder would send them to
+            // set up the one retriever the lesson is never going to read.
+            let fix = if packet["context"]["board_mode"] == "learn" {
+                "This lesson has nothing to read. Add a site to search in Profile."
+            } else {
+                "No retriever is enabled. Enable at least web or local in Profile."
+            };
+            return Err(Failure::new("no_retriever_enabled", fix, Recovery::Failed));
         }
 
         // ---------------------------------------------- 8.1 entities -------

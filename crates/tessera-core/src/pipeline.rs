@@ -1590,15 +1590,18 @@ pub async fn run_card(
             &doctrine,
             &must_exclude,
             if learning {
+                // The set arrives narrowed. Doc 16 section 4's notebook and doc
+                // 17 section 5's lesson are both properties of the board, so
+                // `Core::ask` restricts once and everything that reads the set
+                // reads the same answer, the Planner packet included. What is
+                // left here is what only a lesson has: the path's own locators
+                // and a wider budget.
                 crate::retrieval::Posture {
-                    allow: Some(LESSON_RETRIEVERS),
+                    allow: None,
                     must_include: &must_include,
                     fetch_budget: Some(LESSON_FETCH_BUDGET),
                 }
             } else {
-                // Every configured retriever at the ordinary budget. Doc 16
-                // section 4's notebook narrows earlier, in the core, because
-                // what a notebook question may open is a property of the board.
                 crate::retrieval::Posture::default()
             },
         );
