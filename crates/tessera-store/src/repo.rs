@@ -569,6 +569,9 @@ pub struct CardView {
     pub model_alias: Option<String>,
     pub stages: Vec<Value>,
     pub position: Value,
+    /// Doc 16 section 4: the page this card was saved as, which the card header
+    /// shows as a chip. `None` on every card nobody has saved.
+    pub page_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -627,7 +630,7 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
     let mut stmt = conn.prepare(
         "SELECT c.id, c.parent_card_id, c.kind, c.anchor_text, c.anchor_block_ref, c.question,
                 c.depth, c.audience_id, c.answer, c.findings, c.status, c.confidence,
-                c.produced_by, c.position, c.visual_id, c.builds_on
+                c.produced_by, c.position, c.visual_id, c.builds_on, c.page_id
          FROM card c
          WHERE c.board_id = ?1
            AND NOT EXISTS (SELECT 1 FROM card newer WHERE newer.supersedes = c.id)
@@ -668,6 +671,7 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
                         .and_then(|v| v.get("model_alias").and_then(Value::as_str).map(str::to_string)),
                     stages: Vec::new(),
                     position: parse_json(&r.get::<_, String>(13)?),
+                    page_id: r.get(16)?,
                 },
                 r.get(14)?,
             ))

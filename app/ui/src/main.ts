@@ -479,6 +479,19 @@ function wireCardActions(): void {
         void whileRunning(() => rpc.verify(id, cardId), COPY.rerunFailed);
         break;
       }
+      case 'save': {
+        const id = boardId;
+        void rpc
+          .saveAsPage(id, cardId)
+          .then(async (saved) => {
+            if (saved.created) toast(`${COPY.savedAsPage}: ${saved.title ?? ''}`.trim());
+            await reload();
+          })
+          .catch((e: unknown) => {
+            toast(e instanceof RpcError ? e.message : COPY.saveFailed, 'error');
+          });
+        break;
+      }
     }
   });
 

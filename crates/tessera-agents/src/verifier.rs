@@ -1449,6 +1449,23 @@ mod tests {
                 own_card_sole_support(ANSWER, &[cite("p1")], passages.as_array().expect("a")).expect("ran");
             assert_eq!(hits.len(), 1);
         }
+
+        #[test]
+        fn the_passage_a_page_carried_is_what_admits_the_figure() {
+            // Doc 16 phase 12b's acceptance, and the reason `citations_carried`
+            // exists at all: the page is context, and the passage it carried
+            // from the card it was saved from is the evidence. Cite both and the
+            // figure stands; cite only the page and it does not.
+            let passages = passages(&[("p1", "page"), ("p2", "regulatory")]);
+            let mut carried = cite("p2");
+            carried["n"] = json!(2);
+            let hits = own_card_sole_support(ANSWER, &[cite("p1"), carried], passages.as_array().expect("a"))
+                .expect("ran");
+            assert!(
+                hits.is_empty(),
+                "a figure standing on the passage its page carried was blocked: {hits:?}"
+            );
+        }
     }
 
     #[test]

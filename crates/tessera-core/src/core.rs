@@ -1509,6 +1509,62 @@ pub fn build_router() -> Router<Core> {
         Ok(json!({ "notifications": notifications, "index": latest }))
     });
 
+    // Doc 16 section 3.2's ninth verb. A card the person wants to keep becomes
+    // a page they own, carrying the card's citations rather than becoming one.
+    r.register("card.save_as_page", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Save {
+            board_id: String,
+            card_id: String,
+        }
+        let p: Save = params(p)?;
+        let card = repo::read_cards(&core.store, &p.board_id)
+            .map_err(store_error)?
+            .into_iter()
+            .find(|c| c.id == p.card_id)
+            .ok_or_else(|| RpcError::core("card_missing", "That card is not on this board."))?;
+
+        if let Some(existing) = card.page_id.clone() {
+            // Saving twice is not an error and not a second page: the person
+            // pressed a button whose work was already done.
+            let page = repo::read_page(&core.store, &existing).map_err(store_error)?;
+            return Ok(json!({
+                "page_id": existing,
+                "title": page.as_ref().map(|p| p.title.clone()),
+                "file_path": page.map(|p| p.file_path),
+                "created": false,
+            }));
+        }
+
+        let pack_id = core.active_pack_id().map_err(core_error)?;
+        let profile_id = core.profile_id.clone();
+        let page_id = crate::vault::save_card_as_page(&mut core.store, &profile_id, Some(&pack_id), &card)
+            .map_err(|e| match e {
+                crate::vault::SaveError::Refused(why) => RpcError::core(
+                    "card_not_saveable",
+                    match why {
+                        crate::vault::BLOCKED => {
+                            "This card is blocked, so it stays on the board until the flag is decided."
+                        }
+                        _ => "This card has no answer yet, so there is nothing to keep.",
+                    },
+                ),
+                crate::vault::SaveError::Store(e) => store_error(e),
+            })?;
+
+        let page = repo::read_page(&core.store, &page_id).map_err(store_error)?;
+        Ok(json!({
+            "page_id": page_id,
+            "title": page.as_ref().map(|p| p.title.clone()),
+            "file_path": page.as_ref().map(|p| p.file_path.clone()),
+            "citations_carried": page
+                .as_ref()
+                .and_then(|p| p.citations_carried.as_array().map(Vec::len))
+                .unwrap_or(0),
+            "created": true,
+        }))
+    });
+
     // Doc 16 section 3.1's two way mirror, on demand. The shell calls it when
     // the window regains focus, which is when a person is most likely to have
     // just edited a page in another app.

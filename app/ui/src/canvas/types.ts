@@ -125,7 +125,11 @@ export interface Card {
   confidence: number | null;
   model_alias: string | null;
   stages: Stage[];
-  position: Position;
+  position: Position;  /**
+   * Doc 16 section 4: the page this card was saved as. The chip in the header
+   * renders from it, and its absence is what the Save verb is offered for.
+   */
+  page_id?: string | null;
 }
 
 export interface Viewport {

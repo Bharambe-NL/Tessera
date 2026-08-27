@@ -2631,6 +2631,45 @@ trip.
 
 ---
 
+### BN-116 Save as page, and the citations that go with it
+
+**Spec** 16 sections 3.2 and 4.
+
+**Built** 2026-08-27, M15 12b.
+
+**The ninth verb.** `card.save_as_page` builds a page from the card's question, answer, findings
+and a text rendering of the visual, sets `source_card_id` and `citations_carried`, writes the
+file, points the card at the page, resolves the links and indexes it. The card header shows a
+chip; the verb goes away once there is nothing left to do to it.
+
+**Copied, never re-derived.** Doc 16 section 2.2 is the whole reason `citations_carried` exists:
+the assessed package pointed the next answer's citation at the note, so two hops later the
+regulation was out of reach and possibly stale. The page carries the passages the card cited, so
+the evidence is still the evidence.
+
+**Blocked content is excluded, in both senses.** A card with a block flag is refused outright,
+because it stays on the board until the flag is decided. And a visual block the Verifier hid is
+left out of the rendering, since a page that carried the hidden tile would put back exactly what
+the Verifier took out.
+
+**Saving twice is not a second page.** The card already names one, so the verb reports what is
+already there rather than making a duplicate with a numbered title. The person pressed a button
+whose work was done.
+
+**The acceptance, both halves.** Doc 16 phase 12b: "the Verifier blocks a numeric claim resting
+on the page alone and admits it when the carried passage is cited." The detector half is two
+unit tests over `own_card_sole_support` with class `page`; the end to end half writes a page into
+the vault, asks a question the vault alone answers, and asserts the flag. The rule itself needed
+no change, because M12b listed `page` beside `own_card` when it built the detector.
+
+**A title from the question.** Trimmed of its question mark, capped, capitalised, and numbered if
+the profile already has one. Renaming is the person's, and the id is what the links hold.
+
+**Verified** Full battery green, 51 Playwright tests, the grounded sweep and the bundle round
+trip.
+
+---
+
 ---
 
 ## Measured findings
