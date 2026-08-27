@@ -127,6 +127,33 @@ export const COPY = {
   readFailed: 'That image could not be read.',
   readIllegible: 'Could not read this image.',
 
+  // -------------------------------------------- First run, doc 11 sec 6 --
+
+  setupTitle: 'Set up Tessera',
+  setupLede: 'Three steps. The third one is optional.',
+  setupLoading: 'Reading what is already set up',
+  setupWorking: 'Working',
+  setupDone: 'Start asking questions',
+  setupNeedsKey: 'Add a model key first, so the first card has something to answer it.',
+
+  setupPackTitle: 'Choose a doctrine pack',
+  setupPackNote: 'The pack decides which sources outrank which and what a card must never say without one. You can change it later.',
+
+  setupKeyTitle: 'Add a model key',
+  setupKeyNote: 'The key goes into this machine\u2019s keychain. It is never written to a file and never leaves except to the provider you chose.',
+  setupKeyLabel: 'Paste the key for',
+  setupKeyPlaceholder: 'The key from your provider',
+  setupKeySave: 'Save to keychain',
+  setupKeyPresent: 'A key is in the keychain for this alias.',
+
+  setupFolderTitle: 'Watch a folder',
+  setupFolderNote: 'Optional. Documents in a watched folder can be cited. Nothing is uploaded unless you ask for provider embeddings.',
+  setupFolderPath: 'Full path to the folder',
+  setupFolderLabel: 'What to call it',
+  setupFolderSensitive: 'Sensitive: keep this folder\u2019s text on this machine',
+  setupFolderAdd: 'Watch this folder',
+  setupFolderAdded: 'Watching',
+
   // ------------------------------------------------ Learn mode, doc 14 --
 
   /** Doc 14 section 4: a Learn toggle left of the depth selector. */

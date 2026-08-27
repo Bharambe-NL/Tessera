@@ -117,6 +117,19 @@ const router = new Router(
     },
     ask: (question) => void submit(question),
     toast: (message, level) => toast(message, level),
+    finishSetup: async () => {
+      // A board to land on. Setup runs on a profile with none, and arriving at
+      // an empty canvas with no board is the one state the composer cannot ask
+      // from, so the finish makes one rather than leaving the person somewhere
+      // that looks ready and is not.
+      if (!boardId) {
+        const { boards } = await rpc.listBoards();
+        boardId = boards[0]?.id ?? (await rpc.createBoard()).board_id;
+      }
+      await reload();
+      await router.go('board');
+      ask.focus();
+    },
   },
 );
 router.attach();
@@ -1066,10 +1079,20 @@ async function boot(): Promise<void> {
   }
 
   try {
+    // Doc 11 section 6's First run. Asked of the core rather than inferred from
+    // whether a board exists: a person who trashed their only board has not
+    // become a new user, and a shell that decided this for itself would show
+    // them the setup screen again.
+    const first = await rpc.firstRun();
+    setMode(COPY.modeLive, 'live');
+    if (first.needs_setup) {
+      await router.go('setup');
+      return;
+    }
+
     const { boards } = await rpc.listBoards();
     boardId = boards[0]?.id ?? (await rpc.createBoard()).board_id;
     await reload();
-    setMode(COPY.modeLive, 'live');
     void router.refreshFlagCount();
     ask.focus();
   } catch (e) {

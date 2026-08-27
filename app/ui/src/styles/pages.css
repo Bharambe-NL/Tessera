@@ -745,3 +745,141 @@ body.learning #main {
   background: var(--ink);
   color: var(--surface);
 }
+
+/* ---- first run, doc 11 section 6 ---- */
+
+#page .lede {
+  max-width: 60ch;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  margin: 0 0 var(--s6);
+}
+
+ol.setup {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s5);
+  max-width: 62ch;
+}
+
+ol.setup .step {
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+
+ol.setup .step.done {
+  border-color: var(--olive-ink);
+}
+
+ol.setup h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: 0 0 var(--s2);
+  font-size: 14px;
+}
+
+ol.setup .n {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+ol.setup .step.done .n {
+  background: var(--olive-ink);
+  border-color: transparent;
+  color: var(--surface);
+}
+
+ol.setup .note {
+  margin: 0 0 var(--s3);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.setup-key,
+.setup-folder {
+  display: grid;
+  gap: var(--s3);
+}
+
+.setup-key label,
+.check {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.setup-key code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.setup-key input,
+.setup-folder input[type='text'],
+.setup-folder input:not([type]) {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  padding: var(--s3);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.setup-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin: var(--s6) 0 0;
+  max-width: 62ch;
+}
+
+.setup-acts .note {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.setup-error {
+  max-width: 62ch;
+  margin: var(--s4) 0 0;
+  padding: var(--s3) var(--s4);
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--rust-ink);
+  border-radius: var(--r-button);
+}
+
+#page button.primary {
+  background: var(--user);
+  color: var(--surface);
+  border-color: transparent;
+  padding: var(--s3) var(--s5);
+  border-radius: var(--r-button);
+  font-size: 13px;
+}
+
+#page button.primary:disabled {
+  background: var(--line);
+  color: var(--ink-3);
+}

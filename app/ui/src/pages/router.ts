@@ -20,8 +20,14 @@ import { flagsHTML, bulkHTML } from './flags.js';
 import { homeHTML, homeToolsHTML, type HomeFilter } from './home.js';
 import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './library.js';
 import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
+import { setupHTML, type SetupState } from './setup.js';
 
-export type View = 'board' | 'home' | 'flags' | 'library' | 'profile';
+/**
+ * Setup is a view rather than a modal, so it uses the page layer the other four
+ * use and inherits its focus handling and its escape. It is not on the rail:
+ * nobody navigates to a first run, they arrive at one.
+ */
+export type View = 'board' | 'home' | 'flags' | 'library' | 'profile' | 'setup';
 
 export interface RouterHosts {
   rail: HTMLElement;
@@ -40,6 +46,8 @@ export interface RouterActions {
   /** Ask a question on the current board, for the Library ask verbs. */
   ask(question: string): void;
   toast(message: string, level?: 'info' | 'warn' | 'error'): void;
+  /** Leave the first run screen for the board. Doc 11 section 6. */
+  finishSetup(): Promise<void>;
 }
 
 export class Router {
@@ -51,6 +59,14 @@ export class Router {
   private picked = new Set<string>();
   /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
   private confirmingDismiss = false;
+  /** What the first run screen is showing, on top of what the core reports. */
+  readonly setup: SetupState = {
+    run: null,
+    keySaved: false,
+    folderAdded: null,
+    busy: false,
+    error: null,
+  };
 
   constructor(
     private readonly hosts: RouterHosts,
@@ -114,6 +130,15 @@ export class Router {
           body.innerHTML = profileHTML(await this.rpc.profile(), this.profileTab);
           break;
         }
+        case 'setup': {
+          title.textContent = COPY.setupTitle;
+          tools.innerHTML = '';
+          // Re-read on every render, so a key added in one step shows as done
+          // in the next without this screen keeping its own idea of the truth.
+          this.setup.run = await this.rpc.firstRun();
+          body.innerHTML = setupHTML(this.setup);
+          break;
+        }
       }
     } catch (e) {
       // A page that could not read says so rather than showing the last page's
@@ -163,6 +188,17 @@ export class Router {
     this.hosts.page.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
+
+      // ---- First run
+      const pack = target.closest<HTMLElement>('[data-setup-pack]')?.dataset.setupPack;
+      if (pack) {
+        void this.setupPack(pack);
+        return;
+      }
+      if (target.closest('#setup-done')) {
+        void this.actions.finishSetup();
+        return;
+      }
 
       // ---- Home
       const filter = target.closest<HTMLElement>('[data-home-filter]')?.dataset.homeFilter;
@@ -275,6 +311,15 @@ export class Router {
       rows[next]?.focus();
     });
 
+    // The first run forms. Submit rather than click, so Enter works and the
+    // browser does not reload the page out from under a half finished setup.
+    this.hosts.page.addEventListener('submit', (e) => {
+      const form = e.target as HTMLElement | null;
+      e.preventDefault();
+      if (form?.id === 'setup-key') void this.saveKey();
+      if (form?.id === 'setup-folder') void this.watchFolder();
+    });
+
     // Row selection, which is a change rather than a click.
     this.hosts.page.addEventListener('change', (e) => {
       const box = e.target as HTMLInputElement | null;
@@ -286,6 +331,59 @@ export class Router {
       this.confirmingDismiss = false;
       this.hosts.tools.innerHTML = bulkHTML(this.picked.size, this.confirmingDismiss);
     });
+  }
+
+  private async setupPack(code: string): Promise<void> {
+    await this.setupStep(() => this.rpc.setPack(code).then(() => undefined));
+  }
+
+  private async saveKey(): Promise<void> {
+    const input = this.hosts.body.querySelector<HTMLInputElement>('#setup-secret');
+    const secret = input?.value.trim() ?? '';
+    if (!secret) return;
+    const keyRef = this.setup.run?.key_refs[0] ?? '';
+    // Cleared before the call rather than after. The field holds the only copy
+    // of the secret in this process, and a failed call leaves the screen up.
+    if (input) input.value = '';
+    await this.setupStep(async () => {
+      await this.rpc.setKey(keyRef, secret);
+      this.setup.keySaved = true;
+    });
+  }
+
+  private async watchFolder(): Promise<void> {
+    const root = this.hosts.body.querySelector<HTMLInputElement>('#setup-folder-root')?.value ?? '';
+    const label =
+      this.hosts.body.querySelector<HTMLInputElement>('#setup-folder-label')?.value ?? '';
+    const sensitive =
+      this.hosts.body.querySelector<HTMLInputElement>('#setup-folder-sensitive')?.checked ?? false;
+    if (!root.trim()) return;
+    await this.setupStep(async () => {
+      const added = await this.rpc.watchFolder({
+        root: root.trim(),
+        label: label.trim() || root.trim(),
+        sensitive,
+      });
+      this.setup.folderAdded = added.label;
+    });
+  }
+
+  /**
+   * Run one setup step and redraw, keeping the error where the person is
+   * looking rather than in a toast that has scrolled away by the time they read
+   * the step it belongs to.
+   */
+  private async setupStep(work: () => Promise<void>): Promise<void> {
+    this.setup.busy = true;
+    this.setup.error = null;
+    await this.render();
+    try {
+      await work();
+    } catch (e) {
+      this.setup.error = e instanceof RpcError ? e.message : COPY.pageUnread;
+    }
+    this.setup.busy = false;
+    await this.render();
   }
 
   private async boardVerb(verb: string, boardId: string): Promise<void> {

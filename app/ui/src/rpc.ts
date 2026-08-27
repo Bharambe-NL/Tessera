@@ -282,6 +282,29 @@ export class Rpc {
     return this.call<ProfileSummary>('profile.get');
   }
 
+  /** Doc 11 section 6's First run, asked of the core rather than inferred. */
+  firstRun() {
+    return this.call<FirstRun>('profile.first_run');
+  }
+
+  setPack(code: string) {
+    return this.call<{ active_pack: string }>('profile.set_pack', { code });
+  }
+
+  watchFolder(folder: {
+    root: string;
+    label: string;
+    sensitive?: boolean;
+    provider_embeddings?: boolean;
+  }) {
+    return this.call<{
+      folder_id: string;
+      label: string;
+      sensitive: boolean;
+      text_leaves_machine: boolean;
+    }>('profile.watch_folder', folder);
+  }
+
   /**
    * Hand a key to the keychain. The secret crosses this boundary once, going in,
    * and nothing ever sends it back.
@@ -458,6 +481,17 @@ export interface Diagnostics {
   sources_stale: number;
   concepts: number;
   events: number;
+}
+
+/** Doc 11 section 6's First run. What is set up, and what is still missing. */
+export interface FirstRun {
+  needs_setup: boolean;
+  has_key: boolean;
+  boards: number;
+  folders: number;
+  packs: string[];
+  active_pack: string;
+  key_refs: string[];
 }
 
 export interface ProfileSummary {

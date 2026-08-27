@@ -25,6 +25,19 @@ export async function freshCore(page: Page): Promise<void> {
   if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
 }
 
+/**
+ * A core with nothing in its keychain, which is what a fresh install is.
+ *
+ * `freshCore` seeds a key, because every other test needs a core that can
+ * answer. The first run screen exists for the state where there is none, and a
+ * test that used the seeded core would drive a screen the product would never
+ * have shown.
+ */
+export async function keylessCore(page: Page): Promise<void> {
+  const response = await page.request.post('/reset?keyless=1');
+  if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
+}
+
 export async function useCore(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const invoke = async (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
