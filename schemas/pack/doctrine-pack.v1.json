@@ -331,7 +331,7 @@
     },
     "learning_templates": {
       "type": "object",
-      "description": "Doc 14 section 3.2: the shapes a curriculum takes, how many correct checks count as mastery, and the intake questions a domain asks are doctrine rather than substrate.",
+      "description": "Doc 14 section 3.2 and doc 17 section 8: the shapes a curriculum takes, how many correct checks count as mastery, the intake questions a domain asks, and what the learning system needs to decide a concept is learned rather than seen. Doctrine rather than substrate, so a pack decides them and no code does.",
       "properties": {
         "curriculum_shapes": {
           "type": "array",
@@ -341,12 +341,180 @@
         },
         "mastery_threshold": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "Doc 14 section 3.6: how many correct checks in a session make a concept mastered. A count, and distinct from `mastered_at`, which is a score on the concept row itself."
         },
         "intake_questions": {
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "mastered_at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Doc 17 section 2.3: `mastered` means mastery at or above the doctrine threshold, default 0.8. A score between 0 and 1 on the concept, which is why it is not `mastery_threshold`: that one counts checks in one session and this one judges a person's standing with a concept over every session they have had."
+        },
+        "decay_window_days": {
+          "type": "object",
+          "required": [
+            "default"
+          ],
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Doc 17 sections 2.3 and 8: how long a mastered concept stays mastered without new evidence, per domain, with `default` for the domains a pack does not name. Computed from `last_evidence_at` when the map is read, so nothing has to run while the app is closed for a concept to go stale."
+        },
+        "check_templates": {
+          "type": "array",
+          "description": "Doc 17 sections 4 and 8: the shape of a check at each level. Level 1 recall, 2 explain, 3 apply, 4 discriminate, which is the mapping recorded when the exercise kinds grew rather than a rename of what shipped.",
+          "items": {
+            "type": "object",
+            "required": [
+              "level",
+              "kinds"
+            ],
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "recall",
+                    "apply",
+                    "contrast",
+                    "trace",
+                    "explain",
+                    "discriminate"
+                  ]
+                }
+              },
+              "options": {
+                "type": "integer",
+                "minimum": 2
+              }
+            }
+          }
+        },
+        "quality_ranking": {
+          "type": "object",
+          "description": "Doc 17 section 8: how a pack ranks sources for learning, which is not how it ranks them for answering. A lesson prefers a primary source that explains; an answer prefers the source with authority over the claim, and `source_hierarchy` is that one.",
+          "properties": {
+            "classes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Source classes best first."
+            },
+            "issuer_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Issuers a lesson reaches for first."
+            },
+            "prefer_primary": {
+              "type": "boolean"
+            }
+          }
+        },
+        "unverified_explanations": {
+          "type": "object",
+          "description": "Doc 17 section 8: whether the tutor may explain in its own words in the panel, and what it may never explain that way. Finance allows it and never for numbers or obligations, because an unverified figure is the one thing the whole build exists to stop.",
+          "required": [
+            "allowed"
+          ],
+          "properties": {
+            "allowed": {
+              "type": "boolean"
+            },
+            "never_for": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "numbers",
+                  "obligations",
+                  "dates",
+                  "definitions"
+                ]
+              }
+            }
+          }
+        },
+        "learning_paths": {
+          "type": "array",
+          "description": "Doc 17 section 2.1's LearningPath, shipped in a pack or authored. Loading one creates or links the concepts, creates the edges as confirmed, and offers a mission.",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "title",
+              "concepts"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "mission_template": {
+                "type": "string"
+              },
+              "concepts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "concept_term"
+                  ],
+                  "properties": {
+                    "concept_term": {
+                      "type": "string"
+                    },
+                    "prerequisite_terms": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "level_hint": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 4
+                    }
+                  }
+                }
+              },
+              "sources_hint": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "title"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "locator": {
+                      "type": "string"
+                    },
+                    "class": {
+                      "$ref": "tessera:entity/common.v1#/$defs/source_class"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

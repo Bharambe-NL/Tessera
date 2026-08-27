@@ -390,7 +390,62 @@
       "landscape",
       "edge cases"
     ],
-    "mastery_threshold": 2
+    "mastery_threshold": 2,
+    "mastered_at": 0.8,
+    "decay_window_days": {
+      "default": 180,
+      "capital": 120,
+      "liquidity": 120,
+      "reporting": 90
+    },
+    "check_templates": [
+      {
+        "level": 1,
+        "kinds": [
+          "recall"
+        ],
+        "options": 4
+      },
+      {
+        "level": 2,
+        "kinds": [
+          "explain"
+        ],
+        "options": 4
+      },
+      {
+        "level": 3,
+        "kinds": [
+          "apply",
+          "trace"
+        ],
+        "options": 4
+      },
+      {
+        "level": 4,
+        "kinds": [
+          "discriminate",
+          "contrast"
+        ],
+        "options": 4
+      }
+    ],
+    "quality_ranking": {
+      "classes": [
+        "regulatory",
+        "local_document",
+        "web",
+        "page"
+      ],
+      "prefer_primary": true
+    },
+    "unverified_explanations": {
+      "allowed": true,
+      "never_for": [
+        "numbers",
+        "obligations"
+      ]
+    }
   },
   "rulings": [],
   "reader_extract_first": [

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:output/learning-planner.v1",
+  "title": "Learning Planner output",
+  "description": "Doc 17 section 7. Harness rules: every proposed concept and edge is proposed and never applied, so nothing here writes a confirmed row; the number of new concepts is at most the packet's max_new_concepts; every term in proposed_edges is either on the map or in proposed_concepts; frontier and level come from the deterministic rules rather than from a model, and an output that names them differently is overwritten rather than trusted.",
+  "type": "object",
+  "required": ["schema_version", "agent_id", "run_id"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "proposed_concepts": {
+      "type": "array",
+      "description": "Doc 17 section 7: decomposition of a new topic, constrained to the concepts on the map plus at most three new ones. Proposed, never applied: doc 01 section 4.10's rule is that an agent proposes and a person confirms.",
+      "items": {
+        "type": "object",
+        "required": ["term"],
+        "properties": {
+          "term": { "type": "string", "minLength": 1 },
+          "why": { "type": "string", "description": "One line the learner reads before confirming." },
+          "prerequisite_terms": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "proposed_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from_term", "to_term", "relation"],
+        "properties": {
+          "from_term": { "type": "string" },
+          "to_term": { "type": "string" },
+          "relation": { "enum": ["prerequisite_of", "part_of", "contrasts_with"] },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "frontier": {
+      "type": "array",
+      "description": "Doc 17 section 3: the lowest prerequisite level where a rated concept is still unverified. Computed by the rule, carried here so the event and the Map read one answer.",
+      "items": { "$ref": "tessera:entity/common.v1#/$defs/ulid" }
+    },
+    "lesson": {
+      "type": ["object", "null"],
+      "required": ["targets", "level"],
+      "properties": {
+        "targets": { "type": "array", "items": { "$ref": "tessera:entity/common.v1#/$defs/ulid" } },
+        "include_prerequisites": { "type": "array", "items": { "$ref": "tessera:entity/common.v1#/$defs/ulid" } },
+        "level": { "type": "integer", "minimum": 1, "maximum": 4 }
+      }
+    },
+    "declined_reason": { "type": ["string", "null"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "caveats": { "type": "array", "items": { "type": "string" } }
+  }
+}
