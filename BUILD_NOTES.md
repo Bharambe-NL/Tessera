@@ -3348,6 +3348,39 @@ fixture that moved.
 
 ---
 
+### BN-133 Twenty concepts and four learners who never see each other's answers
+
+**Spec** 17 section 10.
+
+**Built** 2026-08-27, M16 13-eval leg A, first half.
+
+**The split, and why.** The plan's step is the corpus, the eval leg and three metrics. The corpus
+half lands alone because it is ground truth and the leg is a driver: a driver written first would
+have had nothing to be scored against, and the two together would have been one commit where the
+thing being measured and the thing measuring it arrived at once with no way to tell which was wrong.
+
+**Prerequisite depth is a fact about how the path was built.** Every concept at depth n names one or
+two prerequisites at depth n minus one, so the ground truth is construction rather than a graph walk
+done afterwards and hoped to agree. Four roots, a widening middle, four at the top: a chain of twenty
+would make the frontier trivial to guess and a flat twenty would make it meaningless.
+
+**A learner says two things and the product hears one.** The ratings are claims the product reads;
+the answers are what the policy can actually get right, per concept and per level, and nothing in the
+product ever sees them. That separation is what lets a run be scored against something other than its
+own output. The overconfident rater claims to be able to apply all twenty and can answer only the
+four at the bottom, which is exactly the case doc 17 section 3's placement flow is written against.
+
+**The expected frontier is computed from the ratings and checked both ways.** The corpus records what
+doc 17 section 3's rule should pick before any check is answered, and the generator guard recomputes
+it from the ratings rather than trusting the field. When the leg lands, the Planner's own frontier is
+compared against this, and a disagreement is one of the two being wrong rather than a number with
+nothing behind it.
+
+**Verified** 85 generator guards, the corpus rebuilt at 20 concepts and 24 edges, the workspace tests
+and the bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings

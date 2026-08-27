@@ -18,6 +18,7 @@ from . import edge_cases, harness, mess, retrieval, writer
 from . import memory as memory_mod
 from . import questions as questions_mod
 from . import snapshots as snapshots_mod
+from . import learning as learning_mod
 from . import vault as vault_mod
 from .facts import generate_facts
 from .rng import GENERATOR_VERSION
@@ -63,6 +64,11 @@ def build(seed: int, out: Path, snapshot: str | None = None) -> dict:
     # families are a second set beside it, as the breadth questions already are.
     facts.extend(vault_truth.facts)
 
+    # Doc 17 section 10's synthetic path and its four learners. Independent of
+    # everything above: a path is prerequisite structure and the learners are
+    # policies, so neither reads a fact or a document.
+    learning_truth = learning_mod.generate(seed)
+
     # Memory runs after boards because it plants cards on them.
     memory_truth = memory_mod.build(seed, facts, documents, question_set, board_set)
     snaps = snapshots_mod.build(seed, documents, facts)
@@ -96,6 +102,7 @@ def build(seed: int, out: Path, snapshot: str | None = None) -> dict:
         breadth=breadth_set,
         boards=board_set,
         vault=vault_truth,
+        learning=learning_truth,
         snapshots=snaps,
         memory_truth=memory_truth,
         transformations=transformations,

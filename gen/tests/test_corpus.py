@@ -18,6 +18,7 @@ import pytest
 from tessera_gen import boards as boards_mod
 from tessera_gen import corpus as corpus_mod
 from tessera_gen import edge_cases, harness, matchers, mess
+from tessera_gen import learning as learning_mod
 from tessera_gen import questions as questions_mod
 from tessera_gen import snapshots as snapshots_mod
 from tessera_gen import vault as vault_mod
@@ -721,6 +722,71 @@ def test_every_expected_visual_is_a_shape_the_canvas_draws(corpus: Path) -> None
     assert expected <= questions_mod.DRAWABLE_VISUALS, sorted(
         expected - questions_mod.DRAWABLE_VISUALS
     )
+
+
+# -------------------------------------------------------------- learning --
+
+
+def test_the_learning_path_is_twenty_concepts_that_can_be_ordered(corpus: Path) -> None:
+    """Doc 17 section 10: "a synthetic path of 20 concepts"."""
+    truth = json.loads((corpus / "learning.json").read_text(encoding="utf-8"))
+    path = truth["path"]
+    assert len(path) == learning_mod.PATH_SIZE
+
+    by_id = {c["concept_id"]: c for c in path}
+    assert len(by_id) == len(path), "two concepts share an id"
+    assert len({c["term"] for c in path}) == len(path), "two concepts share a term"
+
+    # Every prerequisite exists, and sits strictly above what it gates. A path
+    # with a cycle in its ground truth would score the Planner against an order
+    # nobody could learn in.
+    for concept in path:
+        for prerequisite in concept["prerequisite_ids"]:
+            assert prerequisite in by_id, f"{concept['concept_id']} needs a concept nobody wrote"
+            assert by_id[prerequisite]["depth"] < concept["depth"]
+
+    # Something at the bottom to start from, and something at the top that
+    # needed everything under it.
+    depths = {c["depth"] for c in path}
+    assert 0 in depths and max(depths) >= 2
+
+
+def test_every_scripted_learner_says_what_it_claims_and_what_it_can_answer(corpus: Path) -> None:
+    """Doc 17 section 10's four policies. The ratings are what the product sees
+    and the answers are what it never does, which is what lets a run be scored
+    against something other than its own output."""
+    truth = json.loads((corpus / "learning.json").read_text(encoding="utf-8"))
+    path = truth["path"]
+    by_id = {c["concept_id"]: c for c in path}
+    learners = {learner["policy"]: learner for learner in truth["learners"]}
+    assert set(learners) == {"always_right", "right_below_three", "random", "overconfident"}
+
+    for learner in truth["learners"]:
+        assert set(learner["ratings"]) == set(by_id), f"{learner['learner_id']} skipped a concept"
+        assert all(0 <= r <= 3 for r in learner["ratings"].values())
+
+        # Doc 17 section 3's rule, computed from the ratings: the shallowest
+        # depth the learner claims, and everything at it.
+        claimed = [c for c in path if learner["ratings"][c["concept_id"]] >= 2]
+        expected = (
+            sorted(
+                c["concept_id"] for c in claimed if c["depth"] == min(x["depth"] for x in claimed)
+            )
+            if claimed
+            else []
+        )
+        assert learner["expected_frontier"] == expected
+
+    # The overconfident rater claims everything and can answer only the bottom,
+    # which is the case doc 17 section 3 is written against.
+    over = learners["overconfident"]
+    assert all(r == 3 for r in over["ratings"].values())
+    for concept_id, levels in over["answers"].items():
+        assert bool(levels) == (by_id[concept_id]["depth"] == 0)
+
+    # And the one who is right below level 3 is exactly that.
+    below = learners["right_below_three"]
+    assert all(sorted(levels) == [1, 2] for levels in below["answers"].values())
 
 
 def test_a_sketch_records_the_structure_it_draws(corpus: Path) -> None:
