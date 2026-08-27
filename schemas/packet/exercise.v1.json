@@ -164,8 +164,40 @@
               "recall",
               "apply",
               "contrast",
-              "trace"
+              "trace",
+              "explain",
+              "discriminate"
             ]
+          }
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Doc 17 section 4: the level this exercise is asked at. When set, the kinds come from the pack's check template for that level and every item is written at it. Absent when nothing asked for a level, which is what `exercise.create` does from a board."
+        },
+        "levels": {
+          "type": "array",
+          "description": "The pack's `check_templates`, carried so the agent can say which level a kind sits at without holding a mapping of its own. Doctrine is data: a pack that declares three levels has three, and the agent leaves the level off an item whose kind no level claims.",
+          "items": {
+            "type": "object",
+            "required": [
+              "level",
+              "kinds"
+            ],
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "items_per_card_max": {

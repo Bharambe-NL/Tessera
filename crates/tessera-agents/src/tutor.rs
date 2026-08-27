@@ -368,7 +368,8 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
         dropped.push("The check question could not be traced to a card, so it was dropped.".into());
         return (out, dropped);
     }
-    if exercise::leaks_truth(&item, &cards) {
+    let concepts = packet["concepts"].as_array().cloned().unwrap_or_default();
+    if exercise::leaks_truth(&item, &cards, &concepts) {
         dropped.push("The check question had a second right answer, so it was dropped.".into());
         return (out, dropped);
     }

@@ -3447,6 +3447,70 @@ the workspace tests, clippy at `-D warnings`, and the bundle round trip whole.
 
 ---
 
+### BN-136 The exercise ladder, with the pack holding the mapping
+
+**Spec** 17 sections 4 and 9, doc 08 section 5.
+
+**What landed.** Exercise items gain doc 17's `level: 1..4`, the kind enum grows additively with
+`explain` and `discriminate`, the distractor rule gains its level 4 clause, and `exercise.create`
+takes a level so a lesson can ask at the rung a learner stands on.
+
+**The level to kind mapping is doctrine and never code.** The plan recorded 1 recall, 2 explain, 3
+apply, 4 discriminate, and the temptation was to write those four lines into the agent. They live in
+the pack instead, as the `check_templates` 13a-iii already added, and the packet carries them. The
+agent asks the ladder two questions: which kinds does level n want, and which level does kind k sit
+at. A pack that declares three levels has three, and an item whose kind no level claims carries no
+level at all rather than a number invented to fill the field. `general`, `finance-eu` and
+`finance-eu-synthetic` each put `trace` at 3 beside `apply` and `contrast` at 4 beside
+`discriminate`, which is a pack's choice to make and not the agent's to assume.
+
+**The rung asked for beats the rung the kind sits at.** A pack may list one kind at two levels, and
+the learner was put on one of them. The tutor's next check moves from where they stood, so the
+asked level wins and the kind's own level is the fallback for an exercise nobody asked a level of.
+Broken on purpose: dropping the asked level leaves the kind mapping standing and the unit test
+fails, which is the point of testing the two paths separately.
+
+**The level 4 distractor rule needed the concepts, not the cards.** Doc 17 asks that a level 4
+distractor not be a true statement about a neighbouring concept. A discriminate item puts the
+neighbour on the page by design, so the rule cannot be "does not mention the neighbour": that would
+drop every level 4 item there is. What it checks is the neighbour's own definition, from the
+concepts the packet already carried, and only for concepts the item does not name. A neighbour with
+no definition contributes nothing, because a term is a name and not a claim.
+
+**A null is not an absent field.** The first version wrote `"level": null` into the packet when
+nothing asked for a level. The packet schema types it as an integer, so every exercise on every
+board was refused at the boundary until the key was left out entirely. Two end to end tests caught
+it before anything was committed, which is fail closed at the Verifier working one layer down.
+
+**A surprising number split before a fix was built.** The first exercise leg reported `levels asked:
+1, 2` while records existed at all four. Splitting by dimension: fifteen exercises, four with a card
+worth testing, and those four happened to be the boards the rotation had put on rungs 1 and 2. The
+cause was the sample, not the ladder. The leg now filters to boards with an eligible card before
+assigning a rung, and says how many of its boards had one.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --grounded --exercise --limit
+60`. Fifteen items over four rungs.
+
+| Metric | Threshold | Result |
+|---|---|---|
+| `exercise_traceability` | 1.00 | 1.000 |
+| `exercise_distractor_leakage` | 0.0 | 0.000, levels asked 1, 2, 3, 4 |
+| `exercise_level_agreement` | 1.00 | 1.000 |
+
+Items per rung: 6 recall, 3 explain, 3 apply, 3 discriminate, each matching the kind its pack puts
+at that level.
+
+**What the mock cannot say.** It writes the same item at every rung and only the wording moves, so
+this measures whether the ladder is plumbed and never whether a discriminate question is harder than
+a recall one. That second thing needs a model, and it sits with doc 08 section 12's "answerable by a
+second model" on the spend list.
+
+**Verified** Full battery green: workspace tests, clippy at `-D warnings`, fmt, style lint, 88
+generator guards with both new ones broken on purpose, 65 Playwright tests, the exercise leg above,
+and the 20 board bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings

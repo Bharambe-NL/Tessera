@@ -82,7 +82,8 @@ impl Agent for Exercise {
         let (traceable, untraceable) = partition(&drafted, |item| traceable(item, &cards, &scope));
 
         advance(ctx, "checking_distractors")?;
-        let (kept, leaking) = partition(&traceable, |item| !leaks_truth(item, &cards));
+        let concepts = packet["concepts"].as_array().cloned().unwrap_or_default();
+        let (kept, leaking) = partition(&traceable, |item| !leaks_truth(item, &cards, &concepts));
 
         advance(ctx, "emitting")?;
         let max_items = packet["effort_budget"]["max_items"].as_u64().unwrap_or(8) as usize;
@@ -138,7 +139,7 @@ fn advance(ctx: &mut AgentContext<'_>, state: &str) -> Result<(), Failure> {
 /// is off so a model cannot answer with a field nobody reads, and the option
 /// count is fixed so the template's choice reaches the prompt as a constraint
 /// rather than as a sentence the model may round.
-fn draft_schema(options: usize) -> Value {
+fn draft_schema(options: usize, kinds: &[&str]) -> Value {
     json!({
         "type": "object",
         "required": ["items"],
@@ -153,7 +154,7 @@ fn draft_schema(options: usize) -> Value {
                     "additionalProperties": false,
                     "properties": {
                         "id": { "type": "string" },
-                        "kind": { "enum": ["recall", "apply", "contrast", "trace"] },
+                        "kind": { "enum": kinds },
                         "prompt": { "type": "string" },
                         "options": {
                             "type": "array",
@@ -192,14 +193,23 @@ impl Exercise {
         packet: &Value,
         cards: &[Value],
     ) -> Result<Vec<Value>, Failure> {
-        let kinds: Vec<&str> = packet["template"]["item_kinds"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect();
-        let per_card = packet["template"]["items_per_card_max"].as_u64().unwrap_or(2);
-        let options = packet["template"]["options"].as_u64().unwrap_or(4);
+        let template = &packet["template"];
+        // Doc 17 section 4: when a level is asked for, that level's kinds are
+        // the only ones on offer, and the pack says which those are. When none
+        // is asked for the template's own kinds stand, which is what a board
+        // asking for an exercise of its own has always done.
+        let asked = template["level"].as_u64().map(|l| l as u8);
+        let kinds: Vec<&str> = match asked.and_then(|level| kinds_for(template, level)) {
+            Some(kinds) => kinds,
+            None => template["item_kinds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect(),
+        };
+        let per_card = template["items_per_card_max"].as_u64().unwrap_or(2);
+        let options = template["options"].as_u64().unwrap_or(4);
 
         let mut prompt = String::new();
         prompt.push_str(&format!(
@@ -212,6 +222,11 @@ impl Exercise {
             prompt.push_str(&format!("Phrase every question for the audience: {audience}\n"));
         }
         prompt.push_str(&kind_guidance(&kinds));
+        if let Some(level) = asked {
+            prompt.push_str(&format!(
+                "Every question checks the same understanding at level {level} of four.\n"
+            ));
+        }
         prompt.push_str("\nThe cards:\n");
 
         for card in cards {
@@ -243,7 +258,7 @@ impl Exercise {
             prompt.push_str(&format!("\nTerms this board uses: {}\n", concepts.join(", ")));
         }
 
-        let schema = draft_schema(options as usize);
+        let schema = draft_schema(options as usize, &kinds);
         let request = CompletionRequest::new(ctx.model_for("exercise"), "exercise")
             .system(format!("{SYSTEM}\n\n{}", prompts::json_only(&schema)))
             .user(prompt)
@@ -261,8 +276,71 @@ impl Exercise {
             recoverable: true,
         })?;
 
-        Ok(parsed["items"].as_array().cloned().unwrap_or_default())
+        let mut items = parsed["items"].as_array().cloned().unwrap_or_default();
+        for item in &mut items {
+            match stamped_level(template, asked, item["kind"].as_str()) {
+                Some(level) => item["level"] = json!(level),
+                None => {
+                    if let Some(object) = item.as_object_mut() {
+                        object.remove("level");
+                    }
+                }
+            }
+        }
+        Ok(items)
     }
+}
+
+/// Doc 17 section 4's rung for one item, written down rather than inferred
+/// later.
+///
+/// The level asked for wins, because that is the rung the learner was put on
+/// and a pack may list one kind at two levels. Failing that the pack says which
+/// level the kind the model chose sits at. Failing that the item carries no
+/// level: a pack that declares no ladder has none, and a number invented here
+/// would be a fact about nothing that the tutor would then adapt from.
+fn stamped_level(template: &Value, asked: Option<u8>, kind: Option<&str>) -> Option<u8> {
+    asked.or_else(|| level_of(template, kind?))
+}
+
+/// The kinds a level asks for, from the pack's ladder the packet carries.
+///
+/// Nothing when the pack names no kinds for that level, so the caller falls
+/// back to the template's own kinds instead of asking for an empty enum.
+fn kinds_for(template: &Value, level: u8) -> Option<Vec<&str>> {
+    let kinds: Vec<&str> = template["levels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|t| t["level"].as_u64() == Some(level as u64))?["kinds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    (!kinds.is_empty()).then_some(kinds)
+}
+
+/// The level a kind sits at, which is doctrine and never code.
+///
+/// The lowest level claiming the kind, because a pack may list `trace` at more
+/// than one and the ladder reads upwards: the first rung that asks for it is
+/// where a learner meets it.
+fn level_of(template: &Value, kind: &str) -> Option<u8> {
+    template["levels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| {
+            t["kinds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|k| k.as_str() == Some(kind))
+        })
+        .filter_map(|t| t["level"].as_u64())
+        .min()
+        .map(|l| l as u8)
 }
 
 /// Doc 08 section 8 point 2, said once rather than left to the model to infer.
@@ -274,6 +352,12 @@ fn kind_guidance(kinds: &[&str]) -> String {
             "apply" => "apply: give a short scenario and ask which rule applies.\n",
             "contrast" => "contrast: use two things the card sets against each other.\n",
             "trace" => "trace: ask which source supports a claim. The options are source titles.\n",
+            // Doc 17 section 4's two new rungs.
+            "explain" => "explain: ask why or how, and let the options be explanations.\n",
+            "discriminate" => {
+                "discriminate: take two near cases and ask which one differs and why. The wrong \
+                 options must not be true of either case, including the neighbouring one.\n"
+            }
             _ => "",
         });
     }
@@ -445,22 +529,32 @@ pub fn traceable(item: &Value, cards: &[Value], scope: &[&str]) -> bool {
         .all(|n| ordinals.contains(&n))
 }
 
-/// Doc 08 section 5's distractor rule.
+/// Doc 08 section 5's distractor rule, with doc 17 section 4's addition.
 ///
 /// A distractor that is a true statement from another card in scope is a second
 /// right answer, and a reader who knows the material has to guess between them.
 /// Doc 08 section 12 measures this as "distractor truth leakage 0".
-pub fn leaks_truth(item: &Value, cards: &[Value]) -> bool {
+///
+/// Doc 17 section 4 adds one line for level 4: "not a true statement about a
+/// neighbouring concept". A discriminate item is built out of two near cases,
+/// so the neighbour is on the page by design, and a distractor that quietly
+/// restates what the neighbour is gives the reader a second thing they can
+/// defend. The concepts the packet carries are what a neighbour is measured
+/// against, and the one the item names is not its own neighbour.
+pub fn leaks_truth(item: &Value, cards: &[Value], concepts: &[Value]) -> bool {
     let Some(answer_id) = item["answer_id"].as_str() else {
         return true;
     };
     let source = item["source_card_id"].as_str().unwrap_or_default();
 
-    let others: Vec<String> = cards
+    let mut truths: Vec<String> = cards
         .iter()
         .filter(|c| c["card_id"].as_str() != Some(source))
         .map(normalised)
         .collect();
+    if item["level"].as_u64() == Some(4) {
+        truths.extend(neighbour_definitions(item, concepts));
+    }
 
     for option in item["options"].as_array().into_iter().flatten() {
         if option["id"].as_str() == Some(answer_id) {
@@ -473,11 +567,31 @@ pub fn leaks_truth(item: &Value, cards: &[Value]) -> bool {
         if text.split_whitespace().count() < 3 {
             continue;
         }
-        if others.iter().any(|other| other.contains(&text)) {
+        if truths.iter().any(|other| other.contains(&text)) {
             return true;
         }
     }
     false
+}
+
+/// What the packet says is true of the concepts this item does not check.
+///
+/// A concept with no definition contributes nothing: its term alone is a name,
+/// and a distractor naming the neighbour is what a discriminate item is for.
+fn neighbour_definitions(item: &Value, concepts: &[Value]) -> Vec<String> {
+    let own: Vec<&str> = item["concept_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    concepts
+        .iter()
+        .filter(|c| !own.contains(&c["concept_id"].as_str().unwrap_or_default()))
+        .filter_map(|c| c["definition"].as_str())
+        .map(flatten)
+        .filter(|d| !d.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -569,7 +683,8 @@ mod tests {
                 "2.5 per cent",
                 "the leverage ratio is 3 per cent"
             ),
-            &cards
+            &cards,
+            &[]
         ));
         assert!(!leaks_truth(
             &item(
@@ -577,7 +692,8 @@ mod tests {
                 "2.5 per cent",
                 "the buffer was withdrawn in 2019"
             ),
-            &cards
+            &cards,
+            &[]
         ));
     }
 
@@ -591,7 +707,133 @@ mod tests {
         ];
         assert!(!leaks_truth(
             &item("01ARZ3NDEKTSV4RRFFQ69G5FAV", "2.5 per cent", "no"),
-            &cards
+            &cards,
+            &[]
         ));
+    }
+    /// The pack's ladder, as the packet carries it.
+    fn ladder() -> Value {
+        json!({
+            "id": "t",
+            "item_kinds": ["recall", "apply"],
+            "levels": [
+                { "level": 1, "kinds": ["recall"] },
+                { "level": 2, "kinds": ["explain"] },
+                { "level": 3, "kinds": ["apply", "trace"] },
+                { "level": 4, "kinds": ["discriminate", "contrast"] },
+            ],
+        })
+    }
+
+    #[test]
+    fn the_pack_says_which_kinds_a_level_asks_for_and_which_level_a_kind_sits_at() {
+        let template = ladder();
+        assert_eq!(kinds_for(&template, 2), Some(vec!["explain"]));
+        assert_eq!(kinds_for(&template, 4), Some(vec!["discriminate", "contrast"]));
+        assert_eq!(level_of(&template, "recall"), Some(1));
+        assert_eq!(level_of(&template, "discriminate"), Some(4));
+        // A kind no level claims has no level, and a level the pack never
+        // declared has no kinds. Both are nothing rather than a guess.
+        assert_eq!(level_of(&template, "sketch"), None);
+        assert_eq!(kinds_for(&json!({ "levels": [] }), 1), None);
+    }
+
+    #[test]
+    fn the_rung_asked_for_wins_over_the_one_the_kind_sits_at() {
+        // A pack may list one kind at two levels, and `trace` at 3 and 4 is the
+        // shape that makes the difference visible: the learner was put on rung
+        // 4, and the tutor's next check moves from where they stood.
+        let template = json!({
+            "levels": [
+                { "level": 3, "kinds": ["apply", "trace"] },
+                { "level": 4, "kinds": ["discriminate", "trace"] },
+            ],
+        });
+        assert_eq!(stamped_level(&template, Some(4), Some("trace")), Some(4));
+        // Nothing asked, so the pack's lowest rung claiming the kind stands.
+        assert_eq!(stamped_level(&template, None, Some("trace")), Some(3));
+        // A kind no level claims, and a pack with no ladder at all.
+        assert_eq!(stamped_level(&template, None, Some("sketch")), None);
+        assert_eq!(stamped_level(&json!({}), None, Some("recall")), None);
+    }
+
+    #[test]
+    fn a_level_four_distractor_that_is_true_of_a_neighbouring_concept_leaks() {
+        // Doc 17 section 4: "not a true statement about a neighbouring
+        // concept". A discriminate item puts the neighbour on the page by
+        // design, so a distractor restating what the neighbour is gives the
+        // reader a second answer they can defend.
+        let cards = vec![card("01ARZ3NDEKTSV4RRFFQ69G5FAV", "The buffer is 2.5 per cent.")];
+        let concepts = vec![
+            json!({
+                "concept_id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+                "term": "leverage ratio",
+                "definition": "The leverage ratio is capital over total exposure, and it is not risk weighted.",
+            }),
+            json!({
+                "concept_id": "01D78XYFJ1PRM1WPBCBT3VHMNV",
+                "term": "capital buffer",
+                "definition": "The buffer is 2.5 per cent of risk weighted assets.",
+            }),
+        ];
+
+        let mut leaking = item(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "2.5 per cent",
+            "capital over total exposure",
+        );
+        leaking["level"] = json!(4);
+        leaking["kind"] = json!("discriminate");
+        leaking["concept_ids"] = json!(["01D78XYFJ1PRM1WPBCBT3VHMNV"]);
+        assert!(leaks_truth(&leaking, &cards, &concepts));
+
+        // The same distractor at level 1 is only measured against the cards,
+        // which is doc 08's rule and all it ever was.
+        let mut level_one = leaking.clone();
+        level_one["level"] = json!(1);
+        assert!(!leaks_truth(&level_one, &cards, &concepts));
+
+        // A statement about the concept the item itself checks is not a
+        // neighbour's truth. It is the card's, and the card rule already has it.
+        let mut own = leaking.clone();
+        own["concept_ids"] = json!(["01BX5ZZKBKACTAV9WEVGEMMVRZ"]);
+        assert!(!leaks_truth(&own, &cards, &concepts));
+    }
+
+    #[test]
+    fn naming_the_neighbour_is_what_a_discriminate_item_is_for() {
+        // The neighbour's term alone is a name, not a claim about it, and a
+        // rule that dropped items for naming the thing they contrast would drop
+        // every level 4 item there is.
+        let cards = vec![card("01ARZ3NDEKTSV4RRFFQ69G5FAV", "The buffer is 2.5 per cent.")];
+        let concepts = vec![json!({
+            "concept_id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+            "term": "leverage ratio",
+            "definition": "The leverage ratio is capital over total exposure.",
+        })];
+        let mut named = item(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "2.5 per cent",
+            "the leverage ratio decides it instead",
+        );
+        named["level"] = json!(4);
+        assert!(!leaks_truth(&named, &cards, &concepts));
+    }
+
+    #[test]
+    fn a_neighbour_with_no_definition_says_nothing_that_can_leak() {
+        let cards = vec![card("01ARZ3NDEKTSV4RRFFQ69G5FAV", "The buffer is 2.5 per cent.")];
+        let concepts = vec![json!({
+            "concept_id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+            "term": "leverage ratio",
+            "definition": Value::Null,
+        })];
+        let mut level_four = item(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "2.5 per cent",
+            "capital over total exposure",
+        );
+        level_four["level"] = json!(4);
+        assert!(!leaks_truth(&level_four, &cards, &concepts));
     }
 }

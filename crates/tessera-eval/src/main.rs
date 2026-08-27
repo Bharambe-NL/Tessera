@@ -302,6 +302,13 @@ struct ExerciseRecord {
     exercise_id: Option<String>,
     items: Value,
     cards: Value,
+    /// The concepts the packet carried. Doc 17 section 4's level 4 rule is
+    /// about a neighbouring concept, so the scorer cannot re-check it from the
+    /// cards alone.
+    concepts: Value,
+    /// The rung this exercise was asked at, so a level 4 denominator is
+    /// readable rather than inferred from the kinds the items came back with.
+    level: Option<u8>,
     dropped: usize,
 }
 
@@ -313,7 +320,12 @@ struct ExerciseRecord {
 const EXERCISE_BOARDS_PER_WORKER: usize = 5;
 
 /// Read back what the exercise wrote, so the scorer measures the stored rows.
-fn exercise_record(core: &Core, board_id: &str, outcome: &tessera_core::ExerciseOutcome) -> ExerciseRecord {
+fn exercise_record(
+    core: &Core,
+    board_id: &str,
+    level: Option<u8>,
+    outcome: &tessera_core::ExerciseOutcome,
+) -> ExerciseRecord {
     let items = outcome
         .exercise_id
         .as_deref()
@@ -335,6 +347,10 @@ fn exercise_record(core: &Core, board_id: &str, outcome: &tessera_core::Exercise
         exercise_id: outcome.exercise_id.clone(),
         items,
         cards: json!(tessera_store::repo::cards_for_exercise(&core.store, board_id, 8).unwrap_or_default()),
+        concepts: json!(
+            tessera_store::repo::concepts_for_packet(&core.store, &core.profile_id, 20).unwrap_or_default()
+        ),
+        level,
         dropped: outcome.dropped,
     }
 }
@@ -633,25 +649,43 @@ fn main() -> std::process::ExitCode {
                 // worker filled is a board with cards worth testing, so this is
                 // the widest sample the run can take for free.
                 if args.exercise {
-                    let taken: Vec<String> = boards_seen
+                    // Doc 08 section 2: only cards that are done or warn
+                    // flagged are eligible, so a board whose cards were all
+                    // blocked has nothing to test. Sampling before that filter
+                    // spent four of five slots on boards that returned nothing,
+                    // and the rungs those slots carried never got a
+                    // denominator.
+                    let eligible: Vec<String> = boards_seen
                         .iter()
-                        .take(EXERCISE_BOARDS_PER_WORKER)
+                        .filter(|b| {
+                            tessera_store::repo::cards_for_exercise(&core.store, b, 8)
+                                .is_ok_and(|c| !c.is_empty())
+                        })
                         .cloned()
                         .collect();
+                    let taken: Vec<String> =
+                        eligible.iter().take(EXERCISE_BOARDS_PER_WORKER).cloned().collect();
                     if boards_seen.len() > taken.len() {
                         // No silent caps: a run that sampled 5 of 40 boards
                         // says so, because "traceability 1.00" over five boards
                         // and over forty are different claims.
                         println!(
-                            "  exercise: sampling {} of this worker's {} boards",
-                            taken.len(),
-                            boards_seen.len()
+                            "  exercise: {} of this worker's {} boards have a card worth testing, \
+                             sampling {}",
+                            eligible.len(),
+                            boards_seen.len(),
+                            taken.len()
                         );
                     }
-                    for board_id in taken {
-                        match core.make_exercise(&board_id, None) {
+                    for (n, board_id) in taken.into_iter().enumerate() {
+                        // Doc 17 section 4's four rungs in turn, so every level
+                        // has a denominator. One board asks at one level: an
+                        // exercise is generated for a board, and asking the same
+                        // board four times would be four calls for one number.
+                        let level = Some((n % 4) as u8 + 1);
+                        match core.make_exercise(&board_id, None, level) {
                             Ok(outcome) => {
-                                let record = exercise_record(&core, &board_id, &outcome);
+                                let record = exercise_record(&core, &board_id, level, &outcome);
                                 if let Ok(mut out) = exercises.lock() {
                                     out.push(record);
                                 }
@@ -1913,8 +1947,15 @@ fn summary_of(prompt: &str) -> Option<Value> {
 /// What this cannot measure is whether a real model writes a question worth
 /// answering: doc 08 section 12's fourth line, "answerable from the source card
 /// by a second model", needs two real models. That is on the spend list.
+///
+/// Doc 17 section 4's ladder reaches it as the kinds the prompt asks for. The
+/// mock writes the same item at every rung and only its wording moves, so a
+/// level 4 run here measures whether the ladder is plumbed and never whether a
+/// discriminate question is harder than a recall one. That second thing needs a
+/// model too.
 fn exercised(request: &CompletionRequest) -> Value {
     let prompt = prompt_of(request);
+    let kind = asked_kind(&prompt);
     let mut items: Vec<Value> = Vec::new();
 
     let mut card_id: Option<String> = None;
@@ -1941,8 +1982,8 @@ fn exercised(request: &CompletionRequest) -> Value {
             }
             items.push(json!({
                 "id": format!("i{}", items.len() + 1),
-                "kind": "recall",
-                "prompt": format!("According to this card, {}", q.trim_end_matches('?')),
+                "kind": kind,
+                "prompt": format!("{} {}", lead_for(&kind), q.trim_end_matches('?')),
                 "options": [
                     { "id": "a", "text": claim },
                     { "id": "b", "text": "This card does not say." },
@@ -1960,6 +2001,34 @@ fn exercised(request: &CompletionRequest) -> Value {
     }
 
     json!({ "items": items })
+}
+
+/// The first kind the packet asked for, read back off the prompt.
+///
+/// The agent writes "of these kinds: recall, apply." and constrains the draft
+/// schema to the same list, so a mock that always answered `recall` would fail
+/// the enum the moment a lesson asked at level 4.
+fn asked_kind(prompt: &str) -> String {
+    prompt
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Write up to"))
+        .and_then(|l| l.split_once("of these kinds: "))
+        .map(|(_, kinds)| kinds.trim_end_matches('.').trim())
+        .and_then(|kinds| kinds.split(',').next())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| "recall".to_string())
+}
+
+fn lead_for(kind: &str) -> &'static str {
+    match kind {
+        "explain" => "Why does this card say",
+        "apply" => "In a case like this one,",
+        "contrast" => "Set against the other case,",
+        "trace" => "Which source supports",
+        "discriminate" => "Of these two near cases,",
+        _ => "According to this card,",
+    }
 }
 
 fn prompt_of(request: &CompletionRequest) -> String {

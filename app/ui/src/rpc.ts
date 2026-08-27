@@ -511,16 +511,19 @@ export interface ConceptRow {
   links: number;
 }
 
-/** One item of an exercise. Doc 08 section 5. */
+/** One item of an exercise. Doc 08 section 5, with doc 17 section 4's ladder. */
 export interface ExerciseItem {
   id: string;
-  kind: 'recall' | 'apply' | 'contrast' | 'trace';
+  kind: 'recall' | 'apply' | 'contrast' | 'trace' | 'explain' | 'discriminate';
   prompt: string;
   options: { id: string; text: string }[];
   answer_id: string;
   explanation: string;
   source_card_id: string;
   citation_ordinals?: number[];
+  concept_ids?: string[];
+  /** Which rung of doc 17 section 4 this item checks, when a level was asked for. */
+  level?: 1 | 2 | 3 | 4;
 }
 
 export interface ExerciseRow {

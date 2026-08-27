@@ -887,6 +887,7 @@ pub async fn run_exercise(
     ctx: &RunContext<'_>,
     board_id: &str,
     audience_id: Option<&str>,
+    level: Option<u8>,
 ) -> Result<ExerciseOutcome, Failure> {
     let policy_snapshot = serde_json::to_value(&ctx.policy).unwrap_or(Value::Null);
 
@@ -926,7 +927,7 @@ pub async fn run_exercise(
 
     let template = ctx.pack.exercise_templates.first();
     let template_id = template.map(|t| t.id.as_str()).unwrap_or("default");
-    let packet = json!({
+    let mut packet = json!({
         "schema_version": "1.0",
         "run_id": run_id,
         "board_id": board_id,
@@ -938,12 +939,26 @@ pub async fn run_exercise(
             "item_kinds": template
                 .map(|t| t.item_kinds.clone())
                 .unwrap_or_else(|| vec!["recall".into(), "apply".into()]),
+            // Doc 17 section 4's ladder, carried as the pack wrote it. The
+            // agent reads which kinds a level asks for and which level a kind
+            // sits at from this, so the mapping stays doctrine.
+            "levels": ctx.pack.learning_templates.check_templates,
             "items_per_card_max": template.and_then(|t| t.items_per_card_max).unwrap_or(2),
-            "options": template.and_then(|t| t.options).unwrap_or(4),
+            "options": level
+                .and_then(|l| level_options(ctx, l))
+                .map(|o| o as usize)
+                .or_else(|| template.and_then(|t| t.options))
+                .unwrap_or(4),
         },
         "audience_id": audience_id,
         "effort_budget": { "max_tokens": 2500, "max_items": 8 }
     });
+    // Absent rather than null when no level was asked for. The packet schema
+    // types this as an integer, and a null is a value that fails at the
+    // boundary rather than a field that is not there.
+    if let Some(level) = level {
+        packet["template"]["level"] = json!(level);
+    }
 
     let drafted = run_agent(
         &tessera_agents::Exercise,
@@ -1007,6 +1022,16 @@ pub async fn run_exercise(
         items: count,
         dropped,
     })
+}
+
+/// The option count a level asks for, when the pack's check template names one.
+fn level_options(ctx: &RunContext<'_>, level: u8) -> Option<u32> {
+    ctx.pack
+        .learning_templates
+        .check_templates
+        .iter()
+        .find(|t| t.level == level)
+        .and_then(|t| t.options)
 }
 
 /// What one exercise run produced. `exercise_id` is absent when the board had

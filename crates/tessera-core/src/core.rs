@@ -840,10 +840,15 @@ impl Core {
     }
 
     /// Generate an exercise from the cards this board already holds. Doc 08.
+    ///
+    /// `level` is doc 17 section 4's rung. A board asking for an exercise of
+    /// its own names none and gets the pack's ordinary template; a lesson names
+    /// the one the learner is working at.
     pub fn make_exercise(
         &mut self,
         board_id: &str,
         audience_id: Option<&str>,
+        level: Option<u8>,
     ) -> Result<pipeline::ExerciseOutcome, CoreError> {
         let policy = self.resolved()?;
         let pack = self.packs.get(&self.pack_code)?.clone();
@@ -866,6 +871,7 @@ impl Core {
                 &ctx,
                 board_id,
                 audience_id,
+                level,
             ))
             .map_err(|f| CoreError::Runtime(f.to_string()))
     }
@@ -1855,10 +1861,15 @@ pub fn build_router() -> Router<Core> {
             board_id: String,
             #[serde(default)]
             audience_id: Option<String>,
+            /// Doc 17 section 4: which rung to ask at. Absent from the toolbar,
+            /// which asks a board for an exercise rather than a learner for a
+            /// check.
+            #[serde(default)]
+            level: Option<u8>,
         }
         let p: Make = params(p)?;
         let outcome = core
-            .make_exercise(&p.board_id, p.audience_id.as_deref())
+            .make_exercise(&p.board_id, p.audience_id.as_deref(), p.level)
             .map_err(core_error)?;
         Ok(json!({
             "exercise_id": outcome.exercise_id,
