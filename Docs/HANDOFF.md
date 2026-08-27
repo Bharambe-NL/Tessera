@@ -1,4 +1,6 @@
-# HANDOFF: Canvas (working name; proposed name Tessera)
+# HANDOFF: Tessera (formerly Canvas)
+
+Updated 2026-08-25, second revision. Sections 10 to 12 are new; earlier sections stand.
 
 Written 2026-08-25 for a Claude Code session that will start the build from the spec set. Everything below is what the specs do not say: where the work stands, what was added late, what was decided in conversation, and what to do first.
 
@@ -53,3 +55,24 @@ House style: no dashes of any kind, sentence case, verbs name actions, no apolog
 ## 9. Redactions
 
 No keys, credentials, or personal data are in the specs or the prototype. The prototype's Profile page stores keys the user enters in browser storage; that behaviour must not carry into the desktop build.
+
+
+## 10. Added since the first handoff (phases 12 and 13, after 7 is accepted)
+
+1. **Vault and second brain** (`spec/16-second-brain-integration-v0.1.md`). Assessed an external "Second Brain Canvas" package; adopted its framing (three views over one vault, the ungrounded contract, save as page, backlinks), rejected its engine, storage, and citation model. Adds the **Page** and **PageLink** entities (the sticky stays `Note`; UI copy says "sticky" and "page"), markdown files mirrored in `vault/`, wikilinks resolved to Pages by id or Concepts by term, source class `page` with the sole-support rule extended to it, a **Notebook** view that is the normal pipeline at deep depth over vault retrievers with three grounding states, `flow` and `stats` visual types, edge handles, "Add note" from the highlight menu. Phases 12a to 12f with acceptance criteria are in section 5 of that document. Open: page trust rank in the finance pack (proposed 4).
+
+2. **Learning system** (`spec/17-learning-system-v0.1.md`). Supersedes the session-only view in 14. Concepts gain `learning_state`, `self_rating`, `mastery`, `difficulty_level`, `last_evidence_at`; new **ConceptEdge** (prerequisites), **Mission**, **LearningPath** (shippable in a doctrine pack). A new eleventh agent, the **Learning Planner**, owns the map, the frontier, and lesson plans; the Tutor runs lessons with the Planner's targets; Exercise gains four levels (recall, explain, apply, discriminate) with a deterministic adaptation ladder. Ratings are claims capped at 0.5 mastery; only checks are evidence. Exposure from ordinary boards writes to the map. Lessons end as learning-record pages in `vault/learning/`. A **Map** view renders concepts by state with the frontier marked. Spaced review is deferred; `decayed` and `last_evidence_at` exist so a scheduler is additive. Phase 13a to 13g in section 11. Agreed answers from the owner are recorded in section 1 of that document.
+
+3. **Name.** Tessera is now used in documents; the trademark check is still outstanding. Code identifier stays `canvas` until it clears.
+
+## 11. Prototype state (canvas-prototype.html, latest)
+
+Beyond section 2, the prototype now has: a Map page with mission input, model-driven concept decomposition (offline fallback map), placement tiles, layered map rendering with state colours and the frontier, a concept panel (rating, mastery, prerequisites, touching cards, Start lesson, Check me now, Explore on a board), lessons as learn-mode boards with levelled checks and the adaptation rule, exposure from finished cards on any board, learning records in the Library, a mission summary on Home. Pages exist only as learning records; no editor, wikilinks, or Notebook view yet. The learning maths (`evidence()`, `frontier()`, `setState()`) is the reference for 17 sections 2.3, 2.4, 3, and 4; port the rules, not the code.
+
+Prototype bug classes to avoid in the build: anything inside the canvas area must be excluded from pan and wheel handling (tutor panel, pages); positioning must never use CSS transforms that an animation can override.
+
+## 12. Build sequence, consolidated
+
+0 to 7 as in 12 (in progress at 6 and 7) → 5b boards retriever and its Verifier rule → 8 UI → 9 Reader and Exercise → 9b Tutor → 10 bundles and packs → 11 packaging → 12a to 12f vault, pages, notebook, visuals → 13a to 13g learning system. 12 before 13 because learning records are pages. Eval additions from 15, 16, and 17 join the harness as each phase lands.
+
+Definition of done gains: a mission produces a map; placement ratings are capped; a lesson on the frontier runs two checks at different levels with the ladder visible in events; the learning record appears in the vault with citations carried; a page written by hand is cited by a notebook answer with the ungrounded state appearing when the vault has nothing.
