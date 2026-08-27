@@ -60,19 +60,7 @@ fn mock() -> Arc<MockProvider> {
                     }],
                     "constraints": { "must_exclude": [], "value_policy": "cite_only" }
                 })),
-                "synthesize" => MockResponse::Json(json!({
-                    "answer": "A world model is an internal representation an agent uses to \
-                               predict how a situation will change. It lets the agent try an \
-                               action in simulation before trying it for real.",
-                    "findings": ["A world model predicts state, not text."],
-                    "structured_summary": {
-                        "entities": ["World model", "Perception", "Dynamics predictor"],
-                        "relations": [
-                            { "from": "World model", "to": "Perception", "kind": "has" },
-                            { "from": "World model", "to": "Dynamics predictor", "kind": "has" }
-                        ]
-                    }
-                })),
+                "synthesize" => synthesize_reply(request),
                 "visualize" => MockResponse::Json(json!({
                     "title": "Parts of a world model",
                     "payload": {
@@ -125,6 +113,53 @@ fn mock() -> Arc<MockProvider> {
             }
         }))),
     )
+}
+
+/// A core that can answer a deep card and remember what it answered.
+///
+/// The boards retriever alone is not enough: doc 04 section 10's
+/// `no_retriever_enabled` refuses a plan with nothing to retrieve from, and doc
+/// 05 adds `boards` to every sub-question rather than making it a substitute
+/// for one. So this indexes one document in a watched folder as well, which is
+/// the smallest thing a deep card needs to run at all.
+fn with_memory(core: &mut Core) {
+    use tessera_retrievers::chunking::{Chunk, ChunkLocation};
+    use tessera_retrievers::{IndexedConfig, index};
+
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO watched_folder (id, profile_id, root, label, created_at)
+             VALUES ('reg', ?1, 'corpus/regulatory', 'Central Authority for Prudential Oversight', 'now')",
+            rusqlite::params![core.profile_id],
+        )
+        .expect("folder");
+    index::write_document(
+        core.store.conn(),
+        "reg",
+        "reg-car3-v1.md",
+        &[Chunk::new(
+            "A world model is an internal representation an agent uses to predict how a \
+             situation will change.",
+            ChunkLocation::ArticleParagraph {
+                article: "12".into(),
+                paragraph: 1,
+            },
+            0,
+        )],
+        None,
+        "now",
+    )
+    .expect("index");
+
+    core.retrievers = tessera_core::retrieval::RetrieverSet {
+        indexed: vec![
+            ("regulatory".into(), IndexedConfig::regulatory("reg")),
+            ("boards".into(), IndexedConfig::boards()),
+        ],
+        embedder: None,
+    };
 }
 
 fn tutor_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
@@ -241,6 +276,93 @@ fn exercise_reply(request: &tessera_providers::CompletionRequest) -> MockRespons
         }
     }
     MockResponse::Json(json!({ "items": items }))
+}
+
+/// Quote the passages the prompt carried, and cite them.
+///
+/// The fixed answer this used to return cited nothing, so every card it wrote
+/// was flagged `unsupported_claim` and no card was ever eligible to be
+/// remembered: doc 15 section 3 rules out a card with an open block flag. The
+/// dev server could not produce a verified card at all, which meant doc 12's
+/// walkthrough line 15 had no path through the product.
+///
+/// With no passages it answers as before, so every test written against a core
+/// with no retrievers keeps the card it had.
+fn synthesize_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
+    let prompt = prompt_of(request);
+    let passages = passages_in(&prompt);
+
+    if passages.is_empty() {
+        return MockResponse::Json(json!({
+            "answer": "A world model is an internal representation an agent uses to predict how \
+                       a situation will change. It lets the agent try an action in simulation \
+                       before trying it for real.",
+            "findings": ["A world model predicts state, not text."],
+            "structured_summary": {
+                "entities": ["World model", "Perception", "Dynamics predictor"],
+                "relations": [
+                    { "from": "World model", "to": "Perception", "kind": "has" },
+                    { "from": "World model", "to": "Dynamics predictor", "kind": "has" }
+                ]
+            }
+        }));
+    }
+
+    // The marker goes inside the sentence, before its full stop. The
+    // Synthesizer binds citations by walking sentences and reading the `[n]`
+    // markers in each, so a marker placed after the stop is its own sentence
+    // and leaves the claim it belongs to unsupported. The first version of this
+    // did exactly that and every card came back flagged.
+    let mut answer = String::new();
+    for (ordinal, text) in passages.iter().take(4) {
+        let body = text.trim().trim_end_matches('.');
+        answer.push_str(&format!("{body} [{ordinal}]. "));
+    }
+
+    MockResponse::Json(json!({
+        "answer": answer.trim(),
+        "findings": [],
+        "structured_summary": {
+            "entities": ["World model", "Perception"],
+            "relations": [{ "from": "World model", "to": "Perception", "kind": "has" }]
+        }
+    }))
+}
+
+/// Every `<passage n="…">` the prompt carried, in packet order.
+fn passages_in(prompt: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut rest = prompt;
+    while let Some(start) = rest.find("<passage n=\"") {
+        let after = &rest[start + "<passage n=\"".len()..];
+        let Some(quote) = after.find('"') else { break };
+        let Ok(ordinal) = after[..quote].parse::<usize>() else {
+            rest = after;
+            continue;
+        };
+        let Some(open_end) = after.find('>') else { break };
+        let body = &after[open_end + 1..];
+        let Some(close) = body.find("</passage>") else {
+            break;
+        };
+        out.push((ordinal, body[..close].trim().to_string()));
+        rest = &body[close..];
+    }
+    out
+}
+
+/// Every text block of a request, joined.
+fn prompt_of(request: &tessera_providers::CompletionRequest) -> String {
+    let mut prompt = String::new();
+    for message in &request.messages {
+        for block in &message.content {
+            if let tessera_providers::ContentBlock::Text { text } = block {
+                prompt.push('\n');
+                prompt.push_str(text);
+            }
+        }
+    }
+    prompt
 }
 
 fn verify_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
@@ -380,6 +502,14 @@ fn handle(stream: &mut TcpStream, root: &Path, core: &mut Core, router: &tessera
             Core::in_memory(mock()).expect("core comes up")
         };
         core.use_pack("general").expect("pack");
+        // `/reset?memory=1` turns the boards retriever on, which is what lets a
+        // card on one board build on a verified card from another. Off by
+        // default so every other test keeps the core it was written against:
+        // memory adds an own_card source to a board that had none, and the
+        // Library counts sources.
+        if path.contains("memory") {
+            with_memory(core);
+        }
         respond(
             stream,
             "200 OK",

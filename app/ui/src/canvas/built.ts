@@ -51,6 +51,16 @@ export interface BuildTrail {
    */
   verify: VerifyRun | null;
   visual: 'produced' | 'declined' | null;
+  /**
+   * Prior cards this one was built on. Doc 01 section 4.4, doc 15 section 2.
+   *
+   * Read from `card.answered.v1` like everything else here rather than from the
+   * card row, so the disclosure has one source and cannot disagree with itself.
+   * Doc 12's walkthrough line 15 asks that a card building on a verified card
+   * from another board be visible, and until now the core recorded it, the RPC
+   * carried it, and no screen said a word.
+   */
+  buildsOn: { boardId: string; cardId: string }[];
 }
 
 interface VerifyRun {
@@ -96,6 +106,7 @@ export function trailFor(cardId: string, events: HistoryEntry[]): BuildTrail {
     latencyMs: 0,
     verify: null,
     visual: null,
+    buildsOn: [],
   };
 
   for (const event of events) {
@@ -137,6 +148,14 @@ export function trailFor(cardId: string, events: HistoryEntry[]): BuildTrail {
         break;
       case 'verify.completed.v1':
         trail.verify = readVerify(p);
+        break;
+      case 'card.answered.v1':
+        for (const prior of Array.isArray(p.builds_on) ? p.builds_on : []) {
+          const entry = prior as Record<string, unknown>;
+          const boardId = typeof entry.board_id === 'string' ? entry.board_id : '';
+          const cardId = typeof entry.card_id === 'string' ? entry.card_id : '';
+          if (boardId && cardId) trail.buildsOn.push({ boardId, cardId });
+        }
         break;
     }
   }
@@ -199,6 +218,18 @@ export function trailHTML(trail: BuildTrail): string {
     rows.push(row(COPY.builtVisual, trail.visual === 'produced' ? COPY.builtDrawn : COPY.builtDeclined));
   }
   if (trail.verify) rows.push(row(COPY.builtVerified, verifyDetail(trail.verify)));
+
+  // Doc 15 section 2's rule, said where a reader can act on it: a prior card is
+  // context and the source it cited is the evidence, so this row names the
+  // cards and never stands in for the citations below it.
+  if (trail.buildsOn.length) {
+    rows.push(
+      row(
+        COPY.builtBuildsOn,
+        trail.buildsOn.map((p) => `${p.boardId}/${p.cardId}`).join(', '),
+      ),
+    );
+  }
 
   for (const c of trail.calls) {
     rows.push(row(c.stage, `${c.model}, ${c.input + c.output} ${COPY.builtTokens}, ${c.latencyMs} ms`));

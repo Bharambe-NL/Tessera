@@ -127,6 +127,9 @@ export const COPY = {
   readFailed: 'That image could not be read.',
   readIllegible: 'Could not read this image.',
 
+  /** Doc 15 section 2: a prior card is context, and this names which. */
+  builtBuildsOn: 'Builds on',
+
   // -------------------------------------------- First run, doc 11 sec 6 --
 
   setupTitle: 'Set up Tessera',

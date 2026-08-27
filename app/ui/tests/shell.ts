@@ -38,6 +38,19 @@ export async function keylessCore(page: Page): Promise<void> {
   if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
 }
 
+/**
+ * A core with the boards retriever on, which is what memory is.
+ *
+ * Off in the other resets, because memory adds an `own_card` source to a board
+ * that had none and the Library counts sources. Doc 15 section 3 makes a card
+ * eligible to be remembered only at deep or research, so a test using this has
+ * to ask at deep.
+ */
+export async function memoryCore(page: Page): Promise<void> {
+  const response = await page.request.post('/reset?memory=1');
+  if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
+}
+
 export async function useCore(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const invoke = async (cmd: string, args: Record<string, unknown>): Promise<unknown> => {
