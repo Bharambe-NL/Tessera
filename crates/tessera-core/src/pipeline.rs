@@ -502,15 +502,21 @@ pub fn record_check(
     let session_id = session["session_id"].as_str().unwrap_or_default().to_string();
 
     let mut checks = session["checks"].as_array().cloned().unwrap_or_default();
+    // Doc 17 section 2.4 moves mastery onto the concept row, and the concepts
+    // an item checked are what the fold needs to move it. Recorded on the check
+    // rather than on the event alone, so the session's own count can be derived
+    // from its transcript instead of stored a second time beside it.
+    let repeated = checks
+        .iter()
+        .any(|c| c["item_id"] == item["id"] && c["item_id"] != Value::Null);
     checks.push(json!({
         "item_id": item["id"].clone(),
         "card_id": item["source_card_id"].clone(),
         "picked": picked,
         "correct": correct,
+        "concept_ids": concept_ids,
         "at": tessera_store::now_iso8601(),
     }));
-
-    let mastery = repo::score_mastery(&session["mastery"], concept_ids, correct);
 
     repo::update_learn_session(
         store,
@@ -519,12 +525,22 @@ pub fn record_check(
             session_id: &session_id,
             board_id,
             status: Some("checking"),
-            set: vec![("checks", Value::Array(checks)), ("mastery", mastery)],
+            // `mastery` is no longer written. Doc 17 section 2.4 keeps the
+            // score on the concept, and the session's count is derived from
+            // these checks by `repo::session_mastery`.
+            set: vec![("checks", Value::Array(checks))],
             event: "learn.check_answered.v1",
             payload: json!({
                 "session_id": session_id,
                 "item_id": item["id"].clone(),
                 "correct": correct,
+                // Doc 17 section 9's `check.answered.v1 { correct, level }`,
+                // plus the concepts the item checked. The level arrives with
+                // the exercise levels at 13c; until then a check is the level 1
+                // recall question the Exercise agent has been writing.
+                "concept_ids": concept_ids,
+                "level": item["level"].as_i64(),
+                "repeated": repeated,
             }),
         },
     )

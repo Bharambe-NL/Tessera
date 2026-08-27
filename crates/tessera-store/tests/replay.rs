@@ -669,20 +669,31 @@ fn the_learning_columns_fold_the_same_way_twice() {
             json!({ "concept_id": rated, "rating": 2 }),
             Provenance::user(),
         ),
+        // Doc 17 section 2.4: the score moves with the evidence, so the check
+        // is what writes it and the state event only says where the state went.
+        NewEvent::new(
+            "learn.check_answered.v1",
+            json!({ "concept_ids": [checked], "level": 3, "correct": true, "repeated": false }),
+            Provenance::user(),
+        ),
         NewEvent::new(
             "concept.state_changed.v1",
             json!({
-                "concept_id": checked, "from": "rated", "to": "mastered",
-                "evidence": "check", "mastery": 0.82, "difficulty_level": 3
+                "concept_id": checked, "from": "checked", "to": "mastered", "evidence": "check"
             }),
             Provenance::user(),
         ),
         // Doc 17 section 2.3: a failed check moves mastered back to checked.
         NewEvent::new(
+            "learn.check_answered.v1",
+            json!({ "concept_ids": [checked], "level": 3, "correct": false, "repeated": false }),
+            Provenance::user(),
+        ),
+        NewEvent::new(
             "concept.state_changed.v1",
             json!({
                 "concept_id": checked, "from": "mastered", "to": "checked",
-                "evidence": "failed check", "mastery": 0.61
+                "evidence": "failed check"
             }),
             Provenance::user(),
         ),
@@ -736,15 +747,33 @@ fn the_learning_columns_fold_the_same_way_twice() {
         Some("checked"),
         "a failed check moves left"
     );
-    let mastery: Option<f64> = store
-        .conn()
-        .query_row(
-            "SELECT mastery FROM concept WHERE id = ?1",
-            params![checked],
-            |r| r.get(0),
-        )
-        .expect("mastery");
-    assert_eq!(mastery, Some(0.61));
+    // A pass at level 3 from nothing, then a failure at the same level: doc 17
+    // section 2.4's formula twice, and the number is that arithmetic rather
+    // than anything an event stated.
+    let score_of = |id: &str| -> Option<f64> {
+        store
+            .conn()
+            .query_row("SELECT mastery FROM concept WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .expect("mastery")
+    };
+    let expected = tessera_store::mastery::after_check(
+        Some(tessera_store::mastery::after_check(None, 3, true, false)),
+        3,
+        false,
+        false,
+    );
+    let mastery = score_of(&checked);
+    assert!(
+        mastery.is_some_and(|m| (m - expected).abs() < 1e-9),
+        "mastery is {mastery:?} rather than {expected}"
+    );
+
+    // Reading a card moved the exposed concept by doc 17's small step, and a
+    // rating of 2 set the prior on the one with no evidence.
+    assert_eq!(score_of(&seen), Some(tessera_store::mastery::EXPOSURE_STEP));
+    assert_eq!(score_of(&rated), Some(0.35));
     let paths: Option<String> = store
         .conn()
         .query_row("SELECT path_ids FROM concept WHERE id = ?1", params![seen], |r| {
