@@ -19,6 +19,7 @@ import { COPY } from '../strings.js';
 import { flagsHTML, bulkHTML } from './flags.js';
 import { homeHTML, homeToolsHTML, type HomeFilter } from './home.js';
 import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './library.js';
+import { pagesHTML, pagesToolsHTML, type PagesState } from './pages.js';
 import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
 import { setupHTML, type SetupState } from './setup.js';
 
@@ -27,7 +28,7 @@ import { setupHTML, type SetupState } from './setup.js';
  * use and inherits its focus handling and its escape. It is not on the rail:
  * nobody navigates to a first run, they arrive at one.
  */
-export type View = 'board' | 'home' | 'flags' | 'library' | 'profile' | 'setup';
+export type View = 'board' | 'home' | 'flags' | 'library' | 'pages' | 'profile' | 'setup';
 
 export interface RouterHosts {
   rail: HTMLElement;
@@ -55,6 +56,7 @@ export class Router {
   private homeFilter: HomeFilter = 'active';
   private libraryTab: LibraryTab = 'sources';
   private profileTab: ProfileTab = 'context';
+  private pages: PagesState = { open: null, editing: false };
   /** Flags selected for a bulk decision, kept across a re-render. */
   private picked = new Set<string>();
   /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
@@ -122,6 +124,16 @@ export class Router {
             const { concepts } = await this.rpc.concepts();
             body.innerHTML = conceptsHTML(concepts);
           }
+          break;
+        }
+        case 'pages': {
+          // Doc 16 section 3.7. One view with two states: the explorer, and one
+          // page open. The list is re-read on every render rather than kept,
+          // because a page saved from a card arrives without this view knowing.
+          title.textContent = COPY.railPages;
+          tools.innerHTML = pagesToolsHTML(this.pages);
+          const { pages } = await this.rpc.pages();
+          body.innerHTML = pagesHTML(pages, this.pages);
           break;
         }
         case 'profile': {
@@ -269,6 +281,18 @@ export class Router {
         void this.setKey(keyVerb.closest<HTMLElement>('[data-key-ref]')?.dataset.keyRef ?? '');
         return;
       }
+      // ---- Pages
+      const pageVerb = target.closest<HTMLElement>('[data-page-act]');
+      if (pageVerb) {
+        const row = pageVerb.closest<HTMLElement>('[data-page]');
+        void this.pageVerb(
+          pageVerb.dataset.pageAct ?? '',
+          row?.dataset.page,
+          pageVerb.dataset.title,
+        );
+        return;
+      }
+
       const packVerb = target.closest<HTMLElement>('[data-pack-act]');
       if (packVerb) {
         const code = packVerb.closest<HTMLElement>('[data-pack]')?.dataset.pack;
@@ -325,6 +349,7 @@ export class Router {
       if (form?.id === 'setup-key') void this.saveKey();
       if (form?.id === 'setup-folder') void this.watchFolder();
       if (form?.id === 'pack-import') void this.importPack();
+      if (form?.id === 'page-edit') void this.savePage();
     });
 
     // Row selection, which is a change rather than a click.
@@ -356,6 +381,98 @@ export class Router {
       await this.rpc.setKey(keyRef, secret);
       this.setup.keySaved = true;
     });
+  }
+
+  /**
+   * Doc 16 section 3.7's verbs, in one place because they all end the same way:
+   * the view redraws from what the core holds rather than from what this call
+   * happened to return.
+   */
+  private async pageVerb(verb: string, pageId?: string, title?: string): Promise<void> {
+    try {
+      switch (verb) {
+        case 'new':
+          // An unsaved page rather than a written one: a person who changes
+          // their mind should not leave an empty page behind.
+          this.pages = {
+            open: {
+              id: '',
+              title: '',
+              body: '',
+              file_path: '',
+              updated_at: '',
+              source_card_id: null,
+              citations_carried: [],
+              links: [],
+              backlinks: [],
+            },
+            editing: true,
+          };
+          break;
+        case 'open':
+          if (!pageId) return;
+          this.pages = { open: await this.rpc.page(pageId), editing: false };
+          break;
+        case 'close':
+          this.pages = { open: null, editing: false };
+          break;
+        case 'edit':
+          this.pages = { ...this.pages, editing: true };
+          break;
+        case 'preview':
+          // Read what the core holds rather than what the textarea shows: the
+          // preview is of the page, and the page is what was saved.
+          if (this.pages.open?.id) {
+            this.pages = { open: await this.rpc.page(this.pages.open.id), editing: false };
+          } else {
+            this.pages = { ...this.pages, editing: false };
+          }
+          break;
+        case 'remove': {
+          if (!pageId) return;
+          await this.rpc.deletePage(pageId);
+          this.pages = { open: null, editing: false };
+          break;
+        }
+        case 'follow-link': {
+          if (!title) return;
+          const { pages } = await this.rpc.pages();
+          const found = pages.find((p) => p.title.toLowerCase() === title.toLowerCase());
+          if (found) this.pages = { open: await this.rpc.page(found.id), editing: false };
+          break;
+        }
+        case 'create-link': {
+          // Doc 16 section 3.1: an unresolved link creates the page it names,
+          // and lands the person in it.
+          if (!title) return;
+          const made = await this.rpc.createPageFromLink(title);
+          this.pages = { open: await this.rpc.page(made.page_id), editing: true };
+          break;
+        }
+        default:
+          return;
+      }
+      await this.render();
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.pageUnread, 'error');
+    }
+  }
+
+  private async savePage(): Promise<void> {
+    const title = this.hosts.body.querySelector<HTMLInputElement>('#page-name')?.value ?? '';
+    const body = this.hosts.body.querySelector<HTMLTextAreaElement>('#page-text')?.value ?? '';
+    const open = this.pages.open;
+    try {
+      const saved = await this.rpc.writePage({
+        page_id: open?.id || undefined,
+        title,
+        body,
+      });
+      this.pages = { open: await this.rpc.page(saved.page_id), editing: false };
+      await this.render();
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.pagesWriteFailed, 'error');
+    }
   }
 
   /**

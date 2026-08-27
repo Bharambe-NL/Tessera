@@ -2670,6 +2670,48 @@ trip.
 
 ---
 
+### BN-117 The Pages view, and a link that is a control
+
+**Spec** 16 sections 3.1, 3.7 and phase 12c.
+
+**Built** 2026-08-27, M15 12c.
+
+**One view, two states.** The explorer lists what the vault holds; opening a page reads it, and
+writing it is the same view with a textarea. Five RPCs behind it: `page.list`, `page.get`,
+`page.write`, `page.delete`, `page.create_from_link`.
+
+**A wikilink is a control, not text.** A resolved one opens the page it names. An unresolved one
+is dashed and offers to write it, which is doc 16 section 3.1's "creates the page on click" and
+the reason an unresolved link is kept rather than dropped. The preview renders headings, list
+items, paragraphs and links, and anything else renders as the text it is, which is the honest
+failure for a preview rather than a markdown library nobody asked for.
+
+**One write path for new and existing.** A person editing a title has done the same thing as a
+person typing one: the row keeps its id, the file follows the slug, the links are re-read from
+the body. A rename removes the old file before writing the new one, because a crash between the
+two leaves a row with no file, which the mirror writes back, while the other order leaves a file
+with no row, which it adopts as a second page.
+
+**Deleting takes the index with it.** Doc 16 section 2.1 says an answer that cited the page is
+untouched, and it is, because a citation names a Passage carrying its own text. What must go is
+the index: a page whose row is gone and whose chunks remain would be retrieved and cited as a
+source nobody can open.
+
+**Two collisions the tests found.** The editor's `#page-title` was the shell's own heading id, so
+the field could never be filled; and `.page-note` was already the class of the backlinks empty
+state, so the file path assertion matched two elements. Both are the kind of thing that only
+shows when the view is driven rather than read.
+
+**A count of zero is not a measurement.** The explorer chip said "0 carried citations" for a page
+saved from a card that cited nothing, which states the same thing twice while looking like a
+number. It now says where the page came from, and counts only when there is something to count.
+
+**Verified** Full battery green, 56 Playwright tests including five that drive the vault the way
+a person would, the contrast gate extended to the new view, the grounded sweep and the bundle
+round trip.
+
+---
+
 ---
 
 ## Measured findings

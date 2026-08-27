@@ -686,3 +686,164 @@ fn the_parser_and_the_store_agree_about_what_a_link_is() {
 
     std::fs::remove_dir_all(&f.root).ok();
 }
+
+// ------------------------------------------------------------- the editor
+
+#[test]
+fn writing_a_page_makes_a_file_and_editing_its_title_moves_it() {
+    // Doc 16 phase 12c's editor. A rename keeps the id, which is what the links
+    // hold, and moves the file, which is what a person sees in their vault.
+    let mut f = fixture();
+    let profile = f.profile.clone();
+    let pack = f.pack.clone();
+
+    let id = vault::write_page(
+        &mut f.store,
+        &profile,
+        Some(&pack),
+        None,
+        "Liquidity risk",
+        "# Liquidity risk\n\nThe rule is in article 12.",
+    )
+    .expect("written");
+    assert!(f.root.join("vault/liquidity-risk.md").exists());
+
+    let renamed = vault::write_page(
+        &mut f.store,
+        &profile,
+        Some(&pack),
+        Some(&id),
+        "Liquidity coverage",
+        "# Liquidity coverage\n\nThe rule is in article 12.",
+    )
+    .expect("renamed");
+    assert_eq!(renamed, id, "the rename made a different page");
+    assert!(f.root.join("vault/liquidity-coverage.md").exists());
+    assert!(
+        !f.root.join("vault/liquidity-risk.md").exists(),
+        "the old file was left behind, so the next sync adopts it as a second page"
+    );
+
+    // And the mirror has nothing to do, because the write already agreed.
+    let report = sync(&mut f);
+    assert_eq!(
+        (report.written, report.created, report.conflicts),
+        (0, 0, 0),
+        "{report:?}"
+    );
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_title_another_page_has_is_refused_rather_than_colliding() {
+    let mut f = fixture();
+    let profile = f.profile.clone();
+    let pack = f.pack.clone();
+    vault::write_page(&mut f.store, &profile, Some(&pack), None, "Liquidity risk", "one").expect("first");
+
+    let clash = vault::write_page(&mut f.store, &profile, Some(&pack), None, "LIQUIDITY RISK", "two");
+    assert!(matches!(
+        clash,
+        Err(vault::SaveError::Refused(vault::TITLE_TAKEN_BY_A_PAGE))
+    ));
+
+    let untitled = vault::write_page(&mut f.store, &profile, Some(&pack), None, "   ", "two");
+    assert!(matches!(
+        untitled,
+        Err(vault::SaveError::Refused(vault::NO_TITLE_GIVEN))
+    ));
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_page_written_for_an_unresolved_link_lights_the_link_up() {
+    // Doc 16 section 3.1: "Unresolved links create the page on click."
+    let mut f = fixture();
+    let profile = f.profile.clone();
+    let pack = f.pack.clone();
+    let from = vault::write_page(
+        &mut f.store,
+        &profile,
+        Some(&pack),
+        None,
+        "Reading notes",
+        "I should read [[Basel III|the accord]].",
+    )
+    .expect("written");
+    assert_eq!(
+        repo::page_links(&f.store, &from).expect("links")[0]["target_kind"],
+        "unresolved"
+    );
+
+    let arrived = vault::write_page(
+        &mut f.store,
+        &profile,
+        Some(&pack),
+        None,
+        "Basel III",
+        "# Basel III\n\n",
+    )
+    .expect("written");
+
+    assert_eq!(
+        repo::page_links(&f.store, &from).expect("links")[0]["target_kind"],
+        "page",
+        "the link that named this page did not light up"
+    );
+    assert_eq!(
+        repo::backlinks(&f.store, "page", &arrived)
+            .expect("backlinks")
+            .len(),
+        1
+    );
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_deleted_page_leaves_no_file_and_nothing_to_retrieve() {
+    // Doc 16 section 2.1: a citation names a Passage that carries its own text,
+    // so an answer that quoted the page is untouched. What must go is the
+    // index, or the page is retrieved and cited as a source nobody can open.
+    let mut f = fixture();
+    let profile = f.profile.clone();
+    let pack = f.pack.clone();
+    let id = vault::write_page(
+        &mut f.store,
+        &profile,
+        Some(&pack),
+        None,
+        "Liquidity risk",
+        "# Liquidity risk\n\nThe buffer is 2.5 %.",
+    )
+    .expect("written");
+    let indexed: i64 = f
+        .store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM index_entry WHERE folder_id = 'vault'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert!(indexed > 0, "a written page was never indexed");
+
+    vault::delete_page(&mut f.store, &id).expect("deleted");
+
+    assert!(repo::read_page(&f.store, &id).expect("read").is_none());
+    assert!(!f.root.join("vault/liquidity-risk.md").exists());
+    let left: i64 = f
+        .store
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM index_entry WHERE folder_id = 'vault'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(left, 0, "the page is gone and its chunks are still retrievable");
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
