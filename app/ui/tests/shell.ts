@@ -46,6 +46,20 @@ export async function keylessCore(page: Page): Promise<void> {
  * eligible to be remembered only at deep or research, so a test using this has
  * to ask at deep.
  */
+/**
+ * A core with a vault in it, and the corpus behind it.
+ *
+ * Doc 16 section 3.4: a notebook question reads the vault. The page answers the
+ * same question the corpus document does, which is why it is its own flag: a
+ * card resting on it is flagged for page sole support, and a flagged card is
+ * not remembered, so folding it into the memory fixture would break the premise
+ * doc 15's own test is built on.
+ */
+export async function vaultCore(page: Page): Promise<void> {
+  const response = await page.request.post('/reset?memory=1&vault=1');
+  if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
+}
+
 export async function memoryCore(page: Page): Promise<void> {
   const response = await page.request.post('/reset?memory=1');
   if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
