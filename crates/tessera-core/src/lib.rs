@@ -14,6 +14,7 @@ pub mod core;
 pub mod fixtures;
 pub mod pipeline;
 pub mod raster;
+pub mod record;
 pub mod retrieval;
 pub mod rpc;
 pub mod vault;

@@ -808,7 +808,7 @@ fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
     let conn = store.conn();
     let mut stmt = conn.prepare(
         "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale, p.text,
-                c.claim_span, c.binding
+                c.claim_span, c.binding, c.passage_id
          FROM citation c JOIN passage p ON p.id = c.passage_id JOIN source s ON s.id = p.source_id
          WHERE c.card_id = ?1 ORDER BY c.ordinal ASC",
     )?;
@@ -816,6 +816,13 @@ fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
         .query_map(params![card_id], |r| {
             Ok(json!({
                 "ordinal": r.get::<_, i64>(0)?,
+                // Doc 16 section 3.2's carried citation is `{ordinal,
+                // passage_id}`, and the passage id was missing here from the
+                // day the column was added: `save_card_as_page` read it,
+                // found nothing, and wrote an empty string. Every page saved
+                // since carried the right number of citations pointing at no
+                // evidence, which is the one thing that rule exists to stop.
+                "passage_id": r.get::<_, String>(9)?,
                 "source_title": r.get::<_, String>(1)?,
                 "source_class": r.get::<_, String>(2)?,
                 "locator": r.get::<_, String>(3)?,

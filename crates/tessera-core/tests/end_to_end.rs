@@ -1272,6 +1272,20 @@ fn the_planner_packet_carries_the_concepts_the_profile_knows() {
 /// lifted from the card, and the next questions reuse the card's own words, so
 /// doc 14 section 3.5's four rules pass for a reason rather than by luck. What a
 /// real tutor would choose to ask is not measured here and cannot be.
+/// Everything the model was handed, as one string, for a fixture that reads it.
+fn tutor_prompt(request: &tessera_providers::CompletionRequest) -> String {
+    let mut prompt = request.system.clone().unwrap_or_default();
+    for message in &request.messages {
+        for block in &message.content {
+            if let tessera_providers::ContentBlock::Text { text } = block {
+                prompt.push('\n');
+                prompt.push_str(text);
+            }
+        }
+    }
+    prompt
+}
+
 fn tutor_mock() -> Arc<MockProvider> {
     Arc::new(
         MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
@@ -1721,6 +1735,186 @@ fn a_failed_check_walks_the_ladder_down_and_then_reaches_for_a_prerequisite() {
     assert_eq!(moved, 0, "the core restated a move the projection already made");
 }
 
+/// Doc 17 section 5's learning record, at the end of a lesson.
+///
+/// "A page generated from the lesson's verified cards and check outcomes (what
+/// was covered, what was checked, what remains), saved to the vault under
+/// `vault/learning/<mission>/<date>.md` with citations carried."
+///
+/// Generated from rows rather than from a model, which is what makes doc 17
+/// section 10's traceability gate mean something: every line is something the
+/// session recorded, so the record cannot say the learner covered a card they
+/// never opened.
+#[test]
+fn a_lesson_ends_as_a_page_in_the_vault_carrying_what_the_cards_cited() {
+    // A card with real citations, which is what the record is a note about.
+    //
+    // The evidence comes off the web, because that is what a lesson can
+    // actually cite: `LESSON_RETRIEVERS` is web, vault and boards, doc 17
+    // section 5 leaves local out on purpose, and doc 16 section 3.2 makes a
+    // page context rather than evidence for a figure. The site is on loopback.
+    let port = loopback_site(
+        "buffers.html",
+        "<!doctype html><html><head><title>Capital buffers explained</title>\
+         <meta name=\"issuer\" content=\"ledgerline.invalid\"></head><body>\
+         <h1>Capital buffers explained</h1><p>The capital conservation buffer for a \
+         significant institution is 2.5 % of risk weighted assets, built up in the good \
+         years so a bank has something to draw down in the bad ones.</p></body></html>",
+    );
+
+    let provider = Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "plan" => MockResponse::Json(web_plan_output()),
+                "synthesize" => MockResponse::Json(synth_output_citing_one()),
+                "visualize" => MockResponse::Json(visual_output()),
+                "verify" => verify_scripted_response(request),
+                // The one fixture the dev server and the eval also read, so the
+                // check this lesson asks is the check the product would ask.
+                "tutor" => MockResponse::Json(tessera_core::fixtures::tutor(&tutor_prompt(request))),
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    );
+    let root = std::env::temp_dir().join(format!("tessera-record-{}", tessera_store::new_id()));
+    let mut core = core_at_with(&root, Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    let router = build_router();
+    call(
+        &router,
+        &mut core,
+        "profile.watch_web",
+        json!({ "url": format!("http://127.0.0.1:{port}/") }),
+    );
+
+    call(
+        &router,
+        &mut core,
+        "mission.create",
+        json!({ "statement": "Understand capital buffers" }),
+    );
+
+    let board_id = core.create_board("Lesson", "deep").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "capital buffers" }),
+    );
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("a card");
+
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    let now = tessera_store::now_iso8601();
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                 created_at, updated_at)
+             VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', ?1, 'countercyclical buffer', ?2,
+                     'confirmed', ?3, ?3)",
+            rusqlite::params![profile_id, pack_id, now],
+        )
+        .expect("concept");
+
+    // One check answered wrong, so "what remains" has something in it.
+    let turn = call(&router, &mut core, "learn.check", json!({ "board_id": board_id }));
+    let item = turn["turn"]["check"]["item"].clone();
+    call(
+        &router,
+        &mut core,
+        "learn.answer_check",
+        json!({
+            "board_id": board_id, "item": item, "picked": "b",
+            "concept_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+        }),
+    );
+
+    let ended = call(&router, &mut core, "learn.end", json!({ "board_id": board_id }));
+    let page_id = ended["record_page_id"]
+        .as_str()
+        .expect("a record page")
+        .to_string();
+
+    let page = call(&router, &mut core, "page.get", json!({ "page_id": page_id }));
+    // Doc 17 section 5's path.
+    let path = page["file_path"].as_str().expect("a file path");
+    assert!(
+        path.starts_with("vault/learning/understand-capital-buffers/"),
+        "the record is not under its mission: {path}"
+    );
+
+    // Doc 17 section 5's three sections, each carrying what the session held.
+    let body = page["body"].as_str().expect("a body");
+    assert!(body.contains("## What was covered"));
+    assert!(
+        body.contains("what is the capital conservation buffer?"),
+        "the card the lesson covered is not in the record: {body}"
+    );
+    assert!(body.contains("## What was checked"));
+    assert!(
+        body.contains("level 1: not yet"),
+        "the check outcome is not in the record: {body}"
+    );
+    assert!(body.contains("## What remains"));
+    assert!(
+        body.contains("countercyclical buffer"),
+        "the concept still open is not in the record: {body}"
+    );
+
+    // Doc 17 section 5: "with citations carried". The same rule doc 16 section
+    // 3.2 gives Save as page, so a figure on the record still rests on the
+    // passage the card cited rather than on the record repeating it.
+    let carried = page["citations_carried"].as_array().expect("carried citations");
+    assert!(
+        !carried.is_empty(),
+        "the record carried no evidence from the cards it lists"
+    );
+    for citation in carried {
+        assert!(citation["passage_id"].as_str().is_some());
+        let exists: i64 = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM passage WHERE id = ?1",
+                rusqlite::params![citation["passage_id"].as_str().unwrap_or_default()],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(exists, 1, "a carried citation names a passage that is not there");
+    }
+
+    // Doc 17 section 9's event, saying what the page holds so nothing has to
+    // parse the markdown back to find out.
+    let saved = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .find(|e| e.event_type == "learning_record.saved.v1")
+        .expect("learning_record.saved.v1");
+    assert_eq!(saved.payload["page_id"], json!(page_id));
+    assert_eq!(saved.payload["checked"], 1);
+    assert!(saved.payload["covered"].as_u64().unwrap_or(0) >= 1);
+    assert_eq!(saved.payload["remains"], 1);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// Doc 17 sections 5 and 8's research posture, on a card asked in a lesson.
 ///
 /// Three things change and one does not. The ranking comes from the pack's
@@ -1825,14 +2019,18 @@ fn a_lesson_reads_with_the_research_posture_and_the_paths_own_sources() {
 /// again with the web allowed, and the answer comes back citing a page fetched
 /// from a loopback server. The seed is 127.0.0.1, and discovery never leaves a
 /// seed's host, so this test cannot reach the internet.
-#[test]
-fn a_notebook_question_reaches_the_web_when_the_learner_asks_it_to() {
+/// One site on loopback: a listing and the page behind it. Doc 05 section 8.1.
+///
+/// The server binds 127.0.0.1 on a port the OS picks, the seed a test gives the
+/// profile is that address, and discovery never leaves a seed's host, so a test
+/// that reaches the web through this cannot reach the internet.
+fn loopback_site(file: &'static str, page: &'static str) -> u16 {
     use std::io::{BufRead, BufReader, Write};
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
     let port = listener.local_addr().expect("addr").port();
     std::thread::spawn(move || {
-        for stream in listener.incoming().take(8) {
+        for stream in listener.incoming().take(32) {
             let Ok(mut stream) = stream else { return };
             let Ok(clone) = stream.try_clone() else { return };
             let mut reader = BufReader::new(clone);
@@ -1840,26 +2038,21 @@ fn a_notebook_question_reaches_the_web_when_the_learner_asks_it_to() {
             if reader.read_line(&mut request).is_err() {
                 return;
             }
-            while let Ok(n) = {
+            // Drain the headers so the client sees a clean exchange.
+            loop {
                 let mut line = String::new();
-                reader.read_line(&mut line).map(|n| (n, line))
-            }
-            .map(|(n, line)| if line.trim().is_empty() { 0 } else { n })
-            {
-                if n == 0 {
-                    break;
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim().is_empty() => break,
+                    Ok(_) => {}
+                    Err(_) => return,
                 }
             }
             let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
             let body = if path == "/" {
-                "<html><body><ul><li><a href=\"models.html\">models.html</a></li></ul></body></html>"
-                    .to_string()
+                format!("<html><body><ul><li><a href=\"{file}\">{file}</a></li></ul></body></html>")
             } else {
-                "<!doctype html><html><head><title>World models</title>\
-                 <meta name=\"issuer\" content=\"ledgerline.invalid\"></head><body>\
-                 <h1>World models</h1><p>A world model is an internal representation an agent \
-                 uses to predict how a situation will change.</p></body></html>"
-                    .to_string()
+                page.to_string()
             };
             let _ = write!(
                 stream,
@@ -1870,6 +2063,18 @@ fn a_notebook_question_reaches_the_web_when_the_learner_asks_it_to() {
             let _ = stream.flush();
         }
     });
+    port
+}
+
+#[test]
+fn a_notebook_question_reaches_the_web_when_the_learner_asks_it_to() {
+    let port = loopback_site(
+        "models.html",
+        "<!doctype html><html><head><title>World models</title>\
+         <meta name=\"issuer\" content=\"ledgerline.invalid\"></head><body>\
+         <h1>World models</h1><p>A world model is an internal representation an agent \
+         uses to predict how a situation will change.</p></body></html>",
+    );
 
     let router = build_router();
     let mut core = core_with(mock());
@@ -3157,6 +3362,21 @@ fn synth_output_citing_one() -> Value {
     })
 }
 
+/// A plan that reads the open web, which is what a lesson has. Doc 17 section 5.
+fn web_plan_output() -> Value {
+    json!({
+        "sub_questions": [
+            {
+                "text": "What does the web say about the buffer?",
+                "purpose": "Find an explanation to teach from.",
+                "queries": { "web": "capital conservation buffer" }
+            }
+        ],
+        "answer_scope": "The buffer, as somebody explaining it would put it.",
+        "caveats": []
+    })
+}
+
 /// A plan that asks every retriever for everything, so what answers is what the
 /// run was allowed to open.
 fn everything_plan_output() -> Value {
@@ -3632,6 +3852,37 @@ fn a_card_saved_as_a_page_carries_its_citations_and_says_so_on_the_card() {
         saved["citations_carried"].as_u64().unwrap_or(0) > 0,
         "the page carried none of the card's citations: {saved}"
     );
+    // And each carried citation names a passage that exists. The count alone
+    // was what this asserted, and it passed for months while every entry
+    // carried an empty passage id: doc 16 section 3.2's whole rule is that the
+    // page carries the evidence rather than becoming it, and a count of
+    // citations pointing nowhere is the failure that rule exists to stop.
+    // BN-143.
+    let carried: Value = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT citations_carried FROM page WHERE id = ?1",
+            rusqlite::params![saved["page_id"].as_str().unwrap_or_default()],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .expect("carried citations");
+    for citation in carried.as_array().expect("an array") {
+        let passage_id = citation["passage_id"].as_str().unwrap_or_default();
+        assert!(!passage_id.is_empty(), "a carried citation names no passage");
+        let exists: i64 = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM passage WHERE id = ?1",
+                rusqlite::params![passage_id],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(exists, 1, "a carried citation names a passage that is not there");
+    }
 
     // The page is a file the person owns, in the words the card used.
     let path = root.join(saved["file_path"].as_str().expect("a file path"));

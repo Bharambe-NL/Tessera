@@ -1715,6 +1715,80 @@ def test_the_ladder_and_the_sourcing_rule_are_re_checked_from_the_rungs_asked(
     assert "teaches" in waiting.note
 
 
+def test_a_learning_record_is_traced_line_by_line_to_the_rows_behind_it(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 17 section 10's "learning record traceability 1.00".
+
+    The record is generated from rows, so the only thing worth measuring is
+    whether those rows are there. Each of the four ways a line can be untrue
+    fails it here: a card the Verifier never stood behind, a check at a rung
+    nobody was asked, a concept named as open that was passed, and a carried
+    citation whose passage is not in the store.
+    """
+    placed = {
+        "learner_id": "always-right",
+        "frontier": ["LC-01"],
+        "expected_frontier": ["LC-01"],
+        "confirmed_edges_not_from_the_path": 0,
+        "rated_only": [],
+        "verified_cards": ["card-1"],
+        "checks": [
+            {"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k2", "level": 1, "correct": False, "card_id": "card-1"},
+        ],
+        "record": {
+            "page_id": "p1",
+            "passages_missing": [],
+            "lines": [
+                {"section": "covered", "card_id": "card-1", "passages": ["passage-1"]},
+                {"section": "checked", "concept_ids": ["k1"], "level": 1, "correct": True},
+                {"section": "checked", "concept_ids": ["k2"], "level": 1, "correct": False},
+                {"section": "remains", "concept_id": "k2"},
+            ],
+        },
+    }
+    whole = _learner_report(tmp_path / "whole", corpus, [placed])
+    assert _named(whole, "learning_record_traceability").value == 1.0
+
+    def broken(name: str, lines: list[dict], missing: list[str] | None = None) -> float | None:
+        session = dict(placed, record=dict(placed["record"], lines=lines))
+        if missing is not None:
+            session["record"] = dict(session["record"], passages_missing=missing)
+        return _named(
+            _learner_report(tmp_path / name, corpus, [session]),
+            "learning_record_traceability",
+        ).value
+
+    # A card the lesson never verified, listed as covered.
+    assert broken("unverified", [{"section": "covered", "card_id": "card-9", "passages": []}]) == 0.0
+    # A check at a rung nobody was asked.
+    assert (
+        broken("unasked", [{"section": "checked", "concept_ids": ["k1"], "level": 4, "correct": True}])
+        == 0.0
+    )
+    # A concept named as still open that the learner passed.
+    assert broken("settled", [{"section": "remains", "concept_id": "k1"}]) == 0.0
+    # Evidence carried to a passage that is not in the store. BN-143.
+    assert (
+        broken(
+            "dangling",
+            [{"section": "covered", "card_id": "card-1", "passages": ["passage-1"]}],
+            ["passage-1"],
+        )
+        == 0.0
+    )
+
+    # A lesson that wrote no record waits rather than scoring zero: doc 17
+    # section 5 writes one at the end of a lesson, and a placement is not one.
+    waiting = _named(
+        _learner_report(tmp_path / "no-record", corpus, [dict(placed, record=None)]),
+        "learning_record_traceability",
+    )
+    assert waiting.value is None
+    assert "learn.end" in waiting.note
+
+
 def _web_report(tmp_path: Path, corpus: Path, rows: list[dict] | None) -> object:
     results = tmp_path / "web"
     results.mkdir(parents=True, exist_ok=True)

@@ -78,6 +78,14 @@ pub struct SessionRecord {
     /// section 4's "no item is ever generated from unverified text" is checked
     /// against this rather than against the product's own idea of eligibility.
     pub verified_cards: Vec<String>,
+    /// Doc 17 section 5's learning record, as the event recorded it: one entry
+    /// per line of the page, naming the row that line came from. Null when the
+    /// lesson wrote none.
+    ///
+    /// Every carried passage is looked up in the store here, because "the page
+    /// carries the evidence" is a claim about rows and a passage id that names
+    /// nothing is the way that claim fails quietly. BN-143.
+    pub record: Option<Value>,
     pub note: String,
 }
 
@@ -106,6 +114,7 @@ pub fn place(
         rated_only: Vec::new(),
         checks: Vec::new(),
         verified_cards: Vec::new(),
+        record: None,
         note: String::new(),
     };
 
@@ -388,6 +397,45 @@ pub fn teach(
     }
 
     let _ = call(router, core, "learn.end", json!({ "board_id": board_id }));
+    record.record = saved_record(core, board_id);
+}
+
+/// The learning record this lesson wrote, read back off the event log.
+///
+/// Off the log rather than off the reply, because doc 17 section 10 asks
+/// whether the record traces to what the session recorded and the log is what
+/// the session recorded. Each carried passage is then looked up, so a page
+/// citing evidence that is not there fails the gate rather than counting as a
+/// citation.
+fn saved_record(core: &Core, board_id: &str) -> Option<Value> {
+    let mut saved = core
+        .store
+        .events(Some(board_id))
+        .ok()?
+        .into_iter()
+        .find(|e| e.event_type == "learning_record.saved.v1")?
+        .payload;
+
+    let missing: Vec<String> = saved["lines"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|line| line["passages"].as_array().cloned().unwrap_or_default())
+        .filter_map(|id| id.as_str().map(str::to_string))
+        .filter(|id| {
+            core.store
+                .conn()
+                .query_row(
+                    "SELECT COUNT(*) FROM passage WHERE id = ?1",
+                    rusqlite::params![id],
+                    |r| r.get::<_, i64>(0),
+                )
+                .unwrap_or(0)
+                == 0
+        })
+        .collect();
+    saved["passages_missing"] = json!(missing);
+    Some(saved)
 }
 
 /// The cards on a board that are done or warn flagged, read from the store

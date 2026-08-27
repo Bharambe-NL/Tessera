@@ -99,6 +99,11 @@ THRESHOLDS: dict[str, float] = {
     # rule that makes it structural is the packet carrying only verified cards;
     # this is the measurement that says the structure held.
     "checks_from_verified_cards": 1.00,
+    # Doc 17 section 10: "learning record traceability 1.00". The record is
+    # generated from rows rather than written by a model, so the gate is
+    # absolute: one line the session cannot account for is a note telling a
+    # learner they covered something they never opened.
+    "learning_record_traceability": 1.00,
     # Doc 05 section 12: "recall at k on planted facts by retriever ... web
     # 0.80 (the synthetic web is served locally, so this measures extraction and
     # ranking)". Lower than the regulatory retriever's because a web plant is
@@ -573,6 +578,7 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
         "mastery_honesty",
         "level_adaptation",
         "checks_from_verified_cards",
+        "learning_record_traceability",
     )
     if not manifest.get("learning_enabled"):
         waiting = "no learner walked the path; run the eval with --learner"
@@ -649,6 +655,7 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
         waiting = "no lesson asked a check; the learner leg places and then teaches"
         out.append(Metric("level_adaptation", None, 0, 0, waiting))
         out.append(Metric("checks_from_verified_cards", None, 0, 0, waiting))
+        out.append(Metric("learning_record_traceability", None, 0, 0, waiting))
         return out
 
     out.append(
@@ -675,7 +682,69 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
             "checks drawn from a card the Verifier stood behind",
         )
     )
+    out.append(_record_traceability(sessions))
     return out
+
+
+def _record_traceability(sessions: list[dict]) -> Metric:
+    """Doc 17 section 10: every line of a learning record is a row the session holds.
+
+    The record names, per line, the card it covered, the check it reports or
+    the concept it left open. This asks the session's own rows whether each one
+    is there: a covered card the Verifier never stood behind, a check at a rung
+    nobody was asked, a concept named as open that the learner passed, or a
+    carried citation whose passage is not in the store. Each is a line the
+    learner would read as true.
+
+    Deliberately not a re-read of the markdown. The page is generated, so
+    parsing it back would measure the formatter; what is worth measuring is
+    whether the rows behind it exist.
+    """
+    lines = 0
+    traceable = 0
+    for session in sessions:
+        record = session.get("record")
+        if not record:
+            continue
+        verified = set(session.get("verified_cards") or [])
+        checks = session.get("checks") or []
+        missing = set(record.get("passages_missing") or [])
+        for line in record.get("lines") or []:
+            lines += 1
+            section = line.get("section")
+            if section == "covered":
+                passages = line.get("passages") or []
+                if line.get("card_id") in verified and not (set(passages) & missing):
+                    traceable += 1
+            elif section == "checked":
+                concepts = set(line.get("concept_ids") or [])
+                if any(
+                    c.get("level") == line.get("level")
+                    and bool(c.get("correct")) == bool(line.get("correct"))
+                    and (not concepts or c.get("concept_id") in concepts)
+                    for c in checks
+                ):
+                    traceable += 1
+            elif section == "remains":
+                if any(
+                    c.get("concept_id") == line.get("concept_id") and not c.get("correct")
+                    for c in checks
+                ):
+                    traceable += 1
+    if not lines:
+        return Metric(
+            "learning_record_traceability",
+            None,
+            0,
+            0,
+            "no lesson wrote a learning record; the record is written at learn.end",
+        )
+    return _ratio(
+        "learning_record_traceability",
+        traceable,
+        lines,
+        "lines of a learning record that name a row the session recorded",
+    )
 
 
 def _next_level(level: int | None, passed: bool | None) -> int:

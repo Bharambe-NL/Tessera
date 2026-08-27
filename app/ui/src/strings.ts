@@ -196,6 +196,8 @@ export const COPY = {
   learnStageChecking: 'Checking understanding',
   learnStageEnded: 'Finished',
   learnEnded: 'Session over.',
+  /** Doc 17 section 5: the lesson ends as a page, and the learner is told where. */
+  learnRecordSaved: 'Your notes from this lesson are in Pages.',
 
   // ------------------------------------------------- the exercise, doc 08 --
 

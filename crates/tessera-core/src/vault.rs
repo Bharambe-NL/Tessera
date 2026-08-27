@@ -363,6 +363,36 @@ pub fn write_page(
     title: &str,
     body: &str,
 ) -> Result<String, SaveError> {
+    write_page_in(
+        store,
+        profile_id,
+        doctrine_pack_id,
+        page_id,
+        "",
+        title,
+        body,
+        Value::Array(Vec::new()),
+    )
+}
+
+/// Write a page into a folder of the vault, carrying evidence with it.
+///
+/// Doc 17 section 5 saves a learning record to `vault/learning/<mission>/<date>.md`
+/// "with citations carried", which is the same rule doc 16 section 3.2 gives
+/// Save as page: the page carries the passages the cards cited rather than
+/// becoming a source of its own, so a figure on it still rests on what the
+/// Verifier stood behind.
+#[allow(clippy::too_many_arguments)]
+pub fn write_page_in(
+    store: &mut tessera_store::Store,
+    profile_id: &str,
+    doctrine_pack_id: Option<&str>,
+    page_id: Option<&str>,
+    folder: &str,
+    title: &str,
+    body: &str,
+    citations_carried: Value,
+) -> Result<String, SaveError> {
     let title = title.trim();
     if title.is_empty() {
         return Err(SaveError::Refused(NO_TITLE_GIVEN));
@@ -407,7 +437,7 @@ pub fn write_page(
                 .into_iter()
                 .map(|p| p.file_path)
                 .collect();
-            let path = file_path("", title, &taken);
+            let path = file_path(folder, title, &taken);
             let id = repo::create_page(
                 store,
                 repo::NewPage {
@@ -416,7 +446,7 @@ pub fn write_page(
                     body,
                     file_path: &path,
                     source_card_id: None,
-                    citations_carried: Value::Array(Vec::new()),
+                    citations_carried,
                     doctrine_pack_id,
                 },
             )
