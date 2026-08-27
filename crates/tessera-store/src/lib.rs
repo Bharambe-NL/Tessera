@@ -8,6 +8,7 @@
 pub mod blob;
 pub mod error;
 pub mod event;
+pub mod mastery;
 pub mod projection;
 pub mod repo;
 

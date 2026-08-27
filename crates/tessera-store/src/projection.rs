@@ -253,14 +253,25 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
                 .card_id
                 .map(Ok)
                 .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
-            tx.execute(
-                "UPDATE concept SET learning_state = 'exposed', last_evidence_at = ?1,
-                        updated_at = ?1
-                 WHERE (learning_state IS NULL OR learning_state = 'unseen')
-                   AND id IN (SELECT concept_id FROM concept_link
-                              WHERE target_type = 'card' AND target_ref = ?2)",
-                params![ev.timestamp, card_id],
-            )?;
+            // Doc 17 section 2.4 gives exposure its own small, capped evidence,
+            // so the arithmetic runs here rather than in SQL: the cap and the
+            // rounding are the rule and belong in one place.
+            for (concept_id, mastery) in learning_rows(
+                tx,
+                "SELECT c.id, c.mastery FROM concept c
+                 JOIN concept_link l ON l.concept_id = c.id
+                 WHERE l.target_type = 'card' AND l.target_ref = ?1",
+                params![card_id],
+            )? {
+                tx.execute(
+                    "UPDATE concept SET mastery = ?1, last_evidence_at = ?2, updated_at = ?2,
+                            learning_state = CASE
+                                WHEN learning_state IS NULL OR learning_state = 'unseen'
+                                THEN 'exposed' ELSE learning_state END
+                     WHERE id = ?3",
+                    params![crate::mastery::after_exposure(mastery), ev.timestamp, concept_id],
+                )?;
+            }
         }
 
         // Doc 17 section 2.1: a rating is "a claim, never evidence". It sets
@@ -270,6 +281,26 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
         "concept.rated.v1" => {
             let concept_id = field(p, ev.event_type, "concept_id")?;
             let rating = p.get("rating").and_then(Value::as_i64);
+            // Doc 17 section 2.4: the prior applies only when mastery is null,
+            // and never reaches past a half. A rating after evidence exists
+            // says what the learner believes and the evidence says what
+            // happened.
+            if let Some(rating) = rating {
+                let current: Option<f64> = tx
+                    .query_row(
+                        "SELECT mastery FROM concept WHERE id = ?1",
+                        params![concept_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                if let Some(prior) = crate::mastery::after_rating(current, rating) {
+                    tx.execute(
+                        "UPDATE concept SET mastery = ?1 WHERE id = ?2",
+                        params![prior, concept_id],
+                    )?;
+                }
+            }
             tx.execute(
                 "UPDATE concept SET self_rating = ?1, last_evidence_at = ?2, updated_at = ?2,
                         learning_state = CASE
@@ -280,6 +311,52 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
             )?;
         }
 
+        // Doc 17 section 2.4's evidence, folded where it happens. The score is
+        // derived from the checks rather than carried on an event that states
+        // it, so a rule that changes later recomputes every concept from the
+        // same facts instead of leaving two generations of numbers side by side
+        // with nothing saying which is which.
+        "learn.check_answered.v1" => {
+            let correct = p.get("correct").and_then(Value::as_bool).unwrap_or(false);
+            // Doc 17 section 4's ladder. Until 13c gives an item its level, a
+            // check is a level 1 recall question, which is what the Exercise
+            // agent has been writing all along.
+            let level = p.get("level").and_then(Value::as_i64).unwrap_or(1).clamp(1, 4) as u8;
+            let repeated = p.get("repeated").and_then(Value::as_bool).unwrap_or(false);
+
+            for concept_id in p
+                .get("concept_ids")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                let current: Option<f64> = tx
+                    .query_row(
+                        "SELECT mastery FROM concept WHERE id = ?1",
+                        params![concept_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                let next = crate::mastery::after_check(current, level, correct, repeated);
+                // Doc 17 section 2.3: `checked` means at least one passed check
+                // at level 1 or 2. Moving on to `mastered` needs the pack's
+                // threshold, which this layer cannot read, so the core says so
+                // with `concept.state_changed.v1` and this fold stops here.
+                tx.execute(
+                    "UPDATE concept SET mastery = ?1, last_evidence_at = ?2, updated_at = ?2,
+                            difficulty_level = CASE WHEN ?3 THEN ?4 ELSE difficulty_level END,
+                            learning_state = CASE
+                                WHEN ?3 AND (learning_state IS NULL
+                                             OR learning_state IN ('unseen', 'exposed', 'rated'))
+                                THEN 'checked' ELSE learning_state END
+                     WHERE id = ?5",
+                    params![next, ev.timestamp, correct, level as i64, concept_id],
+                )?;
+            }
+        }
+
         // Doc 17 section 2.3's transitions, including the ones that go left: "a
         // failed check can move mastered back to checked". The event says where
         // it moved to, because only the rule that moved it knows why, and the
@@ -288,19 +365,13 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
         "concept.state_changed.v1" => {
             let concept_id = field(p, ev.event_type, "concept_id")?;
             let to = field(p, ev.event_type, "to")?;
+            // The state and nothing else. Mastery is folded from the evidence
+            // above, and a second writer for one number is how two answers to
+            // one question end up in a database.
             tx.execute(
-                "UPDATE concept SET learning_state = ?1,
-                        mastery = COALESCE(?2, mastery),
-                        difficulty_level = COALESCE(?3, difficulty_level),
-                        last_evidence_at = ?4, updated_at = ?4
-                 WHERE id = ?5",
-                params![
-                    to,
-                    p.get("mastery").and_then(Value::as_f64),
-                    p.get("difficulty_level").and_then(Value::as_i64),
-                    ev.timestamp,
-                    concept_id
-                ],
+                "UPDATE concept SET learning_state = ?1, last_evidence_at = ?2, updated_at = ?2
+                 WHERE id = ?3",
+                params![to, ev.timestamp, concept_id],
             )?;
         }
 
@@ -376,6 +447,17 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Concept ids with their current mastery, for a fold that has arithmetic to do.
+fn learning_rows(
+    tx: &Transaction,
+    sql: &str,
+    args: impl rusqlite::Params,
+) -> Result<Vec<(String, Option<f64>)>> {
+    let mut stmt = tx.prepare(sql)?;
+    let rows = stmt.query_map(args, |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn bump(cost: &mut Value, key: &str, by: i64) {

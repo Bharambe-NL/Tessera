@@ -1381,6 +1381,29 @@ fn a_learn_session_runs_intake_a_plan_a_check_and_an_ending() {
     assert!(check["turn"]["check"]["next_if_right"].is_string());
     assert!(check["turn"]["check"]["next_if_wrong"].is_string());
 
+    // A real concept row, so doc 17 section 2.4's score has somewhere to land.
+    // The session's count and the concept's score are two different numbers
+    // about the same evidence, and this test is where they are read together.
+    let concept_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                 created_at, updated_at)
+             VALUES (?1, ?2, 'world model', ?3, 'confirmed', ?4, ?4)",
+            rusqlite::params![concept_id, profile_id, pack_id, tessera_store::now_iso8601()],
+        )
+        .expect("concept");
+
     // Doc 14 section 3.6: mastery moves on the answer, not on the question.
     let wrong = call(
         &router,
@@ -1408,8 +1431,44 @@ fn a_learn_session_runs_intake_a_plan_a_check_and_an_ending() {
     assert_eq!(ended["checks"], 2);
     assert_eq!(ended["correct"], 1);
     // Floored at zero, then plus one: a wrong answer cannot put a learner in
-    // debt for a concept they have never seen.
-    assert_eq!(ended["mastery"]["01ARZ3NDEKTSV4RRFFQ69G5FAV"], 1);
+    // debt for a concept they have never seen. The count is derived from the
+    // session's own checks now rather than stored beside them, and doc 14's
+    // eight shapes could not tell the difference, which is the point.
+    assert_eq!(ended["mastery"][concept_id], 1);
+
+    // Doc 17 section 2.4, on the concept row: a failure at level 1 from nothing
+    // leaves the score where it was, and the pass that follows is on the same
+    // item, so it counts for half.
+    let score: Option<f64> = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT mastery FROM concept WHERE id = ?1",
+            rusqlite::params![concept_id],
+            |r| r.get(0),
+        )
+        .expect("mastery");
+    let expected = tessera_store::mastery::after_check(
+        Some(tessera_store::mastery::after_check(None, 1, false, false)),
+        1,
+        true,
+        true,
+    );
+    assert!(
+        score.is_some_and(|s| (s - expected).abs() < 1e-9),
+        "the concept row says {score:?} rather than {expected}"
+    );
+    // Doc 17 section 2.3: a passed check moves the state at least to checked.
+    let state: Option<String> = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT learning_state FROM concept WHERE id = ?1",
+            rusqlite::params![concept_id],
+            |r| r.get(0),
+        )
+        .expect("state");
+    assert_eq!(state.as_deref(), Some("checked"));
 
     // Doc 14 section 3.4: the board stays in explore mode with the session
     // attached, so everything the learner made survives.

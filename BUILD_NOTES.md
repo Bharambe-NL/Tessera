@@ -3229,6 +3229,51 @@ workspace tests, clippy at `-D warnings`, 83 generator guards and the bundle rou
 
 ---
 
+### BN-130 Mastery moves to the concept, and the old number is derived rather than kept
+
+**Spec** 17 sections 2.3 and 2.4, 14 section 3.6.
+
+**Built** 2026-08-27, M16 13a-iv. The step the plan names as the riskiest, taken alone.
+
+**Two numbers, one name, and the way out.** Doc 14's mastery counted correct checks inside one
+session. Doc 17's is a score between 0 and 1 on the concept row, across every session a person has
+had. Keeping both as stored numbers would have put two answers to one question in the database, so
+the session's count is now derived from the checks the session already records, and the concept's
+score is folded from the evidence. The eight `learn.*` RPC shapes and the Tutor packet's
+`concepts[].mastery` did not change at all: `learn.spec.ts` and the dev server's tutor arm were
+green before and after without being touched, which is what the plan asked for and the evidence that
+the relocation did not leak.
+
+**A session written before this keeps its number.** The `mastery` column stays and is read when a
+session's checks do not carry their concepts, which is every session recorded before today. Doc 17's
+history is a transcript: what an old session recorded is what it recorded, and backfilling it would
+put numbers in the log that nobody scored.
+
+**Why the arithmetic runs in the fold rather than on the event.** Doc 17 section 2.4 allows for a
+spaced repetition scheduler replacing this rule later. If a check event carried the score it
+produced, a new rule would leave two generations of numbers side by side with nothing saying which
+was which. Folding the evidence means a rule that changes recomputes every concept from the same
+facts. So `learn.check_answered.v1` carries what happened (the concepts, the level, whether the item
+was repeated) and never what it was worth.
+
+**Where the doctrine line falls.** The fold does the arithmetic and stops at `checked`, because
+whether a score counts as `mastered` is the pack's threshold and `tessera-store` cannot read a pack.
+The core says so with `concept.state_changed.v1`, which no longer carries mastery at all: one writer
+per number.
+
+**The rule, with its two choices recorded.** `k` runs from 0.15 at level 1 to 0.35 at level 4 on the
+line those two points make. A repeated pass counts for half, which doc 17 asks for without naming a
+size; a repeated failure is not reduced, because the second time someone gets the same item wrong
+says more than the first, not less. Exposure adds 0.02 to a cap of 0.2, so browsing can never look
+like learning. A rating sets a prior only when there is no evidence, and never reaches past 0.5.
+
+**Verified** Full battery green, four mastery unit tests, nine replay tests, 62 end to end tests
+including the one that reads the session count and the concept score together, 65 Playwright tests,
+the grounded sweep unchanged at `fact_recall_deep` 0.923 with no measured metric below its
+threshold, and the bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings

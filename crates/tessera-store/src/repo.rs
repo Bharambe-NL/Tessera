@@ -1510,6 +1510,14 @@ pub fn read_learn_session(store: &Store, board_id: &str) -> Result<Option<Value>
             },
         )
         .optional()?;
+
+    // Doc 17 section 2.4 moved the score onto the concept row, and the eight
+    // `learn.*` shapes and the Tutor packet keep the count they always had, so
+    // it is derived here where every reader passes rather than at each of them.
+    let session = session.map(|mut s| {
+        s["mastery"] = session_mastery(&s);
+        s
+    });
     Ok(session)
 }
 
@@ -1583,18 +1591,41 @@ pub fn update_learn_session(store: &mut Store, u: LearnUpdate<'_>) -> Result<()>
     Ok(())
 }
 
-/// Doc 14 section 3.6's mastery: plus one on a correct check, minus one on a
-/// wrong one, floored at zero.
+/// Doc 14 section 3.6's mastery, derived from the session's own checks.
 ///
-/// Floored rather than allowed negative, because a score below zero would say
-/// something about a learner that the counting cannot support: three wrong
-/// answers in a row on one concept is the same signal as thirty.
-pub fn score_mastery(mastery: &Value, concept_ids: &[String], correct: bool) -> Value {
-    let mut map = mastery.as_object().cloned().unwrap_or_default();
-    for id in concept_ids {
-        let now = map.get(id).and_then(Value::as_i64).unwrap_or(0);
-        let next = if correct { now + 1 } else { (now - 1).max(0) };
-        map.insert(id.clone(), json!(next));
+/// The count is what it always was: plus one for a correct check on a concept,
+/// minus one for a wrong one, floored at zero, because a score below zero would
+/// say something about a learner that counting cannot support. What changed is
+/// where it comes from. Doc 17 section 2.4 moves mastery onto the concept row
+/// as a score across every session, and a second number under the same name
+/// beside it would be two answers to one question; so the session's number is
+/// computed from the checks it already records rather than stored again.
+///
+/// A session written before the checks carried their concepts falls back to the
+/// column, which is why the column stays. Doc 17's history is a transcript and
+/// is never backfilled: what an old session recorded is what it recorded.
+pub fn session_mastery(session: &Value) -> Value {
+    let checks = session["checks"].as_array().cloned().unwrap_or_default();
+    let derivable = checks
+        .iter()
+        .any(|c| c["concept_ids"].as_array().is_some_and(|ids| !ids.is_empty()));
+    if !derivable {
+        return session["mastery"].clone();
+    }
+
+    let mut map = serde_json::Map::new();
+    for check in &checks {
+        let correct = check["correct"].as_bool().unwrap_or(false);
+        for id in check["concept_ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let now = map.get(id).and_then(Value::as_i64).unwrap_or(0);
+            let next = if correct { now + 1 } else { (now - 1).max(0) };
+            map.insert(id.to_string(), json!(next));
+        }
     }
     Value::Object(map)
 }
