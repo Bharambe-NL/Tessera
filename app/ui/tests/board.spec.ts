@@ -124,6 +124,120 @@ test('renaming the board stops the next question renaming it', async ({ page }) 
   await expect(page.locator('#title')).toHaveValue('Capital rules');
 });
 
+test('selecting a span in an answer offers a branch, and asking makes one', async ({ page }) => {
+  await askFirst(page);
+  const parent = page.locator('#cards .card').first();
+  const parentId = await parent.getAttribute('data-card-id');
+
+  // Select "internal representation" inside the answer, the way a reader drags
+  // across a phrase they want to pull on.
+  await parent.locator('.answer').evaluate((el) => {
+    const text = el.firstChild as Text;
+    const at = text.data.indexOf('internal representation');
+    const range = document.createRange();
+    range.setStart(text, at);
+    range.setEnd(text, at + 'internal representation'.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+
+  const pop = page.locator('#anchor-pop');
+  await expect(pop).toBeVisible();
+  await expect(pop.locator('.anchor-label')).toHaveText('internal representation');
+  await expect(pop.locator('#anchor-ask')).toHaveText('Ask about this');
+
+  await pop.locator('#anchor-ask').click();
+  await pop.locator('#anchor-question').fill('what does that representation contain?');
+  await pop.locator('#anchor-branch').click();
+
+  await expect(page.locator('#cards .card')).toHaveCount(2, { timeout: 30_000 });
+  const child = page.locator('#cards .card').nth(1);
+  await expect(child).not.toHaveAttribute('data-status', 'failed');
+
+  // A branch takes its header from the anchor rather than from the question,
+  // which is how a reader finds the span it came from. Doc 09 section 4.
+  await expect(child.locator('.head .title')).toHaveText('internal representation');
+  await expect(child.locator('.answer')).not.toBeEmpty();
+
+  // Branch edges are drawn with the curve, not the orthogonal drop.
+  const branchEdge = await page.locator('#edges .edge.branch').getAttribute('d');
+  expect(branchEdge?.length ?? 0).toBeGreaterThan(0);
+
+  const ids = await page.locator('#cards .card').evaluateAll((els) =>
+    els.map((e) => (e as HTMLElement).dataset.cardId),
+  );
+  expect(ids[0]).toBe(parentId);
+});
+
+test('clicking a block of a visual offers to investigate it', async ({ page }) => {
+  await askFirst(page);
+  const parent = page.locator('#cards .card').first();
+
+  // Every clickable block carries the JSON pointer the Visualizer wrote.
+  const block = parent.locator('.vis .clk[data-ref]').first();
+  await expect(block).toBeVisible();
+  const ref = await block.getAttribute('data-ref');
+  expect(ref?.startsWith('/')).toBe(true);
+
+  await block.click();
+  const pop = page.locator('#anchor-pop');
+  await expect(pop).toBeVisible();
+  // A block gets its own verb, because the anchor is a pointer and not a span.
+  await expect(pop.locator('#anchor-ask')).toHaveText('Investigate this further');
+
+  await pop.locator('#anchor-ask').click();
+  await pop.locator('#anchor-question').fill('why is this part here?');
+  await pop.locator('#anchor-branch').click();
+
+  await expect(page.locator('#cards .card')).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.locator('#cards .card').nth(1)).not.toHaveAttribute('data-status', 'failed');
+});
+
+test('escape puts the popover away without asking anything', async ({ page }) => {
+  await askFirst(page);
+  const parent = page.locator('#cards .card').first();
+
+  await parent.locator('.vis .clk[data-ref]').first().click();
+  await expect(page.locator('#anchor-pop')).toBeVisible();
+
+  await page.locator('#anchor-pop #anchor-ask').click();
+  await page.locator('#anchor-question').press('Escape');
+
+  await expect(page.locator('#anchor-pop')).toBeHidden();
+  expect(await cardCount(page)).toBe(1);
+});
+
+test('how this was built reads the event log', async ({ page }) => {
+  await askFirst(page);
+  const card = page.locator('#cards .card').first();
+  const built = card.locator('details.built');
+
+  // `board.history` was registered on the core at M2 and called by nothing, so
+  // this disclosure opened onto an empty div for four milestones.
+  await expect(card.locator('.built-body')).toBeEmpty();
+  await built.locator('summary').click();
+
+  const rows = card.locator('.built-row');
+  await expect(rows.first()).toBeVisible();
+
+  // The model calls are named by their stage, with the model and the tokens
+  // each one cost, because tokens are what the log records.
+  const terms = await card.locator('.built-row dt').allTextContents();
+  expect(terms).toContain('Routed');
+  expect(terms).toContain('synthesize');
+  expect(terms).toContain('visualize');
+  await expect(card.locator('.built-total')).toContainText('tokens');
+
+  // The Verified row counts what the event recorded. On a fast card, which
+  // cites nothing, it must not claim the answer was checked against sources:
+  // the first version of this row said exactly that on every card.
+  const verified = card.locator('.built-row', { has: page.locator('dt:text-is("Verified")') });
+  await expect(verified.locator('dd')).toContainText('rules passed');
+  await expect(verified.locator('dd')).not.toContainText('citations supported');
+});
+
 test('no card on the board reports a failure', async ({ page }) => {
   // The guard the other tests needed and did not have. A card that renders is
   // not a card that answered, and every assertion above counts cards or reads

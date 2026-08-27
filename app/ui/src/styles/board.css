@@ -577,3 +577,45 @@ button:disabled {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ---- how this was built, doc 09 section 4 ---- */
+
+.built-rows {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.built-row {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: var(--s3);
+}
+
+.built-row dt {
+  color: var(--ink-2);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.built-row dd {
+  margin: 0;
+}
+
+.built-total {
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.built-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+

@@ -170,7 +170,11 @@ function cardHTML(c: Card): string {
     `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>` +
     `</button>` +
     `</div>` +
-    `<div class="body">${bodyFor(c)}</div>` +
+    // `data-no-pan` because a drag inside the body is a person selecting a span
+    // to branch from, and the viewport's drag handler would pan the board out
+    // from under them instead. Doc 09 section 3's highlight popover depends on
+    // the selection surviving the pointer.
+    `<div class="body" data-no-pan>${bodyFor(c)}</div>` +
     `<div class="foot">` +
     `<input class="followup" placeholder="${COPY.askFollowUp}" ${disabled} data-no-pan aria-label="${COPY.askFollowUp}"/>` +
     `<button class="send" ${disabled} data-act="follow" data-no-pan aria-label="${COPY.sendFollowUp}">` +

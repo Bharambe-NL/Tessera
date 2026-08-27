@@ -11,12 +11,15 @@ import './styles/tokens.css';
 import './styles/board.css';
 import './styles/chrome.css';
 
+import { blockAnchor, selectionAnchor } from './canvas/anchor.js';
+import { trailFor, trailHTML } from './canvas/built.js';
 import { boundsOf, layout } from './canvas/layout.js';
 import { drawEdges, measureHeights, renderCards, toggleFlags } from './canvas/render.js';
 import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
+import { AnchorPopover } from './popover.js';
 import { Rpc, RpcError, type AskAnchor, type Notification } from './rpc.js';
 import { COPY, PRODUCT_NAME } from './strings.js';
 
@@ -38,6 +41,27 @@ const toasts = el<HTMLElement>('toasts');
 const rpc = new Rpc();
 const viewport = new ViewportHost({ main, world, onSettled: () => void 0 });
 viewport.attach();
+
+/** Doc 09 section 3's highlight and block investigate popovers, as one. */
+const popover = new AnchorPopover(
+  {
+    root: el<HTMLElement>('anchor-pop'),
+    label: document.querySelector('#anchor-pop .anchor-label') as HTMLElement,
+    ask: el<HTMLButtonElement>('anchor-ask'),
+    compose: document.querySelector('#anchor-pop .compose') as HTMLFormElement,
+    question: el<HTMLInputElement>('anchor-question'),
+    cancel: el<HTMLButtonElement>('anchor-cancel'),
+  },
+  (target, question) => {
+    window.getSelection()?.removeAllRanges();
+    void submit(question, {
+      parentCardId: target.cardId,
+      ...(target.anchorText ? { anchorText: target.anchorText } : {}),
+      ...(target.anchorBlockRef ? { anchorBlockRef: target.anchorBlockRef } : {}),
+    });
+  },
+);
+popover.attach();
 
 let heights = new Map<string, number>();
 const heightOf = (id: string) => heights.get(id) ?? 320;
@@ -202,6 +226,8 @@ async function drainNotifications(allowReload = true): Promise<void> {
 async function reload(): Promise<void> {
   if (!boardId) return;
   staleRead = false;
+  // Every rect the popover was placed against is about to be replaced.
+  popover.close();
   board = await rpc.getBoard(boardId);
   titleInput.value = board.title;
   renderBoard(board);
@@ -260,6 +286,73 @@ function submitFromComposer(): void {
  * element that gets replaced stops firing without saying so. This one is bound
  * to the container, which is never replaced.
  */
+/**
+ * Fill one card's "How this was built" body from `board.history`.
+ *
+ * Read on open rather than on render: the disclosure is closed on most cards
+ * most of the time, and the history is the whole board's log, so fetching it per
+ * card per render would read the same hundreds of events once per card.
+ */
+async function fillBuildTrail(body: HTMLElement, cardId: string): Promise<void> {
+  if (!boardId || body.dataset.filled === cardId) return;
+  try {
+    const { events } = await rpc.history(boardId);
+    body.innerHTML = trailHTML(trailFor(cardId, events));
+    body.dataset.filled = cardId;
+  } catch {
+    body.textContent = COPY.builtFailed;
+  }
+}
+
+function wireBuildTrail(): void {
+  // `toggle` does not bubble, so it is caught in the capture phase. One listener
+  // for every disclosure on the board, present and future.
+  cardsEl.addEventListener(
+    'toggle',
+    (e) => {
+      const details = e.target as HTMLDetailsElement | null;
+      if (!details?.open || !details.classList.contains('built')) return;
+      const body = details.querySelector<HTMLElement>('.built-body');
+      const cardId = body?.dataset.builtFor;
+      if (body && cardId) void fillBuildTrail(body, cardId);
+    },
+    true,
+  );
+}
+
+/**
+ * Offer to branch from a selected span or a clicked block.
+ *
+ * `pointerup` rather than `selectionchange`, because a selection being dragged
+ * changes on every frame and a popover that follows it is unusable.
+ */
+function wireBranching(): void {
+  cardsEl.addEventListener('pointerup', () => {
+    // After the browser has settled the selection this gesture produced.
+    window.setTimeout(() => {
+      const anchor = selectionAnchor();
+      if (anchor) popover.show(anchor);
+      else if (popover.anchored?.anchorText) popover.close();
+    }, 0);
+  });
+
+  cardsEl.addEventListener('click', (e) => {
+    const anchor = blockAnchor(e.target);
+    if (!anchor) return;
+    e.stopPropagation();
+    popover.show(anchor);
+  });
+
+  // A click anywhere else puts the popover away, the way a menu behaves.
+  document.addEventListener('pointerdown', (e) => {
+    if (!popover.open) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('#anchor-pop')) return;
+    if (target?.closest('.card .body')) return;
+    popover.close();
+  });
+}
+
 function wireCardActions(): void {
   cardsEl.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null;
@@ -462,6 +555,8 @@ async function boot(): Promise<void> {
 
   wireComposer();
   wireCardActions();
+  wireBranching();
+  wireBuildTrail();
   wireTitle();
 
   // No core behind the page: a plain browser can still see the canvas render,

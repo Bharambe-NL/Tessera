@@ -52,6 +52,24 @@
         </button>
       </form>
 
+      <!-- Doc 09 section 3: the highlight popover and the block investigate
+           popover. One element in two states, following the prototype: offer
+           first, then compose. It sits outside #world on purpose, so it holds
+           its size when the board is zoomed. -->
+      <div id="anchor-pop" role="dialog" aria-label="Ask about this" data-no-pan hidden>
+        <div class="offer">
+          <span class="anchor-label"></span>
+          <button id="anchor-ask" type="button"></button>
+        </div>
+        <form class="compose" hidden>
+          <input id="anchor-question" aria-label="Ask about this" autocomplete="off" />
+          <div class="acts">
+            <button id="anchor-cancel" type="button">Not now</button>
+            <button id="anchor-branch" type="submit" class="primary">Branch here</button>
+          </div>
+        </form>
+      </div>
+
       <div id="toasts" role="status" aria-live="polite"></div>
       <pre id="gate" hidden></pre>
     </main>

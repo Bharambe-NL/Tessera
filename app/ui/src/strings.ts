@@ -61,6 +61,43 @@ export const COPY = {
   askFollowUp: 'Ask a follow-up',
   sendFollowUp: 'Send follow-up',
 
+  // ------------------------------------------- the two branch popovers, 09.3 --
+
+  /** Offered on a span selected inside a card body. */
+  askAboutThis: 'Ask about this',
+  /** Offered on a block of a visual, which carries an exact pointer. */
+  investigateBlock: 'Investigate this further',
+
+  // ------------------------------------------ how this was built, doc 09.4 --
+
+  builtRouted: 'Routed',
+  routedPlanned: 'to the Planner',
+  routedDirect: 'straight to the answer',
+  builtPlanned: 'Planned',
+  builtSubQuestions: 'sub questions',
+  builtCoverage: 'coverage',
+  builtPassages: 'passages',
+  builtVisual: 'Visual',
+  builtDrawn: 'drawn',
+  builtDeclined: 'declined',
+  builtVerified: 'Verified',
+  /**
+   * What the Verifier did, counted from the event rather than characterised.
+   * The first version of this row said "checked against its sources" on every
+   * card, including a fast one, which cites nothing and had no sources to check.
+   */
+  builtRulesPassed: 'rules passed',
+  builtRulesFlagged: 'flagged',
+  builtRulesSkipped: 'skipped',
+  builtCitationsSupported: 'citations supported',
+  builtOf: 'of',
+  builtNoChecks: 'no rule applied',
+  builtCalls: 'model calls',
+  builtTokens: 'tokens',
+  /** A card whose events say nothing at all, which is a card that never ran. */
+  builtNothing: 'No events were recorded for this card.',
+  builtFailed: 'The build trail could not be read.',
+
   // ------------------------------------------------------------- the shell --
 
   modeStarting: 'Starting',

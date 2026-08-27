@@ -902,6 +902,67 @@ made. The server is also the piece doc 12 phase 11 needs to put the UI into a ni
 
 ---
 
+### BN-070 The two branch popovers, and why the anchor stays in client coordinates
+
+**Spec** 09 sections 3, 4 and 5.
+
+**Decision** One popover element in two states serves both of doc 09's board popovers. The offer
+comes first, with the verb the anchor kind calls for, and the question box only once the offer is
+taken. That is the prototype's interaction (`Docs/canvas-prototype.html:331`-336) and it is right for
+a reason worth stating: a selection made while reading should not be interrupted by a text box.
+
+**Client coordinates, not board coordinates.** The popover lives outside `#world`, so it holds its
+size when the board is zoomed. Converting the selection rect into board coordinates and back would
+put the popover inside the transformed layer, where its text scales with the camera and a zoomed out
+board renders an unreadable one. The plan said this step needed the board coordinate transform; it
+does not, and the reason it does not is the same reason the popover is a sibling of the canvas rather
+than a child of it.
+
+**The card body is `data-no-pan` now.** A drag inside a card body is a person selecting a span, and
+the viewport drag handler was panning the board out from under them. Cards are not draggable yet, so
+nothing is lost; when they become draggable the header is the handle.
+
+**A selection spanning two cards is refused rather than truncated.** It names no single card, and a
+branch has exactly one parent. A selection in a card header or a follow-up box is refused too: that
+is a person reading or editing, not one marking a claim.
+
+**Reason** Doc 09 section 5's Branch verb is two thirds of the acceptance walkthrough's branching
+rows, and until now neither the markup nor the RPC could express it.
+
+---
+
+### BN-071 "How this was built" claimed the answer was checked against sources it never had
+
+**Spec** 09 section 4 and 12, 07 section B8.1.
+
+**Decision** The disclosure renders from `board.history`, which had been registered on the core since
+M2 and called by nothing. The Verified row counts what `verify.completed.v1` recorded rather than
+characterising it.
+
+**What the first version got wrong.** The row said "checked against its sources" whenever the event
+appeared. It appears on a fast card too: doc 07 section B8.1 runs the deterministic checks at fast
+depth, which is what raises `fast_mode_notice`. A fast card cites nothing, so there were no sources
+and nothing was checked against them, and the disclosure said the opposite of the flag two lines
+above it. The screenshot showed it; no test did.
+
+The row now reads what the event carries: `checks_run` counted by outcome, and `verdict_counts` only
+when there were citations to count, because "0 of 0 citations supported" reads as a failure rather
+than as an absence. On a fast card it now reads "6 rules passed, 1 flagged, 4 skipped", which agrees
+with the flag chip in the header.
+
+**Cost is stated in tokens.** Doc 09 section 4 names cost. Tokens are what `model.call.v1` records; a
+currency figure would need a price the core never saw.
+
+**Read on open, not on render.** The disclosure is closed on most cards most of the time and the
+history is the whole board's log, so filling it per card per render would read the same hundreds of
+events once per card.
+
+**Reason** The audit trail is the one surface whose whole job is to agree with what happened. A
+sentence in it that overstates is worse than an empty disclosure, because an empty one does not
+mislead.
+
+---
+
 ## Measured findings
 
 ### BN-056 The three staleness gates, measured at last
