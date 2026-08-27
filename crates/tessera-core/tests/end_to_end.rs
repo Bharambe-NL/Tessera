@@ -636,6 +636,95 @@ fn the_profile_page_reports_key_presence_and_never_a_key() {
 }
 
 #[test]
+fn the_entities_a_card_named_become_concepts_the_planner_can_read() {
+    // Doc 01 section 4.10: "Agents propose; the user confirms." The Router has
+    // returned entities since M4 and they reached the log and nothing else, so
+    // the Planner packet's `concepts` was an empty array and entity resolution
+    // degraded to literals marked `unknown` exactly as doc 04 says it should
+    // when the graph is empty.
+    let router = build_router();
+    let mut core = core_with(repeating_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let listed = call(&router, &mut core, "library.concepts", json!({}));
+    let concepts = listed["concepts"].as_array().expect("concepts").clone();
+    assert_eq!(concepts.len(), 1, "the router named one entity, got {concepts:?}");
+    assert_eq!(concepts[0]["term"], "world model");
+    assert_eq!(concepts[0]["status"], "proposed");
+    assert_eq!(concepts[0]["links"], 1, "linked to the card that named it");
+
+    // A second card naming the same term touches the node rather than making a
+    // second one. Doc 01 section 4.11: "two boards that both cite the same
+    // Concept share it".
+    let second = core.create_board("Second", "fast").expect("board");
+    core.ask(&second, "what are world models?", None).expect("card");
+    let again = call(&router, &mut core, "library.concepts", json!({}));
+    let concepts = again["concepts"].as_array().expect("concepts");
+    assert_eq!(concepts.len(), 1, "the term was reused, not duplicated");
+    assert_eq!(concepts[0]["links"], 2);
+
+    // The resolution is in the log, which is what `entity.resolved.v1` is for.
+    let resolved = core
+        .store
+        .events(None)
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.event_type == "entity.resolved.v1")
+        .count();
+    assert_eq!(resolved, 1, "the second card resolved onto the existing node");
+
+    let concept_id = concepts[0]["id"].as_str().expect("id").to_string();
+    call(
+        &router,
+        &mut core,
+        "concept.decide",
+        json!({ "concept_id": concept_id, "accept": true }),
+    );
+    let confirmed = call(&router, &mut core, "library.concepts", json!({}));
+    assert_eq!(confirmed["concepts"][0]["status"], "confirmed");
+
+    // Deciding a decided concept is refused rather than recorded twice.
+    let again = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "concept.decide",
+                json!({ "concept_id": concept_id, "accept": true }),
+                1,
+            ),
+        )
+        .expect("reply");
+    assert_eq!(
+        again.error.expect("an error").data.expect("data")["kind"],
+        "no_proposed_concept"
+    );
+}
+
+#[test]
+fn the_planner_packet_carries_the_concepts_the_profile_knows() {
+    // The other half of the write path: what the graph is for. Doc 04 section 4
+    // gives the Planner a `concepts` array, and it was empty on every run since
+    // M5 because nothing wrote one.
+    let mut core = core_with(repeating_mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "research").expect("board");
+
+    // The first card proposes; the second plans with what the first left.
+    core.ask(&board_id, "what are world models?", Some("research"))
+        .expect("first card");
+    core.ask(&board_id, "and how do they change?", Some("research"))
+        .expect("second card");
+
+    let packet = packet_for(&core, &board_id, "planner");
+    let concepts = packet["concepts"].as_array().expect("concepts");
+    assert!(
+        concepts.iter().any(|c| c["term"] == "world model"),
+        "the planner packet still carries an empty graph: {concepts:?}"
+    );
+}
+
+#[test]
 fn the_library_lists_what_the_profile_has_retrieved() {
     // Doc 09 section 9. A fresh profile has neither, and both say so with an
     // empty list rather than an error.

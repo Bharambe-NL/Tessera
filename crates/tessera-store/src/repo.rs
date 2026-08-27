@@ -1307,6 +1307,224 @@ pub fn list_sources(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<V
         .collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
+/// Propose the concepts a card named, and link them to it.
+///
+/// Doc 01 section 4.10: "Agents propose; the user confirms." The Router already
+/// returns the entities a question names, and until M9 they went into the log
+/// and nowhere else, so the Planner packet's `concepts` was an empty array and
+/// entity resolution degraded to literals marked `unknown` exactly as doc 04
+/// says it should when the graph is empty.
+///
+/// A term the profile already knows is reused rather than duplicated, which is
+/// what doc 01 section 4.11 means by "two boards that both cite the same Concept
+/// share it". Matching is case insensitive on the canonical spelling; an alias
+/// pass belongs with the Concept editor, not here.
+///
+/// Returns how many concepts were newly proposed.
+pub fn propose_concepts(
+    store: &mut Store,
+    at: CardRef<'_>,
+    profile_id: &str,
+    doctrine_pack_id: &str,
+    terms: &[String],
+    proposed_by: &str,
+) -> Result<usize> {
+    let mut proposed = 0usize;
+
+    for term in terms {
+        let term = term.trim();
+        // A one character entity is noise, and an empty one is a model slip.
+        if term.chars().count() < 2 || term.chars().count() > 120 {
+            continue;
+        }
+
+        let existing: Option<String> = store
+            .conn()
+            .query_row(
+                "SELECT id FROM concept WHERE profile_id = ?1 AND lower(term) = lower(?2)",
+                params![profile_id, term],
+                |r| r.get(0),
+            )
+            .optional()?;
+
+        let concept_id = match existing {
+            Some(id) => {
+                // Doc 01 section 6.3's `entity.resolved.v1`: the entity named a
+                // node the profile already has, which is the whole point of the
+                // graph being shared across boards.
+                store.append(
+                    NewEvent::new(
+                        "entity.resolved.v1",
+                        json!({ "concept_id": id, "term": term, "card_id": at.card_id }),
+                        Provenance::agent(proposed_by, at.run_id.to_string()),
+                    )
+                    .on_board(at.board_id)
+                    .on_card(at.card_id),
+                )?;
+                id
+            }
+            None => {
+                let id = new_id();
+                let now = now_iso8601();
+                let (row, profile, pack, name, at_time) = (
+                    id.clone(),
+                    profile_id.to_string(),
+                    doctrine_pack_id.to_string(),
+                    term.to_string(),
+                    now,
+                );
+                store.append_with(
+                    NewEvent::new(
+                        "concept.proposed.v1",
+                        json!({ "concept_id": id, "term": term, "card_id": at.card_id }),
+                        Provenance::agent(proposed_by, at.run_id.to_string()),
+                    )
+                    .on_board(at.board_id)
+                    .on_card(at.card_id),
+                    move |tx| {
+                        tx.execute(
+                            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                                                  created_at, updated_at)
+                             VALUES (?1, ?2, ?3, ?4, 'proposed', ?5, ?5)",
+                            params![row, profile, name, pack, at_time],
+                        )?;
+                        Ok(())
+                    },
+                )?;
+                proposed += 1;
+                id
+            }
+        };
+
+        // One link per concept per card. A card asked twice about the same term
+        // should touch the node once.
+        let linked: i64 = store.conn().query_row(
+            "SELECT COUNT(*) FROM concept_link
+             WHERE concept_id = ?1 AND target_type = 'card' AND target_ref = ?2",
+            params![concept_id, at.card_id],
+            |r| r.get(0),
+        )?;
+        if linked > 0 {
+            continue;
+        }
+
+        let link_id = new_id();
+        let (row, cid, card, by, now) = (
+            link_id.clone(),
+            concept_id.clone(),
+            at.card_id.to_string(),
+            json!({ "agent_id": proposed_by }).to_string(),
+            now_iso8601(),
+        );
+        store.append_with(
+            NewEvent::new(
+                "concept.linked.v1",
+                json!({
+                    "link_id": link_id,
+                    "concept_id": concept_id,
+                    "target_type": "card",
+                    "target_ref": at.card_id,
+                    "relation": "mentions",
+                }),
+                Provenance::agent(proposed_by, at.run_id.to_string()),
+            )
+            .on_board(at.board_id)
+            .on_card(at.card_id),
+            move |tx| {
+                tx.execute(
+                    "INSERT INTO concept_link (id, concept_id, target_type, target_ref, relation,
+                                               proposed_by, status, created_at)
+                     VALUES (?1, ?2, 'card', ?3, 'mentions', ?4, 'proposed', ?5)",
+                    params![row, cid, card, by, now],
+                )?;
+                Ok(())
+            },
+        )?;
+    }
+
+    Ok(proposed)
+}
+
+/// Confirm or reject a proposed concept. Doc 09 section 9's row actions.
+///
+/// `None` means no proposed concept had that id, so nothing was decided and the
+/// caller can say so rather than reporting a decision that never happened.
+pub fn decide_concept(store: &mut Store, concept_id: &str, accept: bool) -> Result<Option<String>> {
+    let term: Option<String> = store
+        .conn()
+        .query_row(
+            "SELECT term FROM concept WHERE id = ?1 AND status = 'proposed'",
+            params![concept_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(term) = term else { return Ok(None) };
+
+    let (id, now) = (concept_id.to_string(), now_iso8601());
+    if accept {
+        store.append_with(
+            NewEvent::new(
+                "concept.confirmed.v1",
+                json!({ "concept_id": concept_id, "term": term }),
+                Provenance::user(),
+            ),
+            move |tx| {
+                tx.execute(
+                    "UPDATE concept SET status = 'confirmed', updated_at = ?1 WHERE id = ?2",
+                    params![now, id],
+                )?;
+                Ok(())
+            },
+        )?;
+    } else {
+        // A rejected concept leaves, and its links leave with it. Doc 01 section
+        // 4.11: links are how boards touch a node, so a node nobody kept has
+        // nothing left to touch. There is no `concept.rejected.v1` in the
+        // vocabulary and this does not invent one: the link rows carry the
+        // status the model has for a rejection, and `concept.linked.v1` already
+        // said they existed.
+        store.append_with(
+            NewEvent::new(
+                "concept.linked.v1",
+                json!({ "concept_id": concept_id, "term": term, "status": "rejected" }),
+                Provenance::user(),
+            ),
+            move |tx| {
+                tx.execute(
+                    "UPDATE concept_link SET status = 'rejected' WHERE concept_id = ?1",
+                    params![id],
+                )?;
+                Ok(())
+            },
+        )?;
+    }
+    Ok(Some(term))
+}
+
+/// The concepts the Planner packet carries. Doc 04 section 4.
+///
+/// Confirmed terms first, because those are the ones a person has stood behind,
+/// then proposed ones, so a fresh profile still gets the graph it has.
+pub fn concepts_for_packet(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<Value>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, term, definition, status FROM concept
+         WHERE profile_id = ?1
+         ORDER BY CASE status WHEN 'confirmed' THEN 0 ELSE 1 END, term
+         LIMIT ?2",
+    )?;
+    Ok(stmt
+        .query_map(params![profile_id, limit], |r| {
+            Ok(json!({
+                "concept_id": r.get::<_, String>(0)?,
+                "term": r.get::<_, String>(1)?,
+                "definition": r.get::<_, Option<String>>(2)?,
+                "status": r.get::<_, String>(3)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// Library, Concepts tab. Doc 09 section 9.
 ///
 /// "term, status (proposed or confirmed), definition, audience definitions,

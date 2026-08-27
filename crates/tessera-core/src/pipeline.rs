@@ -750,6 +750,34 @@ pub async fn run_card(
         ctx.retrievers.embedder.as_deref(),
     );
 
+    // Doc 01 section 4.10: "Agents propose; the user confirms." The Router named
+    // these entities at the top of the run, and until M9 they reached the log
+    // and nothing else. A failure here is not the card's failure: the answer is
+    // written and verified, and a graph that missed a term is a Library with one
+    // fewer row rather than a card the reader loses.
+    let entities: Vec<String> = routed["classification"]["entities"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.as_str().map(str::to_string))
+        .collect();
+    if !entities.is_empty()
+        && let Ok(pack_id) = repo::ensure_pack(
+            store,
+            &serde_json::to_value(ctx.pack).unwrap_or(Value::Null),
+        )
+        && let Err(e) = repo::propose_concepts(
+            store,
+            at,
+            &ctx.profile_id,
+            &pack_id,
+            &entities,
+            "router",
+        )
+    {
+        tracing::warn!(error = %e, "the concepts this card named were not proposed");
+    }
+
     let open_flags = verified["flags"].as_array().map(Vec::len).unwrap_or(0);
     Ok(CardOutcome {
         card_id: card_id.to_string(),
@@ -928,6 +956,13 @@ fn build_planner_packet(
     // Doc 04 section 4: 3 sub-questions for research, 1 for deep.
     let max_sub_questions = if depth == "research" { 3 } else { 1 };
 
+    // Capped, because the packet has an effort budget and a profile with a
+    // thousand terms would spend it on a glossary.
+    // A read the store could not serve is not the Planner's failure to recover
+    // from, so it degrades to the empty array the packet carried before M9
+    // rather than killing a card over a glossary.
+    let concepts = repo::concepts_for_packet(store, &ctx.profile_id, 40).unwrap_or_default();
+
     let mut retrievers: Vec<Value> = ctx
         .pack
         .retrievers
@@ -1001,7 +1036,11 @@ fn build_planner_packet(
             "ancestors": ancestor_blocks(subject.ancestors),
             "parent_visual_block": null
         },
-        "concepts": [],
+        // Doc 04 section 4. Empty until M9, because the Concept graph had no
+        // write path and entity resolution degraded to literals marked
+        // `unknown` exactly as doc 04 says it should when the graph is empty.
+        // It is written now, so the Planner reads what the profile knows.
+        "concepts": concepts,
         "retrievers": retrievers,
         "doctrine": {
             "must_exclude": must_exclude,

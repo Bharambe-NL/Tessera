@@ -595,6 +595,24 @@ pub fn build_router() -> Router<Core> {
         Ok(json!({ "sources": sources }))
     });
 
+    // Doc 09 section 9's Concepts row actions. Doc 01 section 4.10: agents
+    // propose and the user confirms, so this is the confirming half.
+    r.register("concept.decide", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Decide {
+            concept_id: String,
+            accept: bool,
+        }
+        let p: Decide = params(p)?;
+        match repo::decide_concept(&mut core.store, &p.concept_id, p.accept).map_err(store_error)? {
+            Some(term) => Ok(json!({ "concept_id": p.concept_id, "term": term })),
+            None => Err(RpcError::core(
+                "no_proposed_concept",
+                "That concept was decided already. Reload Library to see where it went.",
+            )),
+        }
+    });
+
     r.register("library.concepts", |core: &mut Core, p| {
         #[derive(Deserialize)]
         struct Query {
