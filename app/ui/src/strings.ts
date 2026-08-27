@@ -117,6 +117,13 @@ export const COPY = {
   readingVisualType: 'The visual is a',
   readingFlags: 'Flags',
 
+  // ---------------------------------------------- the Reader, doc 07 part A --
+
+  /** Doc 07 section A11: a read card says where it came from. */
+  readFromImage: 'Read from an image',
+  readFailed: 'That image could not be read.',
+  readIllegible: 'Could not read this image.',
+
   // ------------------------------------------------- the exercise, doc 08 --
 
   /** Doc 09 section 4 puts this in the toolbar. */

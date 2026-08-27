@@ -572,6 +572,61 @@ async function openExercise(): Promise<void> {
   renderExercise();
 }
 
+/**
+ * Paste an image onto the board and read it. Doc 07 section A3.
+ *
+ * The paste is the whole gesture: doc 07 puts "Read this image" on an Image row
+ * too, and that arrives with the Library's image surface. What a reader does
+ * today is paste a screenshot of a table and want it read, so that is what this
+ * does in one step.
+ */
+function wirePaste(): void {
+  document.addEventListener('paste', (e) => {
+    if (!boardId || !rpc.connected) return;
+
+    const items = [...(e.clipboardData?.items ?? [])];
+    const file = items
+      .find((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      ?.getAsFile();
+    if (!file) return;
+
+    // A paste that also carries text, into a box that takes text, is text. The
+    // first version of this checked only the focus, which reads correctly and
+    // is wrong in practice: `boot` focuses the composer, so the composer always
+    // has focus and no image would ever have been read at all.
+    const into = document.activeElement;
+    const typing = into instanceof HTMLInputElement || into instanceof HTMLTextAreaElement;
+    const alsoText = items.some((item) => item.kind === 'string' && item.type === 'text/plain');
+    if (typing && alsoText) return;
+
+    e.preventDefault();
+    void readPastedImage(file);
+  });
+}
+
+async function readPastedImage(file: File): Promise<void> {
+  if (!boardId) return;
+  const id = boardId;
+
+  // The size is read from the image itself rather than trusted from the
+  // clipboard, because the packet tells a vision model what it is looking at.
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) {
+    toast(COPY.readFailed, 'error');
+    return;
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const data = btoa(binary);
+
+  await whileRunning(async () => {
+    const { image_id } = await rpc.addImage(id, data, file.type, bitmap.width, bitmap.height);
+    return await rpc.read(id, image_id);
+  }, COPY.readFailed);
+}
+
 function wireExercise(): void {
   el<HTMLButtonElement>('check').addEventListener('click', () => void openExercise());
   el<HTMLButtonElement>('ex-dismiss').addEventListener('click', closeExercise);
@@ -765,6 +820,7 @@ async function boot(): Promise<void> {
   wireRailToggle();
   wireReadingToggle();
   wireExercise();
+  wirePaste();
   wireComposer();
   wireCardActions();
   wireBranching();

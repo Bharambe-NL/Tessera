@@ -115,7 +115,9 @@ function sourcesBlock(c: Card): string {
 }
 
 function bodyFor(c: Card): string {
-  let body = `<div class="msg">${esc(c.question)}</div>`;
+  // A read card's question is the product's, not the reader's, so it does not
+  // get the bubble that shows what someone asked.
+  let body = c.kind === 'read' ? '' : `<div class="msg">${esc(c.question)}</div>`;
   body += flagList(c);
 
   if (c.status === 'queued' || c.status === 'running') {
@@ -150,7 +152,13 @@ function bodyFor(c: Card): string {
 }
 
 function cardHTML(c: Card): string {
-  const title = c.anchor_text ?? (c.kind === 'root' ? c.question : COPY.followTitle);
+  // Doc 07 section A11: "Reader cards show 'Read from image' in the header".
+  // A read card's question is one nobody typed, so showing it as a title would
+  // put words in the reader's mouth.
+  const title =
+    c.kind === 'read'
+      ? COPY.readFromImage
+      : (c.anchor_text ?? (c.kind === 'root' ? c.question : COPY.followTitle));
   const depthBadge =
     c.depth !== 'fast' ? `<span class="badge ${c.depth}">${c.depth}</span>` : `<span class="badge fast">fast</span>`;
   const model = c.model_alias ? `<span class="alias" title="${COPY.rerunAs}">${esc(c.model_alias)}</span>` : '';

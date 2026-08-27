@@ -120,6 +120,11 @@ MOCKED: dict[str, str] = {
     # The type follows the shape of the summary the model wrote, and the mock
     # writes one shape.
     "visual_type_match": "the mock emits one summary shape, so it selects one visual type",
+    # Doc 07 section A12 sets this at 0.80 on clean rasters. A mock cannot see,
+    # and a fixture that returns the structure the corpus recorded would be
+    # scoring this repository against itself. Listed here so that the day a run
+    # sets `reader_enabled` on a mock the number is reported rather than gated.
+    "reader_structure_recovery_f1": "a mock has no eyes, so what it recovers is what the fixture wrote",
 }
 
 #: Doc 02 section 10.3: fast is reported with no threshold, because fast mode is
@@ -951,7 +956,8 @@ def score(results: Path, corpus: Path) -> Report:
             None,
             0,
             0,
-            "the Reader arrives at M10; set reader_enabled when it does",
+            "the Reader is built; this waits on a run that reads an image, and a "
+            "mock has no eyes to read one with",
         )
     )
     exercises = load_exercises(results) if exercise else []

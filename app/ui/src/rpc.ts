@@ -189,6 +189,26 @@ export class Rpc {
     });
   }
 
+  /**
+   * Read an image into a card. Doc 07 part A.
+   *
+   * The bytes go over as base64 because the boundary is JSON-RPC and a webview
+   * has no path to the blob store. The core writes them once, by hash.
+   */
+  addImage(boardId: string, data: string, mime: string, width: number, height: number) {
+    return this.call<{ image_id: string }>('board.add_image', {
+      board_id: boardId,
+      data,
+      mime,
+      width,
+      height,
+    });
+  }
+
+  read(boardId: string, imageId: string) {
+    return this.call<AskResult>('card.read', { board_id: boardId, image_id: imageId });
+  }
+
   /** Doc 09 section 5's Rerun verb: check the card again, retrieve nothing. */
   verify(boardId: string, cardId: string) {
     return this.call<AskResult>('card.verify', { board_id: boardId, card_id: cardId });
