@@ -3000,6 +3000,37 @@ unchanged and the bundle round trip whole.
 
 ---
 
+### BN-124 Four handles that are not on the card
+
+**Spec** 16 section 3.6, 12 phase 0, 09 section 14.
+
+**Built** 2026-08-27, M15 12f, second half.
+
+**One overlay, not eight hundred buttons.** Doc 16 asks for four handles on hover. Putting them in
+the card's markup would add four elements per card and put a hover state into the signature
+`render.ts` diffs on, so every pointer crossing a card would rebuild it: doc 12 phase 0's gate is
+60 fps pan at 200 cards and the render diff is what earns it. The handles are one element for the
+whole board, moved onto the hovered card by reading the transform the layout already wrote. The
+card markup is untouched, and a Playwright assertion says so by looking for `data-side` in the
+card's own html and not finding it.
+
+**The empty card that cannot exist.** Doc 16 says the drag "creates an empty follow-up card with
+the composer focused", and then says the prototype's card footer input does the same thing without
+the drag. A Card carries a question and the store requires one, so an empty card would be a row no
+pipeline could run and nothing could ever answer. The handle does what the sentence's second half
+describes: it puts the cursor in the follow-up box on that card, which is the composer doc 16 wants
+focused.
+
+**Out of the tab order on purpose.** Doc 09 section 14 asks that every verb be reachable by
+keyboard, and this one is: the follow-up box is a tab stop on every card and is what the handle
+points at. Four more stops per card for a pointer shortcut to a control already there would
+lengthen the walk through a board for the readers who can least afford it.
+
+**Verified** Full battery green, 65 Playwright tests, the workspace tests and clippy at
+`-D warnings`.
+
+---
+
 ---
 
 ## Measured findings

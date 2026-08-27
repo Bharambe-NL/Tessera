@@ -57,6 +57,15 @@
              own z order has them, because a sticky is something a person put on
              top of the board. -->
         <div id="stickies"></div>
+        <!-- Doc 16 section 3.6's four handles, as one overlay for the whole
+             board rather than four buttons per card: the card markup is
+             signature diffed and doc 12 phase 0's pan gate depends on it. -->
+        <div id="handles" class="handles" data-no-pan hidden>
+          <button type="button" data-side="top" tabindex="-1" aria-hidden="true">+</button>
+          <button type="button" data-side="right" tabindex="-1" aria-hidden="true">+</button>
+          <button type="button" data-side="bottom" tabindex="-1" aria-hidden="true">+</button>
+          <button type="button" data-side="left" tabindex="-1" aria-hidden="true">+</button>
+        </div>
       </div>
 
       <!-- Doc 11 section 5: mode indicator top left, board title centred at top,

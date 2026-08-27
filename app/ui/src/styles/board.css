@@ -481,6 +481,63 @@ table.cmp td {
   opacity: 0.8;
 }
 
+/* Doc 16 section 3.6's edge handles. One overlay for the board, moved onto the
+   card the pointer is over, so no card carries a handle in its own markup and
+   the render diff behind doc 12 phase 0's pan gate is untouched. */
+.handles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.handles button {
+  position: absolute;
+  pointer-events: auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.handles button:hover,
+.handles button:focus-visible {
+  opacity: 1;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.handles [data-side='top'] {
+  top: -9px;
+  left: 50%;
+  margin-left: -9px;
+}
+
+.handles [data-side='bottom'] {
+  bottom: -9px;
+  left: 50%;
+  margin-left: -9px;
+}
+
+.handles [data-side='left'] {
+  left: -9px;
+  top: 50%;
+  margin-top: -9px;
+}
+
+.handles [data-side='right'] {
+  right: -9px;
+  top: 50%;
+  margin-top: -9px;
+}
+
 /* Doc 01 section 4.5's sticky, doc 16 section 3.6's "Add note". A person's own
    words on the board: no citation, no verdict, nothing to verify. */
 #stickies {
