@@ -177,6 +177,29 @@ pub fn retrieve(fetcher: &dyn Fetcher, config: &WebConfig, packet: &Packet) -> R
     let mut candidates: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
 
+    // Doc 17 section 5: a path's `sources_hint` locators are read first. First
+    // rather than only: they are a place to look, not a rule, so the seeds are
+    // walked after them and a hint that answers nothing contributes nothing.
+    //
+    // A hint still has to be somewhere this retriever may reach. A path naming
+    // a locator on a host the profile never pointed at is a path asking for the
+    // open internet, and the seeds are what say no to that.
+    let reachable: Vec<String> = config.seeds.iter().filter_map(|s| host_of(s)).collect();
+    for hint in &packet.must_include {
+        if candidates.len() >= MAX_CANDIDATES {
+            break;
+        }
+        if host_of(hint).is_none_or(|host| !reachable.contains(&host)) {
+            continue;
+        }
+        if seen.insert(dedupe_key(hint)) {
+            candidates.push(hint.clone());
+        }
+    }
+
+    // Per seed, so the budget below can be spent across them rather than down
+    // them. A profile that named four sites named all four.
+    let mut per_seed: Vec<Vec<String>> = Vec::new();
     for seed in &config.seeds {
         // The seed itself is checked before it is opened, which is the whole
         // point of a pre hook: a denied domain is never reached, not fetched
@@ -192,18 +215,42 @@ pub fn retrieve(fetcher: &dyn Fetcher, config: &WebConfig, packet: &Packet) -> R
         // A seed that is itself a page is a candidate; a seed that is a listing
         // contributes its links. Both are true of the same fetch, so the body
         // is used twice rather than fetched twice.
+        let mut here: Vec<String> = Vec::new();
         for url in links_within(&listing) {
-            if candidates.len() >= MAX_CANDIDATES {
+            if here.len() >= MAX_CANDIDATES {
                 break;
             }
             if seen.insert(dedupe_key(&url)) {
-                candidates.push(url);
+                here.push(url);
             }
         }
         if has_prose(&listing.body) && seen.insert(dedupe_key(&listing.url)) {
-            candidates.push(listing.url.clone());
+            here.push(listing.url.clone());
         }
+        per_seed.push(here);
     }
+
+    // Doc 05 section 8.1 caps the fetch, and the order that cap is spent in
+    // decides which sites get read at all. Down the list, a profile with four
+    // sites reads the first exhaustively and the last not at all: the corpus
+    // this was first measured against has 38 pages over four hosts, and one
+    // host of seven pages sat entirely past a budget of 32, recalling 0 of the
+    // 16 facts planted on it while the other three recalled 26 of 26.
+    //
+    // Across the list, every site is read before any site is read twice. A
+    // crawl has no cross site ranking to lean on the way a search API does, so
+    // breadth first is the only order that treats the profile's own choice of
+    // sites as meaning something.
+    let mut round = 0usize;
+    while candidates.len() < MAX_CANDIDATES && per_seed.iter().any(|s| round < s.len()) {
+        for site in &per_seed {
+            if let Some(url) = site.get(round) {
+                candidates.push(url.clone());
+            }
+        }
+        round += 1;
+    }
+    candidates.truncate(MAX_CANDIDATES);
 
     let max_fetch = if config.max_fetch == 0 {
         MAX_FETCH
@@ -683,6 +730,55 @@ mod tests {
         assert_eq!(
             resolve("http://h/a/", "https://x/c.html").as_deref(),
             Some("https://x/c.html")
+        );
+    }
+
+    #[test]
+    fn a_path_can_name_a_source_the_listing_does_not_link() {
+        // Doc 17 section 5: `sources_hint` locators are read first. The point
+        // of first is that a page nothing links to is still reachable, which is
+        // what a path naming its own sources is for.
+        let mut map = corpus().0;
+        map.insert(
+            "http://127.0.0.1:9/ledgerline.invalid/unlinked.html".to_string(),
+            page(
+                "The buffer, in full",
+                "The capital conservation buffer is 2.5 per cent and rises in a downturn.",
+            ),
+        );
+        let mut p = packet("capital conservation buffer");
+        p.must_include = vec!["http://127.0.0.1:9/ledgerline.invalid/unlinked.html".into()];
+
+        let out = retrieve(&Fixture(map), &config(), &p);
+        assert!(
+            out.passages
+                .iter()
+                .any(|passage| passage.source.locator.ends_with("unlinked.html")),
+            "the hinted page was never fetched: {:?}",
+            out.passages.iter().map(|p| &p.source.locator).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_hint_outside_the_seeds_is_not_a_way_round_them() {
+        // A path naming a locator on a host the profile never pointed at is a
+        // path asking for the open internet. The seeds are what say no, and a
+        // hint does not outrank them.
+        let mut map = corpus().0;
+        map.insert(
+            "https://elsewhere.invalid/buffers.html".to_string(),
+            page("Elsewhere", "The capital conservation buffer is 9 per cent."),
+        );
+        let mut p = packet("capital conservation buffer");
+        p.must_include = vec!["https://elsewhere.invalid/buffers.html".into()];
+
+        let out = retrieve(&Fixture(map), &config(), &p);
+        assert!(
+            out.passages
+                .iter()
+                .all(|passage| passage.source.locator.contains("127.0.0.1")),
+            "a hint reached past the seeds: {:?}",
+            out.passages.iter().map(|p| &p.source.locator).collect::<Vec<_>>()
         );
     }
 

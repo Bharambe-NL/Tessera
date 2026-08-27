@@ -2761,14 +2761,19 @@ pub fn create_mission(
     profile_id: &str,
     statement: &str,
     target_concept_ids: &[String],
+    // Doc 17 section 5: the locators the path this mission came from was
+    // written around, so a lesson reads them first. Empty for a mission the
+    // learner wrote themselves, which is a mission with no path behind it.
+    sources_hint: &[String],
 ) -> Result<String> {
     let id = new_id();
     let now = now_iso8601();
-    let (row, profile, text, targets, at) = (
+    let (row, profile, text, targets, hints, at) = (
         id.clone(),
         profile_id.to_string(),
         statement.trim().to_string(),
         serde_json::to_string(target_concept_ids)?,
+        serde_json::to_string(sources_hint)?,
         now,
     );
 
@@ -2779,15 +2784,16 @@ pub fn create_mission(
                 "mission_id": id,
                 "statement": statement.trim(),
                 "target_concept_ids": target_concept_ids,
+                "sources_hint": sources_hint,
             }),
             Provenance::user(),
         ),
         move |tx| {
             tx.execute(
                 "INSERT INTO mission (id, profile_id, statement, target_concept_ids,
-                     status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
-                params![row, profile, text, targets, at],
+                     sources_hint, status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)",
+                params![row, profile, text, targets, hints, at],
             )?;
             Ok(())
         },
@@ -2803,7 +2809,7 @@ pub fn active_mission(store: &Store, profile_id: &str) -> Result<Value> {
     Ok(store
         .conn()
         .query_row(
-            "SELECT id, statement, target_concept_ids, audience_id FROM mission
+            "SELECT id, statement, target_concept_ids, audience_id, sources_hint FROM mission
              WHERE profile_id = ?1 AND status = 'active' ORDER BY created_at DESC LIMIT 1",
             params![profile_id],
             |r| {
@@ -2813,6 +2819,8 @@ pub fn active_mission(store: &Store, profile_id: &str) -> Result<Value> {
                     "target_concept_ids": serde_json::from_str::<Value>(&r.get::<_, String>(2)?)
                         .unwrap_or_else(|_| json!([])),
                     "audience_id": r.get::<_, Option<String>>(3)?,
+                    "sources_hint": serde_json::from_str::<Value>(&r.get::<_, String>(4)?)
+                        .unwrap_or_else(|_| json!([])),
                 }))
             },
         )

@@ -95,6 +95,13 @@
       },
       "description": "Doctrine and profile exclusions, already merged. Doc 05 section 15's exclude_paths hook enforces these before any fetch, and a violation is a hard failure rather than a caveat."
     },
+    "must_include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Doc 17 section 5: a learning path's `sources_hint` locators, so a lesson reads what the path was written around. Not the twin of must_exclude: an exclusion is a rule a retriever may not break, and this is a place it is told to look first. A locator that answers nothing still contributes nothing."
+    },
     "doctrine": {
       "type": "object",
       "properties": {

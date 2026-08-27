@@ -99,6 +99,12 @@ THRESHOLDS: dict[str, float] = {
     # rule that makes it structural is the packet carrying only verified cards;
     # this is the measurement that says the structure held.
     "checks_from_verified_cards": 1.00,
+    # Doc 05 section 12: "recall at k on planted facts by retriever ... web
+    # 0.80 (the synthetic web is served locally, so this measures extraction and
+    # ranking)". Lower than the regulatory retriever's because a web plant is
+    # often `partial`: a plain language site alludes to a regulation rather than
+    # quoting it, and the corpus says so per plant.
+    "web_recall_at_k": 0.80,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
     # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
     # taxonomy that fed it. stakes_accuracy replaces it as the classification
@@ -224,6 +230,13 @@ READOUTS: dict[str, str] = {
     "planner_latency_p95_ms": "doc 04 section 12 names a target in prose; the gate is the run's own",
     "planner_tokens_mean": "as above",
     "flag_recall": "the denominator is the corpus's planted flags, not a promise about a rule",
+    # Doc 05 section 12 sets recall at k and says nothing about rank. The gate
+    # is the one it names; this is the harder question the gate cannot ask, and
+    # a run where the two diverge is a ranking problem rather than a reach one.
+    "web_top_source_is_the_right_one": (
+        "doc 05 section 12 gates recall at k; whether the right page ranks first is what it "
+        "cannot ask, and it moves for different reasons"
+    ),
     "domain_label_precision": "BN-036 retired the domain gate with the taxonomy that fed it",
     "audience_detection": "the corpus does not phrase an audience into a question yet",
     "no_source_honesty": "doc 06 section A10 is a behaviour the end to end tests assert directly",
@@ -452,6 +465,88 @@ def _page_sole_support(run: dict) -> bool:
     if not _FIGURE.search(run.get("answer") or ""):
         return False
     return not any(f.get("severity") == "block" for f in run.get("flags") or [])
+
+
+def load_web(results: Path) -> list[dict]:
+    """What the web leg recorded. Absent on every run that did not ask for it."""
+    path = results / "web_retrieval.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _web_metrics(results: Path, manifest: dict) -> list[Metric]:
+    """Doc 05 section 12's web recall, re-derived from the rows the leg wrote.
+
+    The leg records what each query was asked for and what came back; the
+    arithmetic happens here, and the note splits the number by plant fidelity
+    because a fact a site only alludes to is a different retrieval problem from
+    one it states.
+    """
+    if not manifest.get("web_enabled"):
+        waiting = "no web leg ran; start `gen serve` and run the eval with --web"
+        return [
+            Metric("web_recall_at_k", None, 0, 0, waiting),
+            Metric("web_top_source_is_the_right_one", None, 0, 0, waiting),
+        ]
+
+    rows = load_web(results)
+    if not rows:
+        empty = "the web leg ran and recorded no query"
+        return [
+            Metric("web_recall_at_k", None, 0, 0, empty),
+            Metric("web_top_source_is_the_right_one", None, 0, 0, empty),
+        ]
+
+    def recalled(row: dict) -> bool:
+        expected = set(row.get("expected_docs") or [])
+        return any(d in expected for d in row.get("returned_docs") or [])
+
+    by_fidelity: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        hit, total = by_fidelity.get(row.get("fidelity") or "unknown", (0, 0))
+        by_fidelity[row.get("fidelity") or "unknown"] = (hit + int(recalled(row)), total + 1)
+    split = "; ".join(
+        f"{fidelity} {hit}/{total}" for fidelity, (hit, total) in sorted(by_fidelity.items())
+    )
+
+    def first(row: dict) -> bool:
+        returned = row.get("returned_docs") or []
+        return bool(returned) and returned[0] in set(row.get("expected_docs") or [])
+
+    top_split = "; ".join(
+        f"{fidelity} {hit}/{total}"
+        for fidelity, (hit, total) in sorted(
+            {
+                f: (
+                    sum(1 for r in rows if (r.get("fidelity") or "unknown") == f and first(r)),
+                    sum(1 for r in rows if (r.get("fidelity") or "unknown") == f),
+                )
+                for f in {r.get("fidelity") or "unknown" for r in rows}
+            }.items()
+        )
+    )
+
+    return [
+        _ratio(
+            "web_recall_at_k",
+            sum(1 for row in rows if recalled(row)),
+            len(rows),
+            f"planted facts whose own page came back, by plant fidelity: {split}",
+        ),
+        # The harder question. Recall at k asks whether the page was reached;
+        # this asks whether the ranking put it first, and the two move for
+        # different reasons: a crawl that missed a site fails the first, and a
+        # BM25 that preferred a page sharing a word fails only the second.
+        _ratio(
+            "web_top_source_is_the_right_one",
+            sum(1 for row in rows if first(row)),
+            len(rows),
+            f"planted facts whose own page ranked first, by plant fidelity: {top_split}",
+        ),
+    ]
 
 
 def load_learn_sessions(results: Path) -> list[dict]:
@@ -1544,6 +1639,7 @@ def score(results: Path, corpus: Path) -> Report:
 
     # ---------------------------------------------------- learning ---------
     report.metrics.extend(_learning_metrics(results, manifest))
+    report.metrics.extend(_web_metrics(results, manifest))
 
     exercises = load_exercises(results) if exercise else []
     items = [

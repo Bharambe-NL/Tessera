@@ -3751,6 +3751,71 @@ the 20 board bundle round trip whole.
 
 ---
 
+### BN-142 The research profile, and a fetch budget that starved the last site
+
+**Spec** 17 sections 5 and 8, doc 05 sections 8.1 and 12.
+
+**What landed.** A card asked on a lesson board reads with doc 17 section 5's research posture:
+the pack's learning quality ranking instead of its source hierarchy, a larger fetch budget, the set
+narrowed to web, vault and boards, and the path's own `sources_hint` locators reaching both the
+Planner and the retriever as `must_include`. Migration 0010 puts the hints on the mission. A new
+eval leg measures doc 05 section 12's web recall against the synthetic web on loopback.
+
+**Two rankings, two questions.** `source_hierarchy` answers "who has authority over this claim";
+doc 17 section 8's quality ranking answers "who explains it best". A pack gives different answers,
+and the second is what a lesson reads. A pack that declares no quality ranking falls back to the
+first, which is the honest degrade: one ranking beats none.
+
+**`must_include` is not the twin of `must_exclude`.** An exclusion is a rule a retriever may not
+break; a hint is a place it is told to look. So a hinted locator is fetched even when no listing
+links it, and a hint on a host the profile never named is refused: a path naming the open internet
+is a path asking for something the seeds already said no to. A hint that answers nothing still
+contributes nothing, because it is ranked like anything else.
+
+**The number that surprised, split before anything was built.** The first web leg reported 24 of 40,
+against a gate of 0.80. Split by fidelity it read paraphrase 12/20 and partial 6/14, which looks
+like a ranking problem and would have led to fiddling with BM25. Split by the host carrying the
+expected page it read `vaultworks.invalid` 0 of 16 and every other host 26 of 26. Not a ranking
+problem at all: that site's pages were never fetched.
+
+**Why they were never fetched, and what that says about the product.** Doc 05 section 8.1 caps the
+fetch, and the cap was being spent down the seed list rather than across it. The corpus serves 38
+pages over four hosts; the first three hosts hold 31 of them, so a budget of 32 reached the fourth
+site's first page and no further. A search API ranks across sites before the cap applies; a crawl
+has no such ranking, so spending the budget in order makes a profile's later sites invisible. The
+fix is breadth first: every site the profile named is read before any site is read twice. That is
+the profile's own choice of sites meaning something.
+
+**And then the leg's own budget was the measurement.** With the order fixed the number went to 30 of
+40, and every remaining miss was a `web-payments-*` page: 38 pages and a budget of 32 leaves six
+unread whichever order they are read in. Doc 05 section 12 says this number "measures extraction and
+ranking", so the crawl must not be inside it. The leg now sets its budget from the corpus's own page
+count, and the crawl question is the product's, measured by the breadth first change above rather
+than by a gate that conflates the two.
+
+**One perfect number, and the harder one beside it.** Recall at k reads 1.000 over 96 planted facts.
+That is real and it is easy: k is ten passages out of 38 pages, and the gate exists to catch a page
+that was never reached. Whether the right page ranks *first* is the question the gate cannot ask,
+and it reads 0.812, split by plant fidelity: exact 5/6, paraphrase 43/47, partial 26/37. Reported
+rather than gated, because doc 05 section 12 sets recall at k and says nothing about rank, and the
+two move for different reasons: a crawl that missed a site fails the first, a BM25 that preferred a
+page sharing a word fails only the second.
+
+**Measured** 2026-08-27, `gen serve --seed 42` plus `tessera-eval --corpus synthetic/42 --web`, 96
+planted facts, no provider and no network beyond loopback.
+
+| Metric | Threshold | Result |
+|---|---|---|
+| `web_recall_at_k` | 0.80 | 1.000 |
+| `web_top_source_is_the_right_one` | reported | 0.812 |
+
+**Verified** Full battery green: workspace tests including a new unit test over the two rankings and
+a new end to end one over the lesson posture, clippy at `-D warnings`, fmt, style lint, 90 generator
+guards, 71 Playwright tests, a 40 question grounded sweep with nothing below threshold, the learner
+leg unchanged at four rungs walked, and the 20 board bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings

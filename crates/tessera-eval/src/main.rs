@@ -21,6 +21,7 @@ mod bundles;
 mod learners;
 mod reverify;
 mod vault;
+mod webleg;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
@@ -96,6 +97,21 @@ struct Args {
     /// one written here.
     #[arg(long)]
     notebook: bool,
+
+    /// Doc 05 section 12's web recall, against the synthetic web served on
+    /// loopback by `gen serve`. Start that first; this leg reaches nothing
+    /// else, because the seeds are the only hosts it may read.
+    #[arg(long)]
+    web: bool,
+
+    /// Where `gen serve` is listening.
+    #[arg(long, default_value = "http://127.0.0.1:8000/")]
+    web_base: String,
+
+    /// Stop after this many planted facts, so a smoke run is cheap. Every fetch
+    /// is loopback, so the whole set costs time and nothing else.
+    #[arg(long, default_value_t = 60)]
+    web_limit: usize,
 
     /// Run the breadth set (questions_breadth.jsonl) instead of the corpus
     /// question set. BN-036: these are pack independent questions with stakes
@@ -379,6 +395,53 @@ fn keystore(mock: bool) -> Box<dyn KeyStore> {
     Box::new(OsKeychain)
 }
 
+/// Doc 05 section 12's web recall, against the synthetic web on loopback.
+fn run_web(args: &Args) -> std::process::ExitCode {
+    let records = match webleg::run(&args.corpus, &args.web_base, args.web_limit) {
+        Ok(r) => r,
+        Err(message) => {
+            eprintln!("{message}");
+            eprintln!("start the corpus server first: `gen serve --seed <seed>`");
+            return std::process::ExitCode::from(2);
+        }
+    };
+
+    println!("{}", webleg::report(&records));
+    let recalled = records.iter().filter(|r| r.recalled()).count();
+    println!(
+        "{recalled} of {} planted facts came back from the site that carries them",
+        records.len()
+    );
+
+    let dir = args
+        .out
+        .join(corpus_name(&args.corpus))
+        .join(&args.policy)
+        .join(stamp());
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("could not write the results: {e}");
+        return std::process::ExitCode::from(2);
+    }
+    let written = std::fs::File::create(dir.join("web_retrieval.jsonl")).and_then(|mut file| {
+        for record in &records {
+            writeln!(file, "{}", serde_json::to_string(record).unwrap_or_default())?;
+        }
+        Ok(())
+    });
+    if let Err(e) = written {
+        eprintln!("could not write the results: {e}");
+        return std::process::ExitCode::from(2);
+    }
+    if let Err(e) = write_records(&dir, &[], &[], &[], args, "general", 0, 0) {
+        eprintln!("could not write the results: {e}");
+        return std::process::ExitCode::from(2);
+    }
+
+    println!("wrote {}", dir.display());
+    println!("score it with: gen score --results {}", dir.display());
+    std::process::ExitCode::SUCCESS
+}
+
 /// Doc 12 phase 10's acceptance: every corpus board out and back in.
 fn round_trip_bundles(args: &Args) -> std::process::ExitCode {
     let trips = match bundles::run(&args.corpus, &args.snapshot) {
@@ -436,6 +499,14 @@ fn main() -> std::process::ExitCode {
     // questions and a corpus with no `questions.jsonl` can still ship boards.
     if args.bundles {
         return round_trip_bundles(&args);
+    }
+
+    // Before the question set too: doc 05 section 12's web recall asks the
+    // retriever directly rather than asking the product a question, because
+    // what it measures is fetch, extraction and ranking and none of those needs
+    // a model.
+    if args.web {
+        return run_web(&args);
     }
 
     let questions_file = if args.breadth {
@@ -2550,6 +2621,7 @@ fn write_records(
         // a run that generated no exercise has nothing to say about items that
         // do not exist.
         "exercise_enabled": args.exercise,
+        "web_enabled": args.web,
         "retrievers_enabled": !args.no_retrievers,
         // Doc 15 section 5's four metrics report n/a until this is true.
         // Reporting a clean zero for own_card sole support while no card has
