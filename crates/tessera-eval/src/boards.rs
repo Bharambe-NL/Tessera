@@ -49,6 +49,11 @@ pub struct Board {
     /// planted one. Doc 01 section 7's merge rule is what it tests.
     #[serde(default)]
     pub concept_collision: Option<String>,
+    /// The page title this board's bundle collides with on import, when the
+    /// corpus planted one. Doc 16 section 3.1's unique title is what it tests:
+    /// two people writing their own page under one name.
+    #[serde(default)]
+    pub page_collision: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

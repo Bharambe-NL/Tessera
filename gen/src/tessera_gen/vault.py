@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from .boards import Board
+from .boards import Board, Card
 from .corpus import Document
 from . import matchers
 from .facts import BUILDERS, DOMAINS, Fact, LabelPool, Planting
@@ -167,6 +167,7 @@ def generate(
     truth = VaultTruth()
     by_fact = {f.fact_id: f for f in facts}
     taken: set[str] = set()
+    planted_collision = False
 
     # ---------------------------------------------------- saved from a card --
     saved_cards = [
@@ -176,8 +177,24 @@ def generate(
         for card in board.cards
         if card.status == "done" and card.citations and card.fact_ids
     ]
-    for index in range(min(SAVED_PAGES, len(saved_cards))):
-        board, card = saved_cards[(index * 3) % len(saved_cards)]
+    # The stride below walks the card list in order and never reaches the last
+    # boards, which are the three doc 02 line 155 ships as bundles. Doc 16's
+    # pages travel with the board they were saved from, so one card on each
+    # exported board is picked by hand first: without it the bundle round trip
+    # carries pages on every board except the ones the corpus exports.
+    exported: list[tuple[Board, Card]] = []
+    on_board: set[str] = set()
+    for board, card in saved_cards:
+        if board.export_as_bundle and board.board_id not in on_board:
+            exported.append((board, card))
+            on_board.add(board.board_id)
+    picks = [
+        saved_cards[(i * 3) % len(saved_cards)]
+        for i in range(max(min(SAVED_PAGES, len(saved_cards)) - len(exported), 0))
+    ]
+    picks.extend(exported)
+
+    for index, (board, card) in enumerate(picks[:SAVED_PAGES]):
         fact = by_fact.get(card.fact_ids[0])
         if fact is None:
             continue
@@ -205,6 +222,14 @@ def generate(
                 kind="saved",
             )
         )
+        # One planted title collision, mirroring the Concept term collision doc
+        # 02 section 7 plants on a bundle board. Kept on a board that carries no
+        # term collision, so a failure names one merge rule rather than two, and
+        # recorded on the board because the collision is a property of importing
+        # this bundle rather than of the page.
+        if not planted_collision and board.export_as_bundle and board.concept_collision is None:
+            board.page_collision = title
+            planted_collision = True
 
     # ------------------------------ written by hand about a documented fact --
     documented = [f for f in facts if f.planted_in and f.truth == "true"]

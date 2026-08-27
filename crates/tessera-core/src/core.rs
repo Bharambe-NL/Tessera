@@ -1327,6 +1327,10 @@ pub fn build_router() -> Router<Core> {
             /// when someone said so.
             #[serde(default)]
             local_documents: Vec<String>,
+            /// Page ids the author ticked. Absent means none, for the same
+            /// reason: doc 16's vault is the person's own writing.
+            #[serde(default)]
+            pages: Vec<String>,
             #[serde(default)]
             exported_by: Option<String>,
         }
@@ -1334,6 +1338,7 @@ pub fn build_router() -> Router<Core> {
         let options = tessera_bundle::ExportOptions {
             with_history: p.with_history,
             local_documents: p.local_documents.into_iter().collect(),
+            pages: p.pages.into_iter().collect(),
             exported_by: p.exported_by,
         };
 

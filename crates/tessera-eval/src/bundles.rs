@@ -14,7 +14,7 @@ use std::path::Path;
 use rusqlite::params;
 use tessera_bundle::{ExportOptions, export, import};
 use tessera_schema::Registry;
-use tessera_store::{Store, new_id, now_iso8601};
+use tessera_store::{Store, new_id, now_iso8601, repo};
 
 use crate::boards;
 use crate::boards::Board;
@@ -27,6 +27,11 @@ pub struct Trip {
     pub arrived: Counts,
     pub sources_merged: usize,
     pub concepts_collided: usize,
+    pub pages_collided: usize,
+    /// Carried citations the import could not keep, because the passage they
+    /// name stayed behind. Every source in this corpus is cleared, so a number
+    /// above zero here is a mapping defect rather than a withheld document.
+    pub carried_evidence_dropped: usize,
     pub note: String,
 }
 
@@ -36,6 +41,9 @@ impl Trip {
         self.arrived.cards == self.sent.cards
             && self.arrived.citations == self.sent.citations
             && self.arrived.concepts >= self.sent.concepts
+            // A page the author ticked arrives whole or the vault did not
+            // travel. A collision renames the incoming page, it never drops it.
+            && self.arrived.pages == self.sent.pages
             // A source the recipient already had merges into theirs rather than
             // arriving again, so the count is what survived the merge.
             && self.arrived.sources + self.sources_merged >= self.sent.sources
@@ -48,6 +56,7 @@ pub struct Counts {
     pub citations: usize,
     pub sources: usize,
     pub concepts: usize,
+    pub pages: usize,
 }
 
 fn counts(store: &Store, board_id: &str) -> Counts {
@@ -67,6 +76,10 @@ fn counts(store: &Store, board_id: &str) -> Counts {
         concepts: one("SELECT COUNT(DISTINCT l.concept_id) FROM concept_link l
              JOIN card c ON c.id = l.target_ref
              WHERE l.target_type = 'card' AND c.board_id = ?1"),
+        pages: one(
+            "SELECT COUNT(*) FROM page p JOIN card c ON c.id = p.source_card_id
+             WHERE c.board_id = ?1",
+        ),
     }
 }
 
@@ -78,7 +91,7 @@ pub fn run(corpus: &Path, snapshot: &str) -> Result<Vec<Trip>, String> {
     }
     let registry = Registry::load().map_err(|e| format!("schemas: {e}"))?;
 
-    let (mut sender, ids) = seeded(&boards, snapshot)?;
+    let (mut sender, ids) = seeded(&boards, corpus, snapshot)?;
     let mut trips = Vec::new();
 
     for board in &boards {
@@ -104,9 +117,27 @@ pub fn run(corpus: &Path, snapshot: &str) -> Result<Vec<Trip>, String> {
             })
             .unwrap_or_default();
 
+        // Every page saved from this board ticked, for the same reason every
+        // local document is: the checklist is unit tested in tessera-bundle,
+        // and a round trip that ticks nothing measures the checklist twice and
+        // the round trip not at all.
+        let pages = sender
+            .store
+            .conn()
+            .prepare(
+                "SELECT p.id FROM page p JOIN card c ON c.id = p.source_card_id
+                 WHERE c.board_id = ?1",
+            )
+            .and_then(|mut s| {
+                s.query_map([&board_id], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap_or_default();
+
         let options = ExportOptions {
             with_history: true,
             local_documents: local.into_iter().collect(),
+            pages: pages.into_iter().collect(),
             exported_by: Some("The corpus".into()),
         };
 
@@ -138,6 +169,8 @@ pub fn run(corpus: &Path, snapshot: &str) -> Result<Vec<Trip>, String> {
                 arrived: counts(&receiver.store, &board_id),
                 sources_merged: outcome.sources_merged,
                 concepts_collided: outcome.concepts_collided,
+                pages_collided: outcome.pages_collided,
+                carried_evidence_dropped: outcome.carried_evidence_dropped,
                 note: String::new(),
             }),
             Err(e) => trips.push(failed(board, sent, format!("import: {e}"))),
@@ -155,6 +188,8 @@ fn failed(board: &Board, sent: Counts, note: String) -> Trip {
         arrived: Counts::default(),
         sources_merged: 0,
         concepts_collided: 0,
+        pages_collided: 0,
+        carried_evidence_dropped: 0,
         note,
     }
 }
@@ -200,7 +235,7 @@ fn empty_profile() -> Result<Profile, String> {
 /// the first run. Translating here keeps the sweep's ids exactly as they were,
 /// where readable ids are what makes a failure legible, and gives the round trip
 /// the ids the product actually writes.
-fn seeded(boards: &[Board], snapshot: &str) -> Result<(Profile, Ids), String> {
+fn seeded(boards: &[Board], corpus: &Path, snapshot: &str) -> Result<(Profile, Ids), String> {
     let p = empty_profile()?;
     let mut ids = Ids::default();
     let now = now_iso8601();
@@ -318,6 +353,34 @@ fn seeded(boards: &[Board], snapshot: &str) -> Result<(Profile, Ids), String> {
         }
     }
 
+    // Doc 16 section 3.2's pages, on the cards they were saved from. The vault
+    // the corpus already writes is used rather than a fixture of its own, so
+    // the round trip carries the same pages the sweep retrieves from, with the
+    // same carried evidence.
+    let mut p = p;
+    let mut pages = crate::vault::load(corpus)?;
+    for page in &mut pages {
+        page.source_card_id = page
+            .source_card_id
+            .as_deref()
+            .and_then(|card| ids.get(card))
+            .map(str::to_string);
+        // The carried passages are the corpus's ids and the store holds ULIDs,
+        // so they are translated here. An entry whose passage this snapshot
+        // never seeded is dropped rather than carried: doc 16 section 2.2 makes
+        // carried evidence the reason a page can support a claim.
+        page.citations_carried.retain_mut(|entry| {
+            let Some(mapped) = entry["passage_id"].as_str().and_then(|id| ids.get(id)) else {
+                return false;
+            };
+            entry["passage_id"] = serde_json::json!(mapped);
+            true
+        });
+    }
+    let profile = p.profile.clone();
+    let pack = p.pack.clone();
+    crate::vault::seed(&mut p.store, &profile, &pack, corpus, &pages, None)?;
+
     Ok((p, ids))
 }
 
@@ -339,13 +402,34 @@ impl Ids {
     }
 }
 
-/// The recipient, holding the colliding term when the corpus planted one.
+/// The recipient, holding the colliding term and title the corpus planted.
 fn recipient(board: &Board) -> Result<Profile, String> {
-    let p = empty_profile()?;
+    let mut p = empty_profile()?;
     if let Some(term) = &board.concept_collision {
         // A different id for the same word, which is exactly the case doc 01
         // section 7 rules on: two people meaning something by one term.
         write_concept(&p, &new_id(), term, "confirmed")?;
+    }
+    if let Some(title) = &board.page_collision {
+        // The same case one layer up: two people writing their own page under
+        // one name. Doc 16 section 3.1 makes the title unique per profile, so
+        // the importer has to keep both without overwriting either.
+        let path = format!("vault/{}.md", tessera_core::vault::slug(title));
+        let profile = p.profile.clone();
+        let pack = p.pack.clone();
+        repo::create_page(
+            &mut p.store,
+            repo::NewPage {
+                profile_id: &profile,
+                title,
+                body: "What I had already written about this.",
+                file_path: &path,
+                source_card_id: None,
+                citations_carried: serde_json::json!([]),
+                doctrine_pack_id: Some(&pack),
+            },
+        )
+        .map_err(|e| format!("page {title}: {e}"))?;
     }
     Ok(p)
 }
@@ -389,12 +473,12 @@ fn link_concept(p: &Profile, concept_id: &str, card_id: &str) -> Result<(), Stri
 /// The table the run prints. Doc 12 phase 10's acceptance, in one place.
 pub fn report(trips: &[Trip]) -> String {
     let mut out = String::from(
-        "| Board | Cards | Citations | Sources | Concepts | Merged | Collided | Whole |\n\
-         | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        "| Board | Cards | Citations | Sources | Concepts | Pages | Merged | Terms kept          | Titles kept | Whole |\n\
+         | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for t in trips {
         out.push_str(&format!(
-            "| {}{} | {}/{} | {}/{} | {}/{} | {}/{} | {} | {} | {} |\n",
+            "| {}{} | {}/{} | {}/{} | {}/{} | {}/{} | {}/{} | {} | {} | {} | {} |\n",
             t.board_id,
             if t.marked_for_export { " *" } else { "" },
             t.arrived.cards,
@@ -405,12 +489,15 @@ pub fn report(trips: &[Trip]) -> String {
             t.sent.sources,
             t.arrived.concepts,
             t.sent.concepts,
+            t.arrived.pages,
+            t.sent.pages,
             t.sources_merged,
             t.concepts_collided,
+            t.pages_collided,
             if t.whole() { "yes" } else { "no" },
         ));
         if !t.note.is_empty() {
-            out.push_str(&format!("| | | | | | | | {} |\n", t.note));
+            out.push_str(&format!("| | | | | | | | | | {} |\n", t.note));
         }
     }
     out

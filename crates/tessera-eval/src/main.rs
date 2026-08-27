@@ -361,17 +361,29 @@ fn round_trip_bundles(args: &Args) -> std::process::ExitCode {
     let lost: Vec<&bundles::Trip> = trips.iter().filter(|t| !t.whole()).collect();
     let marked = trips.iter().filter(|t| t.marked_for_export).count();
     let collided: usize = trips.iter().map(|t| t.concepts_collided).sum();
+    let titles: usize = trips.iter().map(|t| t.pages_collided).sum();
+    let pages: usize = trips.iter().map(|t| t.arrived.pages).sum();
+    let dropped: usize = trips.iter().map(|t| t.carried_evidence_dropped).sum();
 
     println!(
         "{} boards round tripped, {marked} of them marked for export by the corpus, \
-         {collided} concept {} handled",
+         {collided} concept {} and {titles} page {} handled",
         trips.len(),
         if collided == 1 {
             "term collision"
         } else {
             "term collisions"
+        },
+        if titles == 1 {
+            "title collision"
+        } else {
+            "title collisions"
         }
     );
+    // Named rather than implied: doc 16 section 2.2 makes carried evidence the
+    // reason a page can support a claim at all, so a page that arrives without
+    // it arrives weaker than it left.
+    println!("{pages} pages carried, {dropped} carried citations dropped for evidence that stayed behind");
     if lost.is_empty() {
         println!("every board arrived whole");
         return std::process::ExitCode::SUCCESS;

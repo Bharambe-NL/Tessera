@@ -43,6 +43,10 @@
         "passages": { "type": "boolean" },
         "concepts": { "type": "boolean" },
         "exercises": { "type": "boolean" },
+        "pages": {
+          "type": "boolean",
+          "description": "Doc 16 section 3.1's vault pages, with their links. Present as a file whenever the exporter wrote one; a page travels only when the author ticked it, so an empty file is the ordinary case."
+        },
         "events": { "type": "boolean" }
       }
     },

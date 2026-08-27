@@ -178,6 +178,79 @@ fn seeded(p: &mut Profile, source_class: &str, locator: &str) -> String {
     board
 }
 
+/// Save a page from the board's card, the way doc 16 section 3.2's Save as
+/// page does: the card's citations carried, the chip set on the card, and a
+/// second page it links to.
+fn saved_page(p: &mut Profile, board: &str) -> (String, String) {
+    let card: String = p
+        .store
+        .conn()
+        .query_row("SELECT id FROM card WHERE board_id = ?1", [board], |r| r.get(0))
+        .expect("card");
+    let carried: Vec<Value> = p
+        .store
+        .conn()
+        .prepare("SELECT ordinal, passage_id FROM citation WHERE card_id = ?1")
+        .and_then(|mut s| {
+            s.query_map([&card], |r| {
+                Ok(json!({ "ordinal": r.get::<_, i64>(0)?, "passage_id": r.get::<_, String>(1)? }))
+            })?
+            .collect()
+        })
+        .expect("citations");
+
+    let other = repo::create_page(
+        &mut p.store,
+        repo::NewPage {
+            profile_id: &p.profile,
+            title: "Liquidity risk",
+            body: "Nothing yet.",
+            file_path: "vault/liquidity-risk.md",
+            source_card_id: None,
+            citations_carried: json!([]),
+            doctrine_pack_id: Some(&p.pack),
+        },
+    )
+    .expect("other page");
+
+    let page = repo::create_page(
+        &mut p.store,
+        repo::NewPage {
+            profile_id: &p.profile,
+            title: "Capital buffer",
+            body: "The buffer is 2.5 per cent. See [[Liquidity risk]] and [[Nothing here]].",
+            file_path: "vault/capital-buffer.md",
+            source_card_id: Some(&card),
+            citations_carried: json!(carried),
+            doctrine_pack_id: Some(&p.pack),
+        },
+    )
+    .expect("page");
+    repo::set_card_page(&p.store, &card, &page).expect("chip");
+    repo::replace_page_links(
+        &mut p.store,
+        &page,
+        &[
+            repo::NewPageLink {
+                target_kind: "page".into(),
+                target_id: Some(other.clone()),
+                target_title: "Liquidity risk".into(),
+                display_text: "Liquidity risk".into(),
+                position: 28,
+            },
+            repo::NewPageLink {
+                target_kind: "unresolved".into(),
+                target_id: None,
+                target_title: "Nothing here".into(),
+                display_text: "Nothing here".into(),
+                position: 51,
+            },
+        ],
+    )
+    .expect("links");
+    (page, other)
+}
+
 fn round_trip(
     from: &mut Profile,
     board: &str,
@@ -567,4 +640,237 @@ fn a_bundle_never_carries_the_senders_profile_id() {
             "{name} carries the sender's profile id"
         );
     }
+}
+
+// ------------------------------------------------------------------ pages ---
+
+#[test]
+fn a_page_does_not_travel_unless_the_author_ticks_it() {
+    let mut sender = profile("general");
+    let board = seeded(&mut sender, "web", "https://example.test/rules");
+    let (page, _) = saved_page(&mut sender, &board);
+    let mut receiver = profile("general");
+
+    // The checklist offers it, because it was saved from a card on this board.
+    let offered = preflight(&sender.store, &board).expect("preflight");
+    assert_eq!(offered.pages.len(), 1);
+    assert_eq!(offered.pages[0].page_id, page);
+    assert_eq!(offered.pages[0].citations_carried, 1);
+
+    let (manifest, outcome) = round_trip(&mut sender, &board, &ExportOptions::default(), &mut receiver);
+
+    assert_eq!(manifest["counts"]["pages.jsonl"], 0);
+    assert_eq!(
+        one(&receiver.store, "SELECT COUNT(*) FROM page WHERE id = ?1", &page),
+        0
+    );
+    assert_eq!(outcome.written.get("pages.jsonl"), None);
+
+    // And the page the author kept leaves no trace at all: doc 16's vault is a
+    // person's own writing, so a withheld title is not even listed the way a
+    // withheld local document's file name is.
+    assert!(!manifest.to_string().contains("Capital buffer"));
+
+    // The chip on the card names a page the recipient does not have, so it is
+    // cleared rather than carried into a foreign key that cannot hold.
+    let chip: Option<String> = receiver
+        .store
+        .conn()
+        .query_row("SELECT page_id FROM card WHERE board_id = ?1", [&board], |r| {
+            r.get(0)
+        })
+        .expect("card");
+    assert_eq!(chip, None);
+}
+
+#[test]
+fn a_ticked_page_arrives_with_its_evidence_and_its_links() {
+    let mut sender = profile("general");
+    let board = seeded(&mut sender, "web", "https://example.test/rules");
+    let (page, other) = saved_page(&mut sender, &board);
+    let mut receiver = profile("general");
+
+    let options = ExportOptions {
+        // Both: the linked page is not on the board, and ticking it by hand is
+        // how a link keeps its target.
+        pages: [page.clone(), other.clone()].into_iter().collect(),
+        ..Default::default()
+    };
+    let (manifest, outcome) = round_trip(&mut sender, &board, &options, &mut receiver);
+
+    assert_eq!(manifest["counts"]["pages.jsonl"], 2);
+    assert_eq!(outcome.pages_collided, 0);
+    assert_eq!(outcome.carried_evidence_dropped, 0);
+
+    // Doc 16 section 2.2: the carried passage resolves on the recipient's
+    // machine, which is what makes the page citable there at all.
+    let carried: String = receiver
+        .store
+        .conn()
+        .query_row("SELECT citations_carried FROM page WHERE id = ?1", [&page], |r| {
+            r.get(0)
+        })
+        .expect("page");
+    let entries: Vec<Value> = serde_json::from_str(&carried).expect("carried json");
+    assert_eq!(entries.len(), 1);
+    let passage = entries[0]["passage_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM passage WHERE id = ?1",
+            &passage
+        ),
+        1
+    );
+
+    // The resolved link still points at the page it named, and the unresolved
+    // one is still waiting for the same title.
+    let kinds: Vec<(String, Option<String>, String)> = receiver
+        .store
+        .conn()
+        .prepare(
+            "SELECT target_kind, target_id, target_title FROM page_link
+                  WHERE from_page_id = ?1 ORDER BY position",
+        )
+        .and_then(|mut s| {
+            s.query_map([&page], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect()
+        })
+        .expect("links");
+    assert_eq!(kinds.len(), 2);
+    assert_eq!(kinds[0], ("page".into(), Some(other), "Liquidity risk".into()));
+    assert_eq!(kinds[1].0, "unresolved");
+    assert_eq!(kinds[1].2, "Nothing here");
+
+    // And the card's chip points back at the page that arrived.
+    let chip: Option<String> = receiver
+        .store
+        .conn()
+        .query_row("SELECT page_id FROM card WHERE board_id = ?1", [&board], |r| {
+            r.get(0)
+        })
+        .expect("card");
+    assert_eq!(chip, Some(page));
+}
+
+#[test]
+fn a_link_whose_target_stayed_behind_arrives_unresolved() {
+    let mut sender = profile("general");
+    let board = seeded(&mut sender, "web", "https://example.test/rules");
+    let (page, other) = saved_page(&mut sender, &board);
+    let mut receiver = profile("general");
+
+    let options = ExportOptions {
+        pages: [page.clone()].into_iter().collect(),
+        ..Default::default()
+    };
+    round_trip(&mut sender, &board, &options, &mut receiver);
+
+    assert_eq!(
+        one(&receiver.store, "SELECT COUNT(*) FROM page WHERE id = ?1", &other),
+        0
+    );
+    let (kind, title): (String, String) = receiver
+        .store
+        .conn()
+        .query_row(
+            "SELECT target_kind, target_title FROM page_link
+             WHERE from_page_id = ?1 ORDER BY position LIMIT 1",
+            [&page],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("link");
+    // Doc 16 section 3.1 keeps an unresolved link rather than dropping it, and
+    // clicking it creates the page: a link that arrives pointing at nothing
+    // would be a link the recipient can neither follow nor make good.
+    assert_eq!(kind, "unresolved");
+    assert_eq!(title, "Liquidity risk");
+}
+
+#[test]
+fn a_page_title_collision_keeps_both() {
+    let mut sender = profile("general");
+    let board = seeded(&mut sender, "web", "https://example.test/rules");
+    let (page, _) = saved_page(&mut sender, &board);
+    let mut receiver = profile("general");
+
+    // The recipient wrote their own page about the same thing, in their own
+    // words, under the same name and the same file.
+    repo::create_page(
+        &mut receiver.store,
+        repo::NewPage {
+            profile_id: &receiver.profile.clone(),
+            title: "capital buffer",
+            body: "What I think about it.",
+            file_path: "vault/capital-buffer.md",
+            source_card_id: None,
+            citations_carried: json!([]),
+            doctrine_pack_id: None,
+        },
+    )
+    .expect("their page");
+
+    let options = ExportOptions {
+        pages: [page.clone()].into_iter().collect(),
+        ..Default::default()
+    };
+    let (_, outcome) = round_trip(&mut sender, &board, &options, &mut receiver);
+
+    assert_eq!(outcome.pages_collided, 1);
+    // Both, the way a colliding concept keeps both: one word, two people, and
+    // nothing here can tell which of them is right.
+    let pages: i64 = receiver
+        .store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM page", [], |r| r.get(0))
+        .expect("pages");
+    assert_eq!(pages, 2);
+    let (title, path): (String, String) = receiver
+        .store
+        .conn()
+        .query_row("SELECT title, file_path FROM page WHERE id = ?1", [&page], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .expect("the imported page");
+    assert_eq!(title, "Capital buffer (conflict)");
+    assert_eq!(path, "vault/capital-buffer 2.md");
+    let mine: String = receiver
+        .store
+        .conn()
+        .query_row(
+            "SELECT body FROM page WHERE file_path = 'vault/capital-buffer.md'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("their own page");
+    assert_eq!(mine, "What I think about it.");
+}
+
+#[test]
+fn carried_evidence_the_author_withheld_does_not_arrive_dangling() {
+    let mut sender = profile("general");
+    let board = seeded(&mut sender, "local_document", "/home/someone/Private/rules.pdf");
+    let (page, _) = saved_page(&mut sender, &board);
+    let mut receiver = profile("general");
+
+    // The page's evidence is a local document, and the author cleared the page
+    // without clearing the document.
+    let options = ExportOptions {
+        pages: [page.clone()].into_iter().collect(),
+        ..Default::default()
+    };
+    let (_, outcome) = round_trip(&mut sender, &board, &options, &mut receiver);
+
+    assert_eq!(outcome.carried_evidence_dropped, 1);
+    let carried: String = receiver
+        .store
+        .conn()
+        .query_row("SELECT citations_carried FROM page WHERE id = ?1", [&page], |r| {
+            r.get(0)
+        })
+        .expect("page");
+    // Empty rather than pointing at a passage that is not there: doc 16 makes
+    // carried evidence the reason a page can support a claim, so evidence that
+    // did not travel has to stop claiming to.
+    assert_eq!(carried, "[]");
 }

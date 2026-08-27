@@ -20,6 +20,11 @@ pub struct ExportOptions {
     /// Doc 01 section 7's checklist answer: source ids the author cleared. A
     /// local document not named here does not travel.
     pub local_documents: BTreeSet<String>,
+    /// Page ids the author ticked. Doc 16 section 3.1 makes the vault the
+    /// person's own writing, so it travels only when it is named, and a page
+    /// the author left unticked leaves no trace in the archive at all: not a
+    /// row, not a title, not a line in the manifest.
+    pub pages: BTreeSet<String>,
     /// Display name only. Doc 10 section 8: a bundle carries no other identity.
     pub exported_by: Option<String>,
 }
@@ -32,6 +37,7 @@ impl Default for ExportOptions {
             // it all" is not a checklist, and this is the one setting where the
             // wrong default leaks a person's own documents to a stranger.
             local_documents: BTreeSet::new(),
+            pages: BTreeSet::new(),
             exported_by: None,
         }
     }
@@ -49,6 +55,15 @@ pub struct LocalDocument {
     pub passages: usize,
 }
 
+/// One vault page the author can send with the board.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VaultPage {
+    pub page_id: String,
+    pub title: String,
+    /// Doc 16 section 2.2's carried evidence: the passages the page stands on.
+    pub citations_carried: usize,
+}
+
 /// What the exporter shows before it writes anything. Doc 01 section 7.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Preflight {
@@ -57,6 +72,9 @@ pub struct Preflight {
     pub cards: usize,
     pub sources: usize,
     pub local_documents: Vec<LocalDocument>,
+    /// Pages saved from a card on this board, offered for the author to tick.
+    /// Offered, never assumed: `ExportOptions::pages` starts empty.
+    pub pages: Vec<VaultPage>,
 }
 
 /// Read what an export would carry, without writing it.
@@ -93,6 +111,14 @@ pub fn preflight(store: &Store, board_id: &str) -> Result<Preflight> {
     }
 
     Ok(Preflight {
+        pages: board_pages(store, board_id)?
+            .into_iter()
+            .map(|page| VaultPage {
+                page_id: page["id"].as_str().unwrap_or_default().to_string(),
+                title: page["title"].as_str().unwrap_or_default().to_string(),
+                citations_carried: carried(&page).len(),
+            })
+            .collect(),
         board_id: board_id.to_string(),
         board_title: board["title"].as_str().unwrap_or_default().to_string(),
         cards: cards.len(),
@@ -160,6 +186,34 @@ pub fn export<W: Write + Seek>(
          WHERE l.target_type = 'card' AND c.board_id = ?1",
         &[&board_id],
     )?;
+
+    // Pages and their links: only the ones the author ticked. Doc 16 section
+    // 3.1's vault is a person's own notebook, so the rule is the local
+    // document rule and stricter: the checklist offers the pages saved from
+    // this board's cards, and nothing at all travels unnamed.
+    let profile_id = board["profile_id"].as_str().unwrap_or_default().to_string();
+    let mut pages = Vec::new();
+    let mut page_links = Vec::new();
+    for id in &options.pages {
+        let Some(page) = query(
+            conn,
+            "SELECT * FROM page WHERE id = ?1 AND profile_id = ?2",
+            &[id, &profile_id],
+        )?
+        .into_iter()
+        .next() else {
+            // Ticked and then deleted, or ticked from another profile. Neither
+            // is worth failing an export over, and carrying a row that is not
+            // there is not an option.
+            continue;
+        };
+        page_links.extend(query(
+            conn,
+            "SELECT * FROM page_link WHERE from_page_id = ?1 ORDER BY position",
+            &[id],
+        )?);
+        pages.push(redact_page(page));
+    }
 
     // Sources and passages: only what this board cites, and only what the
     // author cleared. Doc 01 section 7.
@@ -232,6 +286,8 @@ pub fn export<W: Write + Seek>(
         ("concepts.jsonl", &concepts),
         ("concept_links.jsonl", &concept_links),
         ("exercises.jsonl", &exercises),
+        ("pages.jsonl", &pages),
+        ("page_links.jsonl", &page_links),
         ("events.jsonl", &events),
     ];
 
@@ -255,7 +311,7 @@ pub fn export<W: Write + Seek>(
             "cards": true, "visuals": true, "citations": true, "flags": true,
             "reviews": true, "ink": true, "notes": true, "images": true,
             "sources": true, "passages": true, "concepts": true,
-            "exercises": true, "events": options.with_history
+            "exercises": true, "pages": true, "events": options.with_history
         },
         "counts": Value::Object(counts),
         "local_documents": preflight.local_documents.iter().map(|d| json!({
@@ -291,6 +347,7 @@ pub fn export<W: Write + Seek>(
                 "bundle_id": bundle_id,
                 "with_history": options.with_history,
                 "local_documents_withheld": withheld.len(),
+                "pages": pages.len(),
             }),
             Provenance::user(),
         )
@@ -335,6 +392,43 @@ fn write_archive<W: Write + Seek>(
 
     zip.finish()?;
     Ok(())
+}
+
+/// Pages saved from a card on this board. Doc 16 section 3.2 sets
+/// `source_card_id` on Save as page, and that is the only tie a page has to a
+/// board: a page written in the vault by hand belongs to the person, not to any
+/// board, and is offered by the checklist only if the author ticks it by hand.
+fn board_pages(store: &Store, board_id: &str) -> Result<Vec<Value>> {
+    query(
+        store.conn(),
+        "SELECT p.* FROM page p JOIN card c ON c.id = p.source_card_id
+         WHERE c.board_id = ?1 ORDER BY p.title",
+        &[&board_id],
+    )
+}
+
+/// A page's carried citations, as `{ordinal, passage_id}` objects.
+///
+/// Stored as json text in one column, so both sides of the bundle read it
+/// through here rather than each spelling out the same parse.
+pub(crate) fn carried(page: &Value) -> Vec<Value> {
+    page["citations_carried"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Vec<Value>>(text).ok())
+        .unwrap_or_default()
+}
+
+/// Doc 16 section 3.1: `file_path` is relative to the profile folder, so it
+/// says `vault/basel-iii.md` and never where that folder lives.
+fn redact_page(mut page: Value) -> Value {
+    if let Some(object) = page.as_object_mut() {
+        object.remove("profile_id");
+        // What the row last agreed with the sender's file. The recipient has no
+        // such file yet, so an agreement carried across would tell their next
+        // sync that a file it has never seen is up to date.
+        object.insert("synced_hash".into(), json!(""));
+    }
+    page
 }
 
 fn board_row(store: &Store, board_id: &str) -> Result<Value> {
@@ -475,7 +569,36 @@ mod tests {
     #[test]
     fn the_checklist_defaults_to_sending_nothing() {
         // The one default where being wrong sends someone's own documents to a
-        // stranger, so it is asserted rather than assumed.
+        // stranger, so it is asserted rather than assumed. The vault is the
+        // same rule applied to a person's own writing.
         assert!(ExportOptions::default().local_documents.is_empty());
+        assert!(ExportOptions::default().pages.is_empty());
+    }
+
+    #[test]
+    fn a_page_travels_without_the_folder_it_sits_in() {
+        let page = json!({
+            "id": "pg1", "profile_id": "p1", "title": "Basel III",
+            "file_path": "vault/basel-iii.md", "synced_hash": "abc123"
+        });
+        let out = redact_page(page);
+        assert!(out.get("profile_id").is_none());
+        assert_eq!(out["file_path"], "vault/basel-iii.md");
+        // The agreement is the sender's, about a file the recipient has never
+        // had. Carrying it would make their first sync skip writing the file.
+        assert_eq!(out["synced_hash"], "");
+    }
+
+    #[test]
+    fn carried_evidence_reads_as_ordinals_and_passages() {
+        let page = json!({
+            "citations_carried": "[{\"ordinal\":1,\"passage_id\":\"ps1\"}]"
+        });
+        assert_eq!(carried(&page).len(), 1);
+        assert_eq!(carried(&page)[0]["passage_id"], "ps1");
+        // A page saved from a card with no citations, and a row written before
+        // the column existed, both read as nothing rather than as a failure.
+        assert!(carried(&json!({ "citations_carried": "" })).is_empty());
+        assert!(carried(&json!({})).is_empty());
     }
 }
