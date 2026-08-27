@@ -521,9 +521,150 @@ says n/a while the temptation does not exist and becomes real the moment it does
 three report n/a on `memory_enabled` in the run manifest, the same way fact recall reports n/a
 on `retrievers_enabled`.
 
+### BN-049 A snapshot is a tree as well as a manifest
+
+**Spec** 02 section 5.4, which describes the corpus as "a sequence of snapshots at T0, T1, T2, T3"
+and section 8, which lists `snapshots/T0.json ...` as the only snapshot output.
+
+**Decision** `gen build --seed 42 --snapshot T3` writes the whole corpus as it stands at that
+label to `<out>/<seed>-<label>`, beside the default tree rather than replacing it. The manifests
+are computed by hashing what the materialiser returns, so a file and its snapshot entry cannot
+disagree. A build with no flag writes exactly what it wrote before, byte for byte.
+
+**Reason** The manifests named what changes at T2 and T3 but no code ever wrote those bytes, so
+the single tree on disk was the union of every time and nothing could read the corpus as it stood
+at T3. Doc 02 section 5.4's own acceptance, a board written at T1 and reopened at T3, needs both
+trees present at once, which is why the snapshot tree sits beside the default one rather than
+overwriting it. Computing the manifest from the materialised documents rather than beside them
+removes the way the two could drift: the earlier code hashed `body + "\n\nRevised at T2."` in one
+place and would have written the file in another.
+
+### BN-050 A snapshot records the questions it strands
+
+**Spec** silent. 02 section 5.4 deletes documents between snapshots and section 6 fixes the
+question set at 400 for every snapshot.
+
+**Decision** A snapshot tree counts the questions whose required sources it no longer holds,
+writes one `stranded_question` row per question into `ledger.jsonl`, and reports the count in the
+build row and the README. Seven questions are stranded at T3.
+
+**Reason** BN-019. A sweep against the T3 tree will answer those questions worse, and the reason
+is that the documents were deleted on purpose rather than that retrieval got worse. Without the
+record the next person to run that sweep reads a recall drop and starts fixing the retriever. The
+first verify only run made the point: `fact_recall_research` read 0.000 off exactly one question,
+whose only source is the memo doc 15 section 5 removes at T2.
+
+### BN-051 Staleness is computed from the files, never from the corpus manifests
+
+**Spec** 05 section 3, "re-verification of cited locators (content hash comparison)", and section
+7's three reasons: `content_changed`, `locator_gone`, `superseded_version`.
+
+**Decision** The re-verification pass reads the corpus the way a retriever does: the file at the
+locator, its bytes against the baseline tree's, and the other files in its folder. It never reads
+`snapshots/*.json` or `facts.jsonl`. All three reasons come out of that: a locator that resolves
+in neither tree is gone, bytes that moved are changed, and a document with a later version beside
+it is superseded.
+
+**Reason** The generator's manifests are the answer the metric is scored against. A pass that read
+them would report what the generator already knew, and `staleness_detection` would measure whether
+the copy succeeded rather than whether the product noticed. The cost is that a locator resolvable
+in neither tree is counted unresolvable rather than assumed gone, which is the honest reading.
+
+### BN-052 The version in force is read from the folder, not filtered on
+
+**Spec** 07 section B8.4, "version_ref equals the version in force".
+
+**Decision** A regulatory document whose stem carries a version, `reg-car3-v1`, is superseded when
+a sibling in the same folder carries a later one. This is a freshness check at re-verification
+time. It is not the version_ref retrieval filter, which stays struck.
+
+**Reason** Both ends of doc 15's stale chain cite `reg-car3-v1.md`, whose bytes are identical at
+T1 and T3, so neither a hash comparison nor an existence check can find them. Supersession is the
+only signal that reaches them, and without it two of the three gates cannot be measured at all.
+The struck filter was a different thing for a different purpose: filtering retrieval results by
+version, measured useless because only 2 of 104 documents carry a version and a filter over two
+documents cannot move a recall gate. Those same two documents are exactly what the freshness check
+exists for.
+
+### BN-053 An imported card records the locator a retriever would
+
+**Spec** 01 section 4.9's dedupe key, and 05 section 12's zero duplicates gate.
+
+**Decision** The eval's board import writes each citation's locator in the form the retriever that
+reaches the same file records, relative to the folder it indexes, rather than the form the corpus
+files it under. `regulatory/reg-car3-v1.md` becomes `reg-car3-v1.md`.
+
+**Reason** Found by splitting a number. The first re-verification marked 51 cards stale and the
+follow up leg found none, because the two spellings produced two Source rows for one document. A
+card answered today deduped against the retriever's row and inherited nothing from the one the
+imported card cited. Doc 05 section 12's gate would have counted the same duplication.
+
+### BN-054 A card read back is not an answer, and a fixture question is not a sample
+
+**Spec** 02 section 10.2, whose metrics are all defined per question asked.
+
+**Decision** `gen score` splits three populations. A `verify_only` row re-verifies an existing card
+and is read only by the staleness metrics. A question the verify leg asked to build a stale
+ancestor is read only by the Planner metrics. Everything about answering, recall, precision,
+flags, cost and latency, reads the questions that were actually sampled, and reports n/a when
+there are none.
+
+**Reason** BN-019, twice over. A re-verification carries the card's own answer and the card's own
+facts, so counting it scored `fact_recall_deep` at 1.000 for restating text nobody was asked to
+find. The verify leg picks its questions because their sources went stale, several of them deleted
+outright, so scoring their recall measures the timeline. Both numbers looked like results.
+
+### BN-055 A verify_only packet carries the card id the store holds
+
+**Spec** 01 section 3, "identifiers are ULIDs", and 07 section B3's re-verification batch.
+
+**Decision** The Verifier packet requires a ulid `card_id` for every kind except `verify_only`,
+which accepts whatever id the store holds. Every other packet, and every other kind, keeps the
+rule unchanged.
+
+**Reason** A re-verification reads a card that already exists, and on the eval corpus that is one
+the generator named `B-01-C03`. Those ids are kept deliberately, because doc 15's ground truth
+names prior cards as `board_id/card_id` and the boards retriever's document reference is exactly
+that; minting ulids for them would need a translation table on the path the memory gates are
+measured through. Relaxing the rule for one packet kind was the smaller change, and it points at
+a real case: doc 01 section 7's bundle merge re-verifies cards that arrived from another machine.
+The follow up leg runs through the ordinary pipeline on cards the product minted, so nothing else
+needed the exception.
+
 ---
 
 ## Measured findings
+
+### BN-056 The three staleness gates, measured at last
+
+**Measured** 2026-08-27, corpus 0.3.0-42 built at T1 and T3, grounded mock, no model spend. The
+question sweep is 400 questions at T1, results at `eval/results/42/grounded/run-1787801147`. The
+re-verification reads 148 cards back at T3 against the T1 tree as its baseline, results at
+`eval/results/42-T3/grounded/run-1787800768`.
+
+| Gate | Threshold | Result |
+|---|---|---|
+| `staleness_detection` | 0.95 | 1.000 |
+| `stale_propagation` | 0.95 | 1.000 |
+| `stale_ancestor_reverification` | 1.0 | 1.000 |
+
+Neither run has a measured metric below its threshold. The T1 sweep measures 24 of 36 metrics and
+the T3 re-verification 9, and the two do not overlap much on purpose: a re-verification answers
+nothing, so every metric about answering reports n/a there.
+
+**What the denominators are.** Worth writing down, because all three are small and a reader who
+assumes otherwise will misread the next run. `staleness_detection` is 2, the two cards that state
+a superseded fact; no question in the 400 requires one, so the question sweep can never measure
+this metric however well it retrieves. `stale_propagation` is 2, the ends of doc 15's stale chain.
+`stale_ancestor_reverification` is 10, the follow ups whose parent turned out to cite a stale
+source. Five of 28 cited sources went stale at T3: two changed content, two stopped resolving, one
+was superseded.
+
+**What is not yet measured.** The dependent end of the stale chain cites `reg-car3-v1` itself as
+well as building on the origin card, so it would be flagged whether propagation works or not. The
+metric passes on a card that has two reasons to be flagged, and separating them needs a fixture
+where the dependent cites nothing stale of its own. Recorded rather than fixed, because changing
+the corpus to suit the metric is the wrong order.
 
 ### BN-047 The three defects the M6 plan predicted, closed
 
