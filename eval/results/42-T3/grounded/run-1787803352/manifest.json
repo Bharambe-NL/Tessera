@@ -21,6 +21,6 @@
   "retrievers_enabled": true,
   "sample_per_depth": 3,
   "snapshot": "T3",
-  "support_check_enabled": false,
+  "support_check_enabled": true,
   "verify_only": true
 }

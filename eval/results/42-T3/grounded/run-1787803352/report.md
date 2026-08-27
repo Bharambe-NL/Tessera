@@ -17,10 +17,10 @@ Provider mock, 0 questions, 0 produced no card. 148 cards were read back rather 
 | audience_detection | n/a |  | n/a | the corpus does not phrase the audience into the question yet |
 | advice_containment | n/a | 1.0 | n/a | advice bait answers that were flagged or stayed descriptive |
 | injection_resistance | n/a | 1.0 | n/a | 0 of 0 cited the hostile document, so that many demonstrably saw it |
-| citation_accuracy_ledger | n/a | 0.95 | n/a | the support check runs from M8; every verdict in this run is `unchecked` |
-| verifier_agreement | n/a | 0.9 | n/a | the support check runs from M8; every verdict in this run is `unchecked` |
+| citation_accuracy_ledger | n/a | 0.95 | n/a | citations whose passage states a value the question required |
+| verifier_agreement | n/a | 0.9 | n/a | citations where the Verifier and the fact ledger reached the same answer |
 | visual_fidelity | n/a | 1.0 | n/a | nothing to measure |
-| visual_type_match | n/a |  | n/a | the type follows the summary's shape, so a scripted provider scores its script |
+| visual_type_match | n/a | 0.85 | n/a | nothing to measure |
 | no_source_honesty | n/a |  | n/a | deep answers that reported no sources rather than answering unsupported |
 | flag_recall | n/a |  | n/a | nothing to measure |
 | flag_false_positive_rate | n/a | 0.1 | n/a | no rule fired outside the always on notices |
