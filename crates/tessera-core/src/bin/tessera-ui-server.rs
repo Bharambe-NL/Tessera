@@ -164,6 +164,7 @@ fn with_memory(core: &mut Core) {
             ("regulatory".into(), IndexedConfig::regulatory("reg")),
             ("boards".into(), IndexedConfig::boards()),
         ],
+        web: None,
         embedder: None,
     };
 }

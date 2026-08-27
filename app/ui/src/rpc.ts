@@ -252,6 +252,18 @@ export class Rpc {
     return this.call<NotebookSession>('notebook.session', { board_id: boardId });
   }
 
+  /**
+   * Doc 16 section 3.4's way out of an ungrounded answer: ask again with the
+   * web allowed. Refused when the profile has named no web source, which is a
+   * Profile problem the message points at.
+   */
+  searchWeb(boardId: string, cardId: string) {
+    return this.call<{ card_id: string; status: string }>('notebook.search_web', {
+      board_id: boardId,
+      card_id: cardId,
+    });
+  }
+
   /** Doc 16 section 3.4: a question from the session grows into a board. */
   openOnBoard(boardId: string, cardId: string) {
     return this.call<{ board_id: string; card_id: string; status: string }>(

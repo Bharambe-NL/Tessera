@@ -579,6 +579,16 @@ export class Router {
           await this.actions.openBoard(opened.board_id);
           return;
         }
+        // Doc 16 section 3.4's one click way out of an ungrounded answer. The
+        // first answer is superseded rather than replaced, so the session still
+        // shows that the vault had nothing to say.
+        case 'search-web': {
+          if (!boardId || !cardId) return;
+          this.actions.toast(COPY.notebookWebSearching);
+          await this.rpc.searchWeb(boardId, cardId);
+          this.notebook = { session: await this.rpc.notebookSession(boardId), asking: false };
+          break;
+        }
         default:
           return;
       }

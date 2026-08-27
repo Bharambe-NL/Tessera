@@ -21,7 +21,8 @@ use tessera_harness::hooks::{HookContext, HookSet, Phase};
 use tessera_harness::{Admission, Ledger};
 use tessera_retrievers::contract::Packet;
 use tessera_retrievers::embed::Embedder;
-use tessera_retrievers::{IndexedConfig, indexed};
+use tessera_retrievers::web::{HttpFetcher, WebConfig};
+use tessera_retrievers::{IndexedConfig, indexed, web};
 use tessera_store::Store;
 use tessera_store::repo::{self, NewPassage, RetrievalRef, WatchedFolder};
 
@@ -33,12 +34,16 @@ pub struct RetrieverSet {
     /// is different from configured and empty: doc 05 section 10's
     /// `connector_unavailable` is a Profile problem the user can fix.
     pub indexed: Vec<(String, IndexedConfig)>,
+    /// Doc 05 section 8.1. Present once the pack enables `web` and the profile
+    /// has said where it may read from: a web retriever with no seed reaches
+    /// nothing, which is the same "configured and empty" the folders have.
+    pub web: Option<WebConfig>,
     pub embedder: Option<Arc<dyn Embedder>>,
 }
 
 impl RetrieverSet {
     pub fn is_empty(&self) -> bool {
-        self.indexed.is_empty()
+        self.indexed.is_empty() && self.web.is_none()
     }
 
     /// Whether this profile has told the retriever where to read from.
@@ -47,6 +52,9 @@ impl RetrieverSet {
     /// empty": the first is a Profile problem the user can fix, and the Profile
     /// page is where they see which it is.
     pub fn configured(&self, retriever_id: &str) -> bool {
+        if retriever_id == "web" {
+            return self.web.is_some();
+        }
         self.config(retriever_id).is_some()
     }
 
@@ -65,6 +73,7 @@ impl RetrieverSet {
                 .filter(|(id, _)| allow.contains(&id.as_str()))
                 .cloned()
                 .collect(),
+            web: self.web.clone().filter(|_| allow.contains(&"web")),
             embedder: self.embedder.clone(),
         }
     }
@@ -92,8 +101,14 @@ impl RetrieverSet {
 /// subscriptions and the web retriever are later phases, and until they exist
 /// the honest report is that the pack wants them and the profile has not got
 /// them.
-pub fn assemble(pack: &DoctrinePack, folders: &[WatchedFolder], memory_enabled: bool) -> RetrieverSet {
+pub fn assemble(
+    pack: &DoctrinePack,
+    folders: &[WatchedFolder],
+    memory_enabled: bool,
+    web_seeds: &[String],
+) -> RetrieverSet {
     let mut indexed: Vec<(String, IndexedConfig)> = Vec::new();
+    let mut web_config: Option<WebConfig> = None;
     for retriever in &pack.retrievers {
         if !retriever.enabled_by_default {
             continue;
@@ -131,17 +146,36 @@ pub fn assemble(pack: &DoctrinePack, folders: &[WatchedFolder], memory_enabled: 
             "boards" if memory_enabled => {
                 indexed.push(("boards".to_string(), IndexedConfig::boards()));
             }
+            // Doc 05 section 8.1. Configured once the profile has said where it
+            // may read from, and not before: a web retriever with no seed
+            // reaches nothing, and reporting it as configured would put a
+            // `connector_unavailable` at the bottom of a card rather than on
+            // the Profile page that can fix it.
+            "web" if !web_seeds.is_empty() => {
+                web_config = Some(WebConfig::new(web_seeds.to_vec()));
+            }
             _ => {}
         }
     }
     RetrieverSet {
         indexed,
+        web: web_config,
         // No embedder in the product yet: the local model is a download the
         // app does not ship, so retrieval runs the lexical half. The eval
         // passes one when the machine has it, which is why the number it
         // reports is the better of the two.
         embedder: None,
     }
+}
+
+/// The retriever ids a plan-less run falls back to, now that not every one of
+/// them is index backed.
+fn ids(set: &RetrieverSet) -> Vec<String> {
+    let mut out: Vec<String> = set.indexed.iter().map(|(id, _)| id.clone()).collect();
+    if set.web.is_some() {
+        out.push("web".to_string());
+    }
+    out
 }
 
 /// One assignment as the Planner wrote it.
@@ -192,10 +226,10 @@ fn assignments(plan: Option<&Value>, question: &str, set: &RetrieverSet) -> Vec<
         }
     }
 
-    set.indexed
-        .iter()
-        .map(|(id, _)| Assignment {
-            retriever_id: id.clone(),
+    ids(set)
+        .into_iter()
+        .map(|id| Assignment {
+            retriever_id: id,
             query: question.to_string(),
             sq_id: None,
             max_passages: 12,
@@ -266,12 +300,16 @@ pub fn run(
         .unwrap_or_default();
 
     for assignment in assignments(plan, question, set) {
-        let Some(config) = set.config(&assignment.retriever_id) else {
+        let web_config = (assignment.retriever_id == "web")
+            .then_some(set.web.as_ref())
+            .flatten();
+        let indexed_config = set.config(&assignment.retriever_id);
+        if indexed_config.is_none() && web_config.is_none() {
             // Doc 05 section 10 `connector_unavailable`: coverage none, the
             // other retrievers carry on, and the user is told in the Profile
             // rather than in the card.
             continue;
-        };
+        }
 
         let here = RetrievalRef {
             retriever_id: &assignment.retriever_id,
@@ -310,18 +348,37 @@ pub fn run(
         let packet = build_packet(&assignment, doctrine, must_exclude, at);
         let _ = repo::start_retrieval(store, here, &assignment.query);
 
-        let result = indexed::retrieve(store.conn(), config, &packet, set.embedder.as_deref());
+        // Doc 05 section 8.1's web leg and sections 8.2 to 8.5's index legs
+        // reach the same contract by different roads. The tolerant posture is
+        // the same for both: an assignment that produced nothing leaves the
+        // card standing on whatever the others found.
+        let result = match (indexed_config, web_config) {
+            (Some(config), _) => {
+                indexed::retrieve(store.conn(), config, &packet, set.embedder.as_deref()).ok()
+            }
+            (None, Some(config)) => Some(web::retrieve(&HttpFetcher::new(), config, &packet)),
+            (None, None) => None,
+        };
         ledger.release_retriever_slot();
 
         let retrieved = match result {
-            Ok(r) => r,
-            Err(_) => {
+            Some(r) => r,
+            None => {
                 // Tolerant: this assignment produced nothing and the card
                 // continues on whatever the others found.
                 out.assignments_failed += 1;
                 continue;
             }
         };
+
+        // Doc 05 section 10: a denial the connector reported is the same
+        // caveat the fan-out writes for one it caught itself. Only the web
+        // retriever can report one, because only it knows the URLs.
+        for caveat in &retrieved.caveats {
+            if !out.caveats.contains(caveat) {
+                out.caveats.push(caveat.clone());
+            }
+        }
 
         let rows: Vec<NewPassage<'_>> = retrieved
             .passages
@@ -503,13 +560,13 @@ mod tests {
     #[test]
     fn local_is_configured_once_a_folder_is_watched() {
         let pack = pack(&[("local", true), ("boards", true)]);
-        let empty = assemble(&pack, &[], true);
+        let empty = assemble(&pack, &[], true, &[]);
         assert!(
             !empty.configured("local"),
             "a local retriever with nowhere to read is not configured"
         );
 
-        let watched = assemble(&pack, &[folder("f1"), folder("f2")], true);
+        let watched = assemble(&pack, &[folder("f1"), folder("f2")], true, &[]);
         assert!(watched.configured("local"));
         assert_eq!(
             watched.config("local").expect("local").folder_ids,
@@ -527,6 +584,7 @@ mod tests {
             &pack(&[("local", true)]),
             &[folder(tessera_retrievers::boards::BOARDS_FOLDER)],
             true,
+            &[],
         );
         assert!(!set.configured("local"));
     }
@@ -534,8 +592,8 @@ mod tests {
     #[test]
     fn memory_off_leaves_the_boards_index_out_of_the_set() {
         let pack = pack(&[("boards", true)]);
-        assert!(assemble(&pack, &[], true).configured("boards"));
-        assert!(!assemble(&pack, &[], false).configured("boards"));
+        assert!(assemble(&pack, &[], true, &[]).configured("boards"));
+        assert!(!assemble(&pack, &[], false, &[]).configured("boards"));
     }
 
     #[test]
@@ -543,7 +601,7 @@ mod tests {
         // Unlike `local`, which waits for a folder. The profile's own pages are
         // already where the app can read them, so an empty vault is a retriever
         // with nothing to find rather than one nobody has set up.
-        let set = assemble(&pack(&[("vault", true)]), &[], true);
+        let set = assemble(&pack(&[("vault", true)]), &[], true, &[]);
         assert!(set.configured("vault"));
         assert_eq!(
             set.config("vault").expect("vault").source_class,
@@ -552,20 +610,21 @@ mod tests {
         );
 
         // And a pack that turns it off gets no vault.
-        assert!(!assemble(&pack(&[("vault", false)]), &[], true).configured("vault"));
+        assert!(!assemble(&pack(&[("vault", false)]), &[], true, &[]).configured("vault"));
     }
 
     #[test]
     fn a_retriever_the_product_has_not_built_is_reported_unconfigured() {
         // Doc 05 section 10's `connector_unavailable`. The finance pack enables
         // regulatory, web and structured; none of them has anywhere to read
-        // until subscriptions and the web retriever exist, and claiming
+        // until subscriptions exist and the profile names a seed, and claiming
         // otherwise would put the failure at the bottom of a card instead of on
         // the page that can fix it.
         let set = assemble(
             &pack(&[("regulatory", true), ("web", true), ("structured", true)]),
             &[folder("f1")],
             true,
+            &[],
         );
         assert!(set.is_empty());
         for id in ["regulatory", "web", "structured"] {
@@ -574,8 +633,34 @@ mod tests {
     }
 
     #[test]
+    fn the_web_retriever_arrives_with_the_seed_and_not_before() {
+        // Doc 05 section 8.1: a web retriever with nowhere to read reaches
+        // nothing, and a profile that has named no seed is not pointed at the
+        // internet by default. The seed is what turns it on.
+        let pack = pack(&[("web", true)]);
+        assert!(!assemble(&pack, &[], true, &[]).configured("web"));
+
+        let seeded = assemble(&pack, &[], true, &["http://127.0.0.1:9/".to_string()]);
+        assert!(seeded.configured("web"));
+        assert!(!seeded.is_empty());
+        // And a plan-less run falls back to it, which is the only way a card
+        // with no plan reaches the web at all.
+        assert_eq!(assignments(None, "q", &seeded).len(), 1);
+
+        // A restricted run leaves it out unless it was allowed, which is what
+        // keeps doc 16 section 4's notebook off the web.
+        assert!(!seeded.restricted(&["vault", "boards"]).configured("web"));
+        assert!(seeded.restricted(&["web"]).configured("web"));
+    }
+
+    #[test]
     fn a_restricted_run_sees_only_what_it_was_allowed() {
-        let set = assemble(&pack(&[("local", true), ("boards", true)]), &[folder("f1")], true);
+        let set = assemble(
+            &pack(&[("local", true), ("boards", true)]),
+            &[folder("f1")],
+            true,
+            &[],
+        );
         let narrowed = set.restricted(&["boards"]);
         assert!(narrowed.configured("boards"));
         assert!(!narrowed.configured("local"));
@@ -633,6 +718,7 @@ mod tests {
                 ("regulatory".into(), IndexedConfig::regulatory("reg")),
                 ("local".into(), IndexedConfig::local(vec!["local".into()])),
             ],
+            web: None,
             embedder: None,
         };
         let out = assignments(None, "what applies?", &set);
@@ -644,6 +730,7 @@ mod tests {
     fn a_plan_with_sub_questions_wins_over_the_default() {
         let set = RetrieverSet {
             indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+            web: None,
             embedder: None,
         };
         let plan = json!({
@@ -664,6 +751,7 @@ mod tests {
     fn an_empty_plan_falls_back_rather_than_retrieving_nothing() {
         let set = RetrieverSet {
             indexed: vec![("local".into(), IndexedConfig::local(vec!["local".into()]))],
+            web: None,
             embedder: None,
         };
         let out = assignments(Some(&json!({ "sub_questions": [] })), "q", &set);

@@ -38,6 +38,10 @@ pub struct Anchor<'a> {
     pub anchor_text: Option<&'a str>,
     /// A JSON pointer into the parent visual's payload, for block investigate.
     pub anchor_block_ref: Option<&'a str>,
+    /// Doc 16 section 3.4: the learner asked this one notebook question to
+    /// reach the web as well. Off everywhere else, because the web is a
+    /// per question choice a person makes rather than a mode a board is in.
+    pub with_web: bool,
 }
 
 impl<'a> Anchor<'a> {
@@ -213,7 +217,8 @@ impl Core {
         let set = {
             let pack = self.packs.get(&self.pack_code)?;
             let folders = repo::watched_folders(&self.store, &self.profile_id)?;
-            crate::retrieval::assemble(pack, &folders, self.memory_enabled())
+            let seeds = web_seeds(&self.store, &self.profile_id);
+            crate::retrieval::assemble(pack, &folders, self.memory_enabled(), &seeds)
         };
         self.retrievers = set;
         Ok(())
@@ -997,7 +1002,16 @@ impl Core {
         // property of the run and the plan-less fallback reads the set too.
         let restricted;
         let retrievers = if board_mode == NOTEBOOK {
-            restricted = self.retrievers.restricted(NOTEBOOK_RETRIEVERS);
+            // Doc 16 section 3.4's one click way out. The learner asked for the
+            // web on this one question, so the same narrowing runs with `web`
+            // added rather than the narrowing being skipped: a rerun that
+            // dropped the restriction would reach every retriever the profile
+            // has, which is not what the button says.
+            let mut allow: Vec<&str> = NOTEBOOK_RETRIEVERS.to_vec();
+            if anchor.with_web {
+                allow.push("web");
+            }
+            restricted = self.retrievers.restricted(&allow);
             &restricted
         } else {
             &self.retrievers
@@ -2030,6 +2044,7 @@ pub fn build_router() -> Router<Core> {
             parent_card_id: p.parent_card_id.as_deref(),
             anchor_text: p.anchor_text.as_deref(),
             anchor_block_ref: p.anchor_block_ref.as_deref(),
+            with_web: false,
         };
         // An anchor names a span on a card, so without the card it names
         // nothing. Refuse here rather than storing a root card carrying a
@@ -2245,6 +2260,60 @@ pub fn build_router() -> Router<Core> {
             "card_id": outcome.card_id,
             "status": outcome.status,
         }))
+    });
+
+    // Doc 16 section 3.4's one click way out of an ungrounded answer, which
+    // waited for the web retriever and now has it. The question is asked again
+    // with the web allowed, and doc 16 section 6's open point resolves as
+    // proposed: the first answer is superseded rather than discarded, so the
+    // session still shows that the vault had nothing to say.
+    r.register("notebook.search_web", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Which {
+            board_id: String,
+            card_id: String,
+        }
+        let p: Which = params(p)?;
+        if !core.retrievers.configured("web") {
+            // Doc 05 section 10's `connector_unavailable`, said on the page
+            // that can fix it rather than at the bottom of a card.
+            return Err(RpcError::core(
+                "no_web",
+                "No web source is set up yet. Add one in Profile first.",
+            ));
+        }
+        let question = repo::read_cards(&core.store, &p.board_id)
+            .map_err(store_error)?
+            .into_iter()
+            .find(|c| c.id == p.card_id)
+            .map(|c| c.question)
+            .ok_or_else(|| RpcError::core("card_missing", "That question is not in this session."))?;
+
+        let outcome = core
+            .ask_on(
+                &p.board_id,
+                &question,
+                Some("deep"),
+                Anchor {
+                    with_web: true,
+                    ..Anchor::default()
+                },
+            )
+            .map_err(core_error)?;
+
+        core.store
+            .append(
+                tessera_store::event::NewEvent::new(
+                    "notebook.superseded.v1",
+                    json!({ "card_id": p.card_id, "by_card_id": outcome.card_id }),
+                    tessera_store::event::Provenance::user(),
+                )
+                .on_board(&p.board_id)
+                .on_card(&p.card_id),
+            )
+            .map_err(store_error)?;
+
+        Ok(json!({ "card_id": outcome.card_id, "status": outcome.status }))
     });
 
     r.register("notebook.sessions", |core: &mut Core, _| {
@@ -2572,6 +2641,56 @@ pub fn build_router() -> Router<Core> {
     // machine. `sensitive` and `embeddings` are set here rather than after,
     // because a folder indexed once with provider embeddings has already sent
     // its text and a later toggle cannot take it back.
+    // Doc 05 section 8.1: the web retriever reads from where the profile points
+    // it, and nowhere else. A base rather than a search engine, because there
+    // is no search key in this build and a retriever pointed at nothing is
+    // honest about it.
+    r.register("profile.watch_web", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Seed {
+            url: String,
+        }
+        let p: Seed = params(p)?;
+        let url = p.url.trim().to_string();
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err(RpcError::core(
+                "bad_url",
+                "A web source starts with http:// or https://.",
+            ));
+        }
+
+        let raw: String = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT retriever_config FROM profile WHERE id = ?1",
+                rusqlite::params![core.profile_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| RpcError::core("profile", e.to_string()))?;
+        let mut config: Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+        let mut seeds: Vec<String> = config["web_seeds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        if !seeds.contains(&url) {
+            seeds.push(url.clone());
+        }
+        config["web_seeds"] = json!(seeds);
+        core.store
+            .conn()
+            .execute(
+                "UPDATE profile SET retriever_config = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![config.to_string(), tessera_store::now_iso8601(), core.profile_id],
+            )
+            .map_err(|e| RpcError::core("profile", e.to_string()))?;
+
+        core.rebuild_retrievers().map_err(core_error)?;
+        Ok(json!({ "web_seeds": config["web_seeds"], "configured": core.retrievers.configured("web") }))
+    });
+
     r.register("profile.watch_folder", |core: &mut Core, p| {
         #[derive(Deserialize)]
         struct Watch {
@@ -2723,6 +2842,35 @@ pub fn build_router() -> Router<Core> {
 }
 
 /// A page the vault would not take, in the words a person can act on.
+/// Doc 05 section 8.1's seeds, from the profile's retriever config.
+///
+/// The column already holds "folder inclusions, corpus subscriptions, key
+/// references" and never a secret, which is exactly what a list of bases the
+/// web retriever may read is. A profile that has named none has no web
+/// retriever, which is the honest report rather than one pointed at the whole
+/// internet by default.
+fn web_seeds(store: &tessera_store::Store, profile_id: &str) -> Vec<String> {
+    store
+        .conn()
+        .query_row(
+            "SELECT retriever_config FROM profile WHERE id = ?1",
+            rusqlite::params![profile_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .map(|config| {
+            config["web_seeds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .filter(|s| !s.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn page_error(e: crate::vault::SaveError) -> RpcError {
     match e {
         crate::vault::SaveError::Refused(crate::vault::TITLE_TAKEN_BY_A_PAGE) => RpcError::core(

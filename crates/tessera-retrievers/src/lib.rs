@@ -15,6 +15,7 @@ pub mod indexed;
 pub mod ingest;
 pub mod pages;
 pub mod parse;
+pub mod web;
 
 pub use boards::{BOARDS_FOLDER, index_card};
 pub use chunking::{Chunk, ChunkLocation};
@@ -25,3 +26,4 @@ pub use indexed::IndexedConfig;
 pub use ingest::{IngestReport, index_folder};
 pub use pages::{VAULT_FOLDER, index_page};
 pub use parse::{ParseError, is_supported, parse_file};
+pub use web::{Fetched, Fetcher, WebConfig};

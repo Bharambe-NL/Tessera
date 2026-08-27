@@ -394,7 +394,7 @@ export const COPY = {
   notebookUngrounded: 'Nothing in your notes',
   notebookUngroundedNote: 'Your vault has nothing on this, so nothing here is an answer from it.',
   notebookSearchWeb: 'Search the web instead',
-  notebookWebLater: 'The web retriever arrives with the learning system, so this waits for it.',
+  notebookWebSearching: 'Looking on the web.',
   notebookOpenOnBoard: 'Open on a board',
 
   profileDoctrine: 'Doctrine',
