@@ -2176,6 +2176,52 @@ zero. The Playwright half drives the same path through the setup screen.
 
 ---
 
+### BN-108 Importing a pack, and the choice that did not survive the night
+
+**Spec** 10 section 9; 12 principle 4; 11 section 6.
+
+**Built** 2026-08-27, M14.3.
+
+**Built** `pack.import` reads a file, validates it through the registry against
+`schemas/pack/doctrine-pack.v1.json`, copies it into `<profile>/packs/<code>.json`, registers
+the version with `repo::ensure_pack` and adds it to the library. `PackLibrary::load_imported`
+reads that folder at every start, so an import outlives the session that made it. Profile >
+Doctrine lists the packs, says which ship with the app and which came from a file, and carries
+the import field and a Use this pack verb.
+
+**Importing does not activate.** Doc 10 section 9 makes a pack change a deliberate act, and an
+import that silently re-judged the next card would be one. The RPC returns `active: false` and
+the Doctrine list is where the switch happens.
+
+**An imported pack may not take a shipped code.** Boards pin the pack they were judged under by
+code and version. A file that renamed `general` would change what every board that pinned it
+claims to have been judged by, so both paths refuse it: the RPC with an error, and a file
+dropped into the folder by hand with a problem on the Doctrine page.
+
+**A pack file that does not load never stops the profile opening.** A built in pack that fails
+to parse is a build error and stops the app, because it is the same file on every machine. An
+imported one belongs to the person, so it is skipped, the reason is carried to the Doctrine
+page, and the boards open.
+
+**The defect found on the way.** `Core::open` set `pack_code` to `general` unconditionally.
+Choosing finance and restarting put the profile back on general with nothing on the screen
+saying so, and every card after that was judged by rules the person had switched away from.
+The Playwright test that covers the pack switch reloads the page rather than the process, so it
+passed throughout. `profile.default_doctrine_pack_id` already existed and was written once at
+profile creation and never again: `use_pack` now writes it, and `Core::open` reads it back,
+falling back to general when the code names a pack the library no longer has.
+
+**Two events that existed and were never written.** `pack.activated.v1` and `pack.imported.v1`
+join the vocabulary and are emitted here. `index.folder_added.v1` has been in the vocabulary
+since M2 with no writer at all, and now that adding a folder reads it (BN-107) there is
+something to record, so `profile.watch_folder` emits it with what the walk found.
+
+**Verified** Full battery green, 49 Playwright tests, the 400 question grounded sweep and the
+bundle round trip. `an_imported_pack_outlives_the_process_that_imported_it` opens a second core
+over the same profile folder, which is what tomorrow is.
+
+---
+
 ---
 
 ## Measured findings

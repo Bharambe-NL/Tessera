@@ -8,7 +8,7 @@
 //! This crate loads and validates them. It contains no rule, only the shapes a
 //! rule is written in, which is what lets a second vertical ship as a file.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -355,9 +355,28 @@ impl DoctrinePack {
     }
 }
 
+/// A pack file that did not load, and why.
+///
+/// A built in pack that fails to parse is a build error and stops the app. An
+/// imported one cannot be, because the file belongs to the person and a typo in
+/// it must not lock them out of their own boards. So it is skipped, and the
+/// reason is carried here to the Profile page rather than to a log nobody
+/// reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackProblem {
+    pub file: String,
+    pub detail: String,
+}
+
 /// The packs available to a profile: the built in ones plus any imported.
 pub struct PackLibrary {
     packs: BTreeMap<String, DoctrinePack>,
+    /// Codes that came from a file in the profile folder rather than the app
+    /// bundle. Doc 10 section 9: a built in pack is the same on every machine
+    /// and an imported one is not, which is a difference the Doctrine page
+    /// shows.
+    imported: BTreeSet<String>,
+    problems: Vec<PackProblem>,
 }
 
 impl PackLibrary {
@@ -375,11 +394,87 @@ impl PackLibrary {
             }
             packs.insert(pack.code.clone(), pack);
         }
-        Ok(Self { packs })
+        Ok(Self {
+            packs,
+            imported: BTreeSet::new(),
+            problems: Vec::new(),
+        })
+    }
+
+    /// Load every `*.json` in `dir` as an imported pack.
+    ///
+    /// Sorted, so two machines with the same folder end up with the same
+    /// library. A file that does not validate is recorded and skipped: see
+    /// [`PackProblem`]. A missing folder is not a problem, because most
+    /// profiles have imported nothing.
+    pub fn load_imported(&mut self, registry: &Registry, dir: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut files: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "json"))
+            .collect();
+        files.sort();
+
+        for path in files {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(e) => {
+                    self.problems.push(PackProblem {
+                        file: name,
+                        detail: e.to_string(),
+                    });
+                    continue;
+                }
+            };
+            match DoctrinePack::parse(registry, &raw) {
+                Ok(pack) => {
+                    // A built in code is not a name an imported file may take.
+                    // Boards pin the pack they were answered under by code and
+                    // version, so a file that renamed `general` would change
+                    // what a hundred existing boards claim to have been judged
+                    // by.
+                    if BUILT_IN.iter().any(|(code, _)| *code == pack.code) {
+                        self.problems.push(PackProblem {
+                            file: name,
+                            detail: format!("`{}` is the code of a pack that ships with the app", pack.code),
+                        });
+                        continue;
+                    }
+                    self.imported.insert(pack.code.clone());
+                    self.packs.insert(pack.code.clone(), pack);
+                }
+                Err(e) => self.problems.push(PackProblem {
+                    file: name,
+                    detail: e.to_string(),
+                }),
+            }
+        }
     }
 
     pub fn add(&mut self, pack: DoctrinePack) {
+        self.imported.insert(pack.code.clone());
         self.packs.insert(pack.code.clone(), pack);
+    }
+
+    /// Whether this code ships with the app.
+    pub fn is_built_in(code: &str) -> bool {
+        BUILT_IN.iter().any(|(c, _)| *c == code)
+    }
+
+    pub fn is_imported(&self, code: &str) -> bool {
+        self.imported.contains(code)
+    }
+
+    /// The pack files that did not load, in the order they were read.
+    pub fn problems(&self) -> &[PackProblem] {
+        &self.problems
     }
 
     pub fn get(&self, code: &str) -> Result<&DoctrinePack> {
@@ -400,6 +495,84 @@ mod tests {
     fn library() -> PackLibrary {
         let registry = Registry::load().expect("registry");
         PackLibrary::load_built_in(&registry).expect("every shipped pack must validate")
+    }
+
+    fn write_pack(dir: &std::path::Path, file: &str, code: &str) {
+        let mut pack: Value = serde_json::from_str(BUILT_IN[0].1).expect("the shipped pack parses");
+        pack["code"] = Value::String(code.to_string());
+        std::fs::create_dir_all(dir).expect("dir");
+        std::fs::write(dir.join(file), pack.to_string()).expect("file");
+    }
+
+    #[test]
+    fn an_imported_pack_joins_the_library_and_says_it_was_imported() {
+        let registry = Registry::load().expect("registry");
+        let dir = std::env::temp_dir().join(format!("tessera-packs-{}", ulid_ish()));
+        write_pack(&dir, "house.json", "house-rules");
+
+        let mut lib = library();
+        lib.load_imported(&registry, &dir);
+
+        assert!(lib.get("house-rules").is_ok());
+        assert!(lib.is_imported("house-rules"));
+        assert!(!lib.is_imported("general"));
+        assert!(!PackLibrary::is_built_in("house-rules"));
+        assert!(lib.problems().is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_file_may_not_take_a_shipped_code_and_the_shipped_pack_stands() {
+        // Dropping a file into the folder by hand reaches this path rather than
+        // the import RPC, and it must not be the way round the same rule.
+        let registry = Registry::load().expect("registry");
+        let dir = std::env::temp_dir().join(format!("tessera-packs-{}", ulid_ish()));
+        write_pack(&dir, "mine.json", "general");
+
+        let mut lib = library();
+        lib.load_imported(&registry, &dir);
+
+        assert!(!lib.is_imported("general"));
+        assert_eq!(lib.get("general").expect("general").version, "1.0.0");
+        assert_eq!(lib.problems().len(), 1);
+        assert!(lib.problems()[0].detail.contains("ships with the app"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_pack_is_a_problem_rather_than_a_panic() {
+        let registry = Registry::load().expect("registry");
+        let dir = std::env::temp_dir().join(format!("tessera-packs-{}", ulid_ish()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("notes.json"), "{ half a file").expect("file");
+        std::fs::write(dir.join("readme.txt"), "not json, not read").expect("file");
+
+        let mut lib = library();
+        lib.load_imported(&registry, &dir);
+
+        assert_eq!(lib.problems().len(), 1, "only the json file was read");
+        assert_eq!(lib.problems()[0].file, "notes.json");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_is_not_a_problem() {
+        // Most profiles have imported nothing.
+        let registry = Registry::load().expect("registry");
+        let mut lib = library();
+        lib.load_imported(&registry, std::path::Path::new("/no/such/folder/anywhere"));
+        assert!(lib.problems().is_empty());
+    }
+
+    /// A unique enough suffix without pulling a dependency in for it.
+    fn ulid_ish() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
     }
 
     #[test]

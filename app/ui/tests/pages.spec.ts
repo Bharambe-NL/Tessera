@@ -7,9 +7,17 @@
  * something these assert what the write did.
  */
 
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { expect, test } from '@playwright/test';
 
 import { freshCore, useCore } from './shell.js';
+
+/** The repository root, so a test can read the packs the app ships. */
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const QUESTION = 'what are world models?';
 
@@ -195,5 +203,41 @@ test('the profile models page reports key presence and never a key', async ({ pa
   await expect(page.locator('.facts')).toContainText('Events');
 
   await page.locator('[data-profile-tab="doctrine"]').click();
-  await expect(page.locator('.facts')).toContainText('general');
+  await expect(page.locator('.lib-row[data-pack="general"]')).toContainText('Ships with the app');
+});
+
+test('a doctrine pack is imported from a file and then chosen', async ({ page }) => {
+  // Doc 10 section 9 and doc 12 principle 4: a pack is data. Importing adds it
+  // to the profile; switching to it is a separate act, so an import can never
+  // re-judge the next card on its own.
+  const pack = JSON.parse(readFileSync(join(REPO, 'packs', 'general.json'), 'utf8')) as {
+    code: string;
+    name: string;
+    version: string;
+  };
+  pack.code = 'house-rules';
+  pack.name = 'A pack of my own';
+  pack.version = '0.2.0';
+  const dir = mkdtempSync(join(tmpdir(), 'tessera-pack-'));
+  const file = join(dir, 'house-rules.json');
+  writeFileSync(file, JSON.stringify(pack, null, 2));
+
+  await page.locator('#rail [data-view="profile"]').click();
+  await page.locator('[data-profile-tab="doctrine"]').click();
+
+  await page.locator('#pack-path').fill(file);
+  await page.locator('#pack-import button[type="submit"]').click();
+
+  const row = page.locator('.lib-row[data-pack="house-rules"]');
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(row).toContainText('Imported');
+  await expect(row).not.toContainText('Active');
+
+  await row.locator('[data-pack-act="use"]').click();
+  await expect(row).toContainText('Active', { timeout: 30_000 });
+  // And it is the core that says so: the page redraws from profile.get.
+  await page.reload();
+  await page.locator('#rail [data-view="profile"]').click();
+  await page.locator('[data-profile-tab="doctrine"]').click();
+  await expect(page.locator('.lib-row[data-pack="house-rules"]')).toContainText('Active');
 });
