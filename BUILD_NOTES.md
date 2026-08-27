@@ -3031,6 +3031,61 @@ lengthen the walk through a board for the readers who can least afford it.
 
 ---
 
+### BN-125 The notebook leg, and the ungrounded state that cannot happen
+
+**Spec** 16 sections 3.4 and 5, phase 12d.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --grounded --notebook`. Sixteen
+vault questions, no provider spend.
+
+**Two gates had been waiting for a leg that was never scheduled.** `grounding_state_accuracy` and
+`page_sole_support_rate` both reported n/a saying "the eval leg that does lands with 12d". 12d-i and
+12d-ii landed, the notebook works, and nothing ran a question through it: the note named a milestone
+that had already passed. `--notebook` runs the vault question set through the ordinary pipeline on
+boards of mode `notebook`, one session each, and writes rows the scorer keeps out of every answer
+metric because a notebook question is asked over the vault alone.
+
+**The boards retriever is left out of this leg, and that is the point of asking.** Doc 16 restricts a
+notebook question to the vault and the profile's own prior cards. With doc 02's twenty prior boards
+seeded, every question in the no vault match family was answered from memory: the family exists to
+produce the ungrounded state and it measured doc 15's retriever instead.
+
+**The finding: the ungrounded state cannot happen over a vault that is not empty.** With the boards
+gone, the eight no vault match questions still retrieved two to eight pages each. A lexical index
+always returns its best matches, so `no_passages` never occurs and doc 16 section 3.4's ungrounded
+state, which is `no_passages` and nothing else, is unreachable. What a person asking about something
+their vault does not cover gets instead is an answer assembled from unrelated pages, labelled partly
+grounded. **Every one of the sixteen answers came back partly grounded**, and the two families are
+indistinguishable in the result.
+
+The product fix is a relevance floor: passages below it are not passed to the Synthesizer, so a
+question the vault cannot answer returns nothing and says so. That is a change to retrieval and the
+threshold has to be chosen from evidence, so it is its own step rather than a number guessed here.
+The corpus has a second, smaller share of the blame: its no vault match questions carry the same
+boilerplate as the pages ("for a small and non-complex institution", "under the internal ratings
+based approach"), so they match on phrasing rather than subject.
+
+**`grounding_state_accuracy` is 0.000 and exempted on a mock run.** The grounded mock quotes its
+passages into prose the Verifier cannot bind sentence by sentence, so every card carries unsupported
+statements and every answer reads as partly grounded whatever the vault did. That is the artefact
+`flag_false_positive_rate` is already exempted for, and it would hide the retrieval finding above if
+the number were left to speak for itself.
+
+**A new gate that measures the core rather than the model.** `ungrounded_is_no_passages` is doc 16
+phase 12d's acceptance sentence: "the ungrounded state appears whenever `no_passages`; never a silent
+fallback". The state and the passage count come off the same event the core wrote, so the check asks
+whether the core kept its own contract. It is 1.000, and the guard is broken on purpose in the
+generator tests with a card that claims to have found nothing while holding four passages.
+
+**`page_sole_support_rate` counts figures, not sentences.** Doc 05 v0.2 line 106 is about a figure
+resting on a context-only source. Two of the sixteen answers restate a definition from the reader's
+own note, cite pages alone and carry no block flag, and counting them would gate the notebook on
+saying anything at all about what the reader wrote. Narrowed to answers stating a figure, the rate is
+0.000 against its gate of 0, with 71 block flags raised across the sixteen: the Verifier stopped
+every one.
+
+---
+
 ---
 
 ## Measured findings

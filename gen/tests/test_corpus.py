@@ -1321,11 +1321,110 @@ def test_a_run_with_no_backlink_check_says_what_it_waits_for(
     assert metric.value is None
     assert "record" in metric.note
 
-    # And doc 16's other two say which phase produces them.
-    for name in ("grounding_state_accuracy", "page_sole_support_rate"):
+    # And doc 16's other three say what would produce them, which is a leg
+    # someone can run rather than a phase that has already landed.
+    for name in ("grounding_state_accuracy", "ungrounded_is_no_passages", "page_sole_support_rate"):
         waiting = _named(report, name)
         assert waiting.value is None
-        assert "12d" in waiting.note
+        assert "--notebook" in waiting.note
+
+
+def _notebook_report(tmp_path: Path, corpus: Path, rows: list[dict]) -> object:
+    results = tmp_path / "notebook"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows), encoding="utf-8"
+    )
+    (results / "manifest.json").write_text(
+        json.dumps({"provider": "mock", "snapshot": "T1"}), encoding="utf-8"
+    )
+    return harness.score(results, corpus)
+
+
+def _notebook_row(case: str, state: str, passages: int, **rest) -> dict:
+    row = {
+        "q_id": f"QN-{case}-{state}",
+        "kind": "notebook",
+        "ok": True,
+        "edge_case_ids": [case],
+        "citations": [],
+        "flags": [],
+        "answer": "",
+        "events": [
+            {
+                "type": "notebook.grounding.v1",
+                "payload": {"state": state, "passages": passages, "unsupported": 0},
+            }
+        ],
+    }
+    row.update(rest)
+    return row
+
+
+def test_the_notebook_metrics_measure_what_the_core_recorded(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 16 section 5's two gates and doc 16 phase 12d's acceptance sentence.
+
+    The state and the passage count come off the same event the core wrote, so
+    what is checked is whether the core kept its own contract rather than
+    whether the scorer can restate the rule and agree with itself.
+    """
+    good = [
+        _notebook_row("page_only", "grounded", 4),
+        _notebook_row("no_vault_match", "ungrounded", 0),
+    ]
+    report = _notebook_report(tmp_path / "good", corpus, good)
+    assert _named(report, "grounding_state_accuracy").value == 1.0
+    assert _named(report, "ungrounded_is_no_passages").value == 1.0
+    assert _named(report, "page_sole_support_rate").value == 0.0
+
+    # A card that says it found nothing while holding four passages is the
+    # silent fallback doc 16 phase 12d forbids, and it is caught.
+    lying = [_notebook_row("no_vault_match", "ungrounded", 4)]
+    assert _named(_notebook_report(tmp_path / "lying", corpus, lying), "ungrounded_is_no_passages").value == 0.0
+
+    # A figure resting on a page alone, with nothing blocking it, is doc 05
+    # v0.2 line 106's failure and doc 16 section 5's gate at 0.
+    through = [
+        _notebook_row(
+            "page_only",
+            "grounded",
+            2,
+            answer="The buffer is 2.5 % as I wrote it down.",
+            citations=[{"source_class": "page", "ordinal": 1}],
+            flags=[{"rule_id": "unsupported_claim", "severity": "warn"}],
+        )
+    ]
+    assert _named(_notebook_report(tmp_path / "through", corpus, through), "page_sole_support_rate").value == 1.0
+
+    # The same answer with the block flag the Verifier raises for it is not a
+    # failure: the reader never saw it unmarked.
+    stopped = [
+        _notebook_row(
+            "page_only",
+            "grounded",
+            2,
+            answer="The buffer is 2.5 % as I wrote it down.",
+            citations=[{"source_class": "page", "ordinal": 1}],
+            flags=[{"rule_id": "own_card_sole_support", "severity": "block"}],
+        )
+    ]
+    assert _named(_notebook_report(tmp_path / "stopped", corpus, stopped), "page_sole_support_rate").value == 0.0
+
+    # And a definition restated from the reader's own note states no figure, so
+    # it is not what the rule is about.
+    prose = [
+        _notebook_row(
+            "page_only",
+            "grounded",
+            2,
+            answer="A large exposure means an exposure to one client.",
+            citations=[{"source_class": "page", "ordinal": 1}],
+            flags=[{"rule_id": "unsupported_claim", "severity": "warn"}],
+        )
+    ]
+    assert _named(_notebook_report(tmp_path / "prose", corpus, prose), "page_sole_support_rate").value == 0.0
 
 
 def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:

@@ -81,6 +81,14 @@ struct Args {
     #[arg(long)]
     grounded: bool,
 
+    /// Doc 16 section 3.4's notebook, over the vault question set
+    /// (questions_vault.jsonl). Each question opens its own session and runs
+    /// the ordinary pipeline at deep with the retrievers doc 16 restricts it
+    /// to, so what is measured is the product's own path rather than a second
+    /// one written here.
+    #[arg(long)]
+    notebook: bool,
+
     /// Run the breadth set (questions_breadth.jsonl) instead of the corpus
     /// question set. BN-036: these are pack independent questions with stakes
     /// ground truth, so this switches the default pack to `general` too, since
@@ -408,6 +416,8 @@ fn main() -> std::process::ExitCode {
 
     let questions_file = if args.breadth {
         "questions_breadth.jsonl"
+    } else if args.notebook {
+        "questions_vault.jsonl"
     } else {
         "questions.jsonl"
     };
@@ -446,6 +456,36 @@ fn main() -> std::process::ExitCode {
         }
     };
     println!("{}", plan.describe());
+
+    if args.notebook {
+        let mut records = run_notebook(&args, &pack, &plan, &questions);
+        records.sort_by(|a, b| a.q_id.cmp(&b.q_id));
+        let failures = records.iter().filter(|r| !r.ok).count();
+        let dir = args
+            .out
+            .join(corpus_name(&args.corpus))
+            .join(&args.policy)
+            .join(stamp());
+        if let Err(e) = write_records(&dir, &records, &[], &[], &args, &pack, records.len(), failures) {
+            eprintln!("could not write the results: {e}");
+            return std::process::ExitCode::from(2);
+        }
+        let grounded = records
+            .iter()
+            .filter(|r| grounding_of(r) == Some("grounded"))
+            .count();
+        let ungrounded = records
+            .iter()
+            .filter(|r| grounding_of(r) == Some("ungrounded"))
+            .count();
+        println!(
+            "\n{} notebook questions asked, {grounded} grounded, {ungrounded} ungrounded, {failures} failed",
+            records.len()
+        );
+        println!("wrote {}", dir.display());
+        println!("score it with: gen score --results {}", dir.display());
+        return std::process::ExitCode::SUCCESS;
+    }
 
     if args.verify_only {
         let mut records = run_verify_only(&args, &pack, &plan, &questions);
@@ -526,7 +566,7 @@ fn main() -> std::process::ExitCode {
                 // with no retrievers and reported n/a for the half of the
                 // product that had just been built.
                 if !args.no_retrievers
-                    && let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot)
+                    && let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot, true)
                 {
                     eprintln!("a worker could not index the corpus: {e}");
                     return;
@@ -550,7 +590,8 @@ fn main() -> std::process::ExitCode {
                         }
 
                         let parent = q.parent_q_id.as_deref().and_then(|p| answered.get(p));
-                        let mut record = run_one(&mut core, q, parent.cloned().as_ref(), &mut local_failures);
+                        let mut record =
+                            run_one(&mut core, q, parent.cloned().as_ref(), &mut local_failures, None);
                         record.provider = leg.name.clone();
                         record.leg = if on_reference { "reference" } else { "bulk" }.to_string();
 
@@ -710,20 +751,30 @@ struct Answered {
     card_id: String,
 }
 
-fn run_one(core: &mut Core, q: &Question, parent: Option<&Answered>, failures: &mut usize) -> RunRecord {
+fn run_one(
+    core: &mut Core,
+    q: &Question,
+    parent: Option<&Answered>,
+    failures: &mut usize,
+    on_board: Option<String>,
+) -> RunRecord {
     let started = std::time::Instant::now();
 
     // A follow-up belongs on its parent's board, which is what makes the
-    // ancestor chain walkable. A root question gets a board of its own.
+    // ancestor chain walkable. A root question gets a board of its own, unless
+    // the caller made one already: the notebook leg opens a session first,
+    // because doc 16 section 3.4's three states are recorded only on a board of
+    // that mode.
     //
     // Always `fast`, never the expected depth. Seeding the board default with
     // the label hands the Router part of the answer, because the default is the
     // baseline its recommendation starts from: every earlier sweep's route
     // accuracy was measured with that leak (BN-036), so those numbers are not
     // comparable with what this measures.
-    let board_id = match parent {
-        Some(p) => p.board_id.clone(),
-        None => match core.create_board(&q.text, "fast") {
+    let board_id = match (on_board, parent) {
+        (Some(id), _) => id,
+        (None, Some(p)) => p.board_id.clone(),
+        (None, None) => match core.create_board(&q.text, "fast") {
             Ok(id) => id,
             Err(e) => {
                 *failures += 1;
@@ -861,6 +912,87 @@ fn run_one(core: &mut Core, q: &Question, parent: Option<&Answered>, failures: &
     record
 }
 
+/// The grounding state the core recorded for a notebook answer.
+///
+/// Read from the run's own events rather than recomputed here: doc 16 section
+/// 3.4 has the core decide the state and the scorer's job is to check what it
+/// decided, not to arrive at the same answer twice by the same rule.
+fn grounding_of(record: &RunRecord) -> Option<&str> {
+    record
+        .events
+        .iter()
+        .find(|e| e["type"] == "notebook.grounding.v1")
+        .and_then(|e| e["payload"]["state"].as_str())
+}
+
+/// Doc 16 section 3.4's notebook, over the vault question set.
+///
+/// One core rather than the sweep's workers: sixteen questions do not need
+/// three stores, and every one of them reads the same vault, which each worker
+/// would otherwise seed again.
+///
+/// Each question opens its own session. A session is a board and doc 16 makes
+/// it a chat, so asking all sixteen on one would make every question after the
+/// first a follow-up with fifteen prior answers in its context, and what is
+/// being measured is whether the vault answers a question rather than whether
+/// the last answer did.
+fn run_notebook(args: &Args, pack: &str, plan: &Plan, questions: &[Question]) -> Vec<RunRecord> {
+    let keys = keystore(args.mock);
+    let first_key_ref = if args.mock {
+        "test-key"
+    } else {
+        args.bulk_key_ref.as_str()
+    };
+
+    let mut core = match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("could not bring a core up: {e}");
+            return Vec::new();
+        }
+    };
+    core.source = Source::Test;
+    if let Err(e) = core.use_pack(pack) {
+        eprintln!("could not load the `{pack}` pack: {e}");
+        return Vec::new();
+    }
+    if !args.no_retrievers
+        && let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot, false)
+    {
+        eprintln!("could not index the corpus: {e}");
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut failures = 0usize;
+    for q in questions.iter().take(args.limit.unwrap_or(questions.len())) {
+        let board_id = match core.create_board(&q.text, "deep") {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("could not open a session: {e}");
+                failures += 1;
+                continue;
+            }
+        };
+        if let Err(e) = tessera_store::repo::start_notebook(&mut core.store, &board_id) {
+            eprintln!("could not open a session: {e}");
+            failures += 1;
+            continue;
+        }
+
+        let mut record = run_one(&mut core, q, None, &mut failures, Some(board_id));
+        record.provider = plan.bulk.name.clone();
+        record.leg = "bulk".to_string();
+        // What keeps these rows out of the answer metrics. A notebook question
+        // is asked over the vault alone, so counting it among the sweep's
+        // answers would mix a run that could reach every retriever with one
+        // that was never allowed to.
+        record.kind = "notebook".to_string();
+        out.push(record);
+    }
+    out
+}
+
 /// Bring one core up, import the corpus's boards, re-verify their sources, and
 /// read every card back.
 ///
@@ -888,7 +1020,7 @@ fn run_verify_only(args: &Args, pack: &str, plan: &Plan, questions: &[Question])
     }
     // The boards are imported by the same call that indexes the corpus, so the
     // cards and the tree they are judged against arrive together.
-    if let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot) {
+    if let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot, true) {
         eprintln!("could not index the corpus: {e}");
         return Vec::new();
     }
@@ -1061,7 +1193,7 @@ fn follow_up_on_stale(core: &mut Core, questions: &[Question], stale_locators: &
 
     let mut failures = 0usize;
     for q in touching {
-        let mut root = run_one(core, q, None, &mut failures);
+        let mut root = run_one(core, q, None, &mut failures, None);
         root.provider = "mock".to_string();
         root.leg = "verify".to_string();
         let (Some(board_id), Some(card_id)) = (root.board_id.clone(), root.card_id.clone()) else {
@@ -1929,7 +2061,12 @@ fn doctrine_must_exclude(pack_code: &str) -> Vec<String> {
 /// The Sensitive folder is excluded here rather than filtered later. Doc 05
 /// section 8.2 is exact: "Excluded folders are never opened." A folder that is
 /// read and then discarded has already been read.
-fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Result<(), String> {
+fn configure_retrievers(
+    core: &mut Core,
+    corpus: &Path,
+    snapshot: &str,
+    with_boards: bool,
+) -> Result<(), String> {
     let profile_id = core.profile_id.clone();
     let exclude = doctrine_exclusions(core);
     let mut embedder: Option<Arc<dyn Embedder>> = None;
@@ -2005,8 +2142,18 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
     // searches an empty index, and doc 15's three gates measure nothing while
     // reporting 0.000, which reads as a broken retriever rather than an
     // unasked question.
+    //
+    // The notebook leg leaves them out, and that is the point of asking. Doc 16
+    // section 5's vault questions include a family with no vault match, whose
+    // whole purpose is the ungrounded state; a profile carrying twenty
+    // unrelated prior boards answers them from memory instead, which measures
+    // doc 15's retriever rather than doc 16's notebook.
     let pack_id = core.active_pack_id().map_err(|e| format!("pack: {e}"))?;
-    let seeded = boards::load(corpus)?;
+    let seeded = if with_boards {
+        boards::load(corpus)?
+    } else {
+        Vec::new()
+    };
     let report = boards::seed(
         &mut core.store,
         &profile_id,
