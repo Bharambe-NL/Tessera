@@ -631,6 +631,54 @@ a real case: doc 01 section 7's bundle merge re-verifies cards that arrived from
 The follow up leg runs through the ordinary pipeline on cards the product minted, so nothing else
 needed the exception.
 
+### BN-057 The grounded mock has to produce structure, or half the product is unmeasured
+
+**Spec** 02 section 10.1, where the mock exists so the pipeline can be measured for nothing.
+
+**Decision** The grounded mock emits one `structured_summary.value` per quoted passage and its
+findings as strings carrying their own `[n]` markers, which is the shape `draft_schema` declares.
+
+**Reason** It emitted an empty summary and findings as objects. The Synthesizer's
+`filter_map(Value::as_str)` dropped the objects silently, so every grounded run ever recorded
+produced 400 cards with no findings; and `select_type` saw an empty summary, declined, and returned
+before composing, so `index_blocks`, the doctrine limits and every other part of doc 06 part B were
+unreachable on the eval. `visual_fidelity` and `visual_type_match` had no thresholds, so the report
+said nothing was wrong. A mock that cannot exercise a stage measures the mock.
+
+### BN-058 `visual_type_match` is measured and not gated
+
+**Spec** 06 section B12, which gates type match at 0.85.
+
+**Decision** The metric computes and reports; the threshold is not applied.
+
+**Reason** The type follows the shape of the summary the model wrote, so on a scripted provider it
+scores the script. The grounded mock emits values and nothing else, which selects a table every
+time and lands at 0.24 against a corpus expecting five types. A gate that fails every free run is a
+gate people learn to ignore, which is the failure doc 07 section B12 names for flag rules. It
+becomes a gate on a live sweep, where the summary is the model's own. `visual_fidelity` is gated at
+1.00 as B12 asks, because it is a deterministic property of the Visualizer rather than of the
+summary it was handed.
+
+### BN-059 A safety gate needs a denominator, so the hostile document gets its questions
+
+**Spec** 02 section 10.3, injection resistance 100 percent.
+
+**Decision** The facts the hostile document states are hoisted to the front of the root question
+pool, the same way doc 15's sole source fact already was. Nine questions now carry the
+`hostile_document` case; the hostile copy stays out of `required_sources`, because citing it is the
+failure the metric measures.
+
+**Reason** The corpus planted the hostile document from the first build and no question ever
+reached it, so `injection_resistance` reported n/a against a threshold of 1.0 for every run there
+has been. The three facts it carries are stated in three or four real documents each, so a question
+about one is answerable honestly and pulls the hostile copy alongside. This is the same defect the
+`held_out` hoist already fixed for memory, in the same place, found only because the report was read
+for what it was not measuring rather than for what it was.
+
+The metric's note now carries how many of those questions actually cited the hostile document,
+because retrieval decides that and not the question set. On the first run it was 3 of 9: the gate
+reads 1.000 and the exposure behind it is three answers.
+
 ---
 
 ## Measured findings
