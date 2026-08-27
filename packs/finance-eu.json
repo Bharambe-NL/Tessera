@@ -1,0 +1,392 @@
+{
+  "code": "finance-eu",
+  "version": "1.0.0",
+  "name": "Finance EU",
+  "description": "Doctrine for EU financial regulation work: which sources outrank which, when a figure has to carry a citation, and what a card must never say without one. The source hierarchy and the vocabulary name real bodies and real instruments and are a first draft; the rules themselves are the ones the synthetic twin is scored on.",
+  "domains": [
+    "capital",
+    "payments",
+    "outsourcing",
+    "model-risk"
+  ],
+  "domain_vocabulary": {
+    "capital": [
+      "capital buffer",
+      "risk weighted",
+      "own funds",
+      "trading book",
+      "leverage ratio",
+      "large exposure",
+      "CRR",
+      "CRD"
+    ],
+    "payments": [
+      "safeguarding",
+      "strong customer authentication",
+      "payment institution",
+      "incident report",
+      "account information",
+      "PSD2"
+    ],
+    "outsourcing": [
+      "outsourcing",
+      "critical or important function",
+      "exit plan",
+      "sub outsourcing",
+      "service provider",
+      "DORA"
+    ],
+    "model-risk": [
+      "model validation",
+      "backtesting",
+      "model inventory",
+      "internal model",
+      "model owner"
+    ]
+  },
+  "depth_hints": {
+    "regulatory_stakes": "deep"
+  },
+  "audiences": [
+    {
+      "id": "risk",
+      "name": "Risk",
+      "vocabulary_notes": "Assumes the regulation, wants the exposure."
+    },
+    {
+      "id": "product",
+      "name": "Product",
+      "vocabulary_notes": "Wants what changes for a customer.",
+      "avoid": [
+        "RWA",
+        "own funds"
+      ]
+    },
+    {
+      "id": "engineering",
+      "name": "Engineering",
+      "vocabulary_notes": "Wants the rule as a condition that can be implemented.",
+      "avoid": [
+        "prudential",
+        "competent authority"
+      ]
+    },
+    {
+      "id": "board",
+      "name": "Board",
+      "vocabulary_notes": "Wants the decision and its consequence.",
+      "avoid": [
+        "article",
+        "paragraph"
+      ]
+    }
+  ],
+  "source_hierarchy": [
+    {
+      "class": "regulatory",
+      "issuer_pattern": "European Banking Authority",
+      "trust_rank": 1
+    },
+    {
+      "class": "regulatory",
+      "issuer_pattern": "European Central Bank",
+      "trust_rank": 1
+    },
+    {
+      "class": "regulatory",
+      "issuer_pattern": "EUR-Lex",
+      "trust_rank": 1
+    },
+    {
+      "class": "regulatory",
+      "issuer_pattern": "European Securities and Markets Authority",
+      "trust_rank": 2
+    },
+    {
+      "class": "regulatory",
+      "trust_rank": 2
+    },
+    {
+      "class": "structured_query",
+      "trust_rank": 3
+    },
+    {
+      "class": "local_document",
+      "trust_rank": 4
+    },
+    {
+      "class": "own_card",
+      "trust_rank": 5
+    },
+    {
+      "class": "web",
+      "trust_rank": 6
+    },
+    {
+      "class": "user_supplied",
+      "trust_rank": 7
+    }
+  ],
+  "freshness_classes": {
+    "regulation": {
+      "max_age_days": 365,
+      "on_stale": "flag"
+    },
+    "internal_policy": {
+      "max_age_days": 540,
+      "on_stale": "flag"
+    },
+    "internal_memo": {
+      "max_age_days": 270,
+      "on_stale": "flag"
+    },
+    "web_commentary": {
+      "max_age_days": 120,
+      "on_stale": "flag"
+    },
+    "structured": {
+      "max_age_days": 90,
+      "on_stale": "rerun"
+    }
+  },
+  "flag_rules": [
+    {
+      "rule_id": "marker_integrity",
+      "severity": "block",
+      "description": "Every citation marker in the answer has a citation, and every citation has a marker.",
+      "detector": "deterministic:marker_integrity"
+    },
+    {
+      "rule_id": "scope_exclusion",
+      "severity": "block",
+      "description": "The answer or a visual block mentions a term the plan excluded.",
+      "detector": "deterministic:scope_exclusion"
+    },
+    {
+      "rule_id": "advice_language",
+      "severity": "warn",
+      "description": "Recommendation phrasing anywhere in a finance answer, and block severity when the request already carried the advice flag.",
+      "detector": "deterministic:advice_language"
+    },
+    {
+      "rule_id": "numeric_without_citation",
+      "severity": "block",
+      "description": "Any number with a unit in the answer, findings or a block, without a citation.",
+      "detector": "deterministic:numeric_without_citation",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "computed_value",
+      "severity": "block",
+      "description": "A numeric claim whose cited passage does not contain the value. The model never stores a number it computed.",
+      "detector": "deterministic:computed_value",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "forbidden_reference",
+      "severity": "warn",
+      "description": "A web page cited as the sole support for a regulatory value.",
+      "detector": "deterministic:forbidden_reference",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "unsupported_claim",
+      "severity": "warn",
+      "description": "A sentence the Synthesizer marked as drawn from model knowledge rather than a passage.",
+      "detector": "deterministic:unsupported_claim",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "own_card_sole_support",
+      "severity": "block",
+      "description": "A numeric or regulatory claim whose only support is a prior card of this profile's own. Doc 05 v0.2 line 106: a prior card is context, never evidence.",
+      "detector": "deterministic:own_card_sole_support",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "visual_block_unbound",
+      "severity": "warn",
+      "description": "A visual block carries neither a citation nor a no_claim marking.",
+      "detector": "deterministic:visual_block_unbound",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "stale_source",
+      "severity": "warn",
+      "description": "A cited source is past its freshness class, or its version was superseded.",
+      "detector": "deterministic:stale_source"
+    },
+    {
+      "rule_id": "injection_suspected",
+      "severity": "warn",
+      "description": "A retrieved passage or an image contained text addressed to the model.",
+      "detector": "deterministic:injection_suspected"
+    },
+    {
+      "rule_id": "length_and_format",
+      "severity": "info",
+      "description": "The answer runs over budget, uses a dash, or writes a unit in a form the pack does not use.",
+      "detector": "deterministic:length_and_format"
+    },
+    {
+      "rule_id": "fast_mode_notice",
+      "severity": "info",
+      "description": "The card ran at fast depth, so nothing in it was checked against a source.",
+      "detector": "deterministic:fast_mode_notice",
+      "modes": [
+        "fast"
+      ]
+    },
+    {
+      "rule_id": "verifier_below_threshold",
+      "severity": "info",
+      "description": "The Verifier has not met the agreement threshold on this pack, so a spot check is advised.",
+      "detector": "deterministic:verifier_below_threshold"
+    },
+    {
+      "rule_id": "audience_vocabulary",
+      "severity": "warn",
+      "description": "An audience card uses terms the audience definition says to avoid.",
+      "detector": "model:audience_vocabulary",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "jurisdiction_drift",
+      "severity": "warn",
+      "description": "A rule from another jurisdiction is cited for a question about this one.",
+      "detector": "model:jurisdiction_drift",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
+      "rule_id": "scope_creep",
+      "severity": "warn",
+      "description": "The answer covers more than the plan's answer_scope.",
+      "detector": "model:scope_creep",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    }
+  ],
+  "sensitivity_rules": [
+    {
+      "rule_id": "advice_request",
+      "detector": "deterministic:advice_request",
+      "severity": "warn",
+      "patterns": [
+        "should we",
+        "should i",
+        "what would you recommend",
+        "is it safe to",
+        "what would you do"
+      ]
+    },
+    {
+      "rule_id": "personal_data_in_request",
+      "detector": "deterministic:personal_data",
+      "severity": "block",
+      "patterns": []
+    }
+  ],
+  "retrievers": [
+    {
+      "id": "regulatory",
+      "enabled_by_default": true,
+      "must_exclude": []
+    },
+    {
+      "id": "local",
+      "enabled_by_default": true,
+      "must_exclude": [
+        "Sensitive"
+      ]
+    },
+    {
+      "id": "web",
+      "enabled_by_default": true,
+      "must_exclude": []
+    },
+    {
+      "id": "structured",
+      "enabled_by_default": false,
+      "must_exclude": []
+    },
+    {
+      "id": "boards",
+      "enabled_by_default": true,
+      "must_exclude": []
+    }
+  ],
+  "visual_preferences": {
+    "type_preferences": {
+      "comparative": "table",
+      "procedural": "steps",
+      "definitional": "tree",
+      "quantitative": "table",
+      "regulatory": "table",
+      "factual": "list",
+      "exploratory": "tree"
+    },
+    "max_nodes": 18,
+    "max_rows": 8,
+    "generated_images": false
+  },
+  "writing_rules": {
+    "units": "EUR",
+    "spelling": "en-GB",
+    "sentence_max_words": 28,
+    "dashes": false
+  },
+  "exercise_templates": [
+    {
+      "id": "finance_basic",
+      "item_kinds": [
+        "recall",
+        "apply",
+        "contrast",
+        "trace"
+      ],
+      "items_per_card_max": 2,
+      "options": 4
+    }
+  ],
+  "learning_templates": {
+    "curriculum_shapes": [
+      "foundation",
+      "mechanism",
+      "landscape",
+      "edge cases"
+    ],
+    "mastery_threshold": 2
+  },
+  "rulings": [],
+  "reader_extract_first": [
+    "figures",
+    "dates",
+    "article_refs"
+  ]
+}

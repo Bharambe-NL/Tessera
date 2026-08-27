@@ -17,6 +17,11 @@ use tessera_schema::{Registry, ids};
 /// The packs that ship in the app bundle. Doc 10 section 9.
 pub static BUILT_IN: &[(&str, &str)] = &[
     ("general", include_str!("../../../packs/general.json")),
+    // Doc 11 mission: "Finance is the first doctrine pack." The rules are the
+    // ones the synthetic twin below is scored on, so what differs between them
+    // is the source hierarchy and the vocabulary, and nothing that decides
+    // whether a card passes.
+    ("finance-eu", include_str!("../../../packs/finance-eu.json")),
     // Doc 02 section 4: the sibling of finance-eu with the synthetic issuers
     // substituted in, so evaluation output can be quoted without a real
     // regulator appearing in it. Doc 02 section 10.1 loads it for every run.
@@ -407,6 +412,61 @@ mod tests {
         let pack = lib.get("general").expect("general");
         assert_eq!(pack.version, "1.0.0");
         assert!(!pack.flag_rules.is_empty());
+    }
+
+    #[test]
+    fn three_packs_ship() {
+        // Doc 12 phase 10 names three, and doc 11's mission makes finance the
+        // first doctrine pack rather than an optional one.
+        let lib = library();
+        let mut codes: Vec<&str> = lib.codes().collect();
+        codes.sort_unstable();
+        assert_eq!(codes, ["finance-eu", "finance-eu-synthetic", "general"]);
+    }
+
+    #[test]
+    fn the_synthetic_twin_carries_the_same_rules_as_the_pack_it_stands_for() {
+        // Doc 02 section 4: the twin exists "so a score on the corpus is
+        // comparable with the shipped pack". That only holds while the two
+        // agree on every rule and severity. What may differ is the source
+        // hierarchy and the vocabulary, which name issuers rather than decide
+        // whether a card passes.
+        let lib = library();
+        let real = lib.get("finance-eu").expect("finance-eu");
+        let twin = lib.get("finance-eu-synthetic").expect("finance-eu-synthetic");
+
+        let rules = |p: &DoctrinePack| {
+            let mut out: Vec<(String, String, String)> = p
+                .flag_rules
+                .iter()
+                .map(|r| (r.rule_id.clone(), r.severity.clone(), r.detector.clone()))
+                .collect();
+            out.sort();
+            out
+        };
+        assert_eq!(
+            rules(real),
+            rules(twin),
+            "a score on the corpus no longer transfers to the shipped pack"
+        );
+    }
+
+    #[test]
+    fn the_memory_rule_is_doctrine_rather_than_code() {
+        // Doc 12 principle 4: packs are JSON and no domain rule lives in code.
+        // Doc 05 v0.2 line 106 names this one, and until M12 it existed only in
+        // a test fixture and a comment: the Verifier had no such rule at all.
+        let lib = library();
+        for code in ["general", "finance-eu", "finance-eu-synthetic"] {
+            let pack = lib.get(code).expect(code);
+            let rule = pack
+                .flag_rules
+                .iter()
+                .find(|r| r.rule_id == "own_card_sole_support")
+                .unwrap_or_else(|| panic!("{code} does not carry the memory rule"));
+            assert_eq!(rule.severity, "block", "{code}");
+            assert_eq!(rule.detector, "deterministic:own_card_sole_support", "{code}");
+        }
     }
 
     #[test]
