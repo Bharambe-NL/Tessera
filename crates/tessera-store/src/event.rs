@@ -271,6 +271,8 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     "page.edited.v1",
     "page.renamed.v1",
     "page.deleted.v1",
+    "page.link_resolved.v1",
+    "page.link_unresolved.v1",
     // exercise
     "exercise.generated.v1",
     "attempt.recorded.v1",

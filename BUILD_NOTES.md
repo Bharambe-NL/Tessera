@@ -2489,6 +2489,53 @@ bundle round trip.
 
 ---
 
+### BN-113 Wikilinks that survive a rename, and backlinks that are a query
+
+**Spec** 16 sections 2.1, 2.2 and 3.1.
+
+**Built** 2026-08-27, M15 12a-iii. Schema version 7.
+
+**The rule this exists for.** Doc 16 section 2.2 lists resolving a wikilink by title string as
+one of the assessed package's mistakes: a rename silently breaks every link into the page. So a
+link resolves to a Page by id or a Concept by id, and the title in the body is what it displays
+rather than what it points at. Rename the page and the link still arrives, which the test
+asserts by renaming and re-querying.
+
+**Resolution order: page, then concept, then nothing.** A page is a document a person can open
+and a concept is a term in the glossary, so when both carry the title the page is what they meant
+to follow. The concept detail lists pages beside cards either way.
+
+**The parser will not read a link out of code.** A vault that documents this feature is full of
+`[[Title]]` in fenced blocks and backticks, and linking those would fill somebody's notes with
+references they did not write. Fences, inline code, unterminated brackets, and brackets spanning
+a paragraph are all text.
+
+**A third migration, and why it is not padding.** `page_link` stored `display_text` and a target.
+`[[Liquidity risk|the rule]]` displays "the rule", so an aliased link that could not resolve
+could never resolve later, and doc 16's "unresolved links create the page on click" would have
+created a page called "the rule". 0007 adds `target_title`: every row now says what it points
+at, what it shows, and where it is. `resolve_pending_links` is what that column buys: write
+`[[Basel III]]` before the page exists, and when the page arrives the link lights up.
+
+**One event per kind per save.** A page with twenty links would otherwise write twenty events on
+every edit. `page.link_resolved.v1` when a save left nothing hanging, `page.link_unresolved.v1`
+with the titles when it did, and the rows carry the detail either way.
+
+**Backlinks are an index lookup**, and there is a test that reads `EXPLAIN QUERY PLAN` and fails
+if it stops using `page_link_target`. A panel that scanned every body works on ten pages and
+stops working at a thousand, which is where a person starts needing it.
+
+**Where the backlink completeness gate went.** The plan put the 1.00 metric here. Its eval half
+needs the synthetic vault, which is 12a-iv, so what lands here is the same property asserted
+exhaustively rather than sampled: twelve pages, each linking to every page after it, every
+count checked against the arithmetic and the total row count checked against the sum. The
+harness metric lands with the vault it measures.
+
+**Verified** Full battery green, 26 vault tests, 7 parser tests, 50 Playwright tests, the
+grounded sweep and the bundle round trip.
+
+---
+
 ---
 
 ## Measured findings
