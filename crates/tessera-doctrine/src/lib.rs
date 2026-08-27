@@ -109,18 +109,105 @@ impl FlagRule {
     }
 }
 
-/// Doc 14 section 3.2's learning doctrine.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Doc 14 section 3.2's learning doctrine, and doc 17 section 8's.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LearningTemplates {
     /// Doc 14 section 3.4: the plan is ordered foundation to detail.
     #[serde(default = "default_shapes")]
     pub curriculum_shapes: Vec<String>,
-    /// Doc 14 section 3.6: how many correct checks make a concept mastered.
+    /// Doc 14 section 3.6: how many correct checks make a concept mastered
+    /// within one session.
     #[serde(default = "default_mastery")]
     pub mastery_threshold: u32,
     /// Doc 14 section 3.2: intake question templates per domain.
     #[serde(default)]
     pub intake_questions: Vec<String>,
+    /// Doc 17 section 2.3: the score at or above which a concept is mastered.
+    ///
+    /// Not `mastery_threshold`. That one counts correct checks in one session;
+    /// this judges a person's standing with a concept across every session they
+    /// have had, and the two answer different questions with different units.
+    #[serde(default = "default_mastered_at")]
+    pub mastered_at: f64,
+    /// Doc 17 sections 2.3 and 8: how long a mastered concept stays mastered
+    /// without new evidence, by domain, with `default` for the rest.
+    #[serde(default = "default_decay")]
+    pub decay_window_days: BTreeMap<String, u32>,
+    /// Doc 17 section 4's ladder, per level.
+    #[serde(default)]
+    pub check_templates: Vec<CheckTemplate>,
+    /// Doc 17 section 8: how this pack ranks sources for learning, which is not
+    /// how it ranks them for answering.
+    #[serde(default)]
+    pub quality_ranking: QualityRanking,
+    /// Doc 17 section 8: whether the tutor may explain in its own words.
+    #[serde(default)]
+    pub unverified_explanations: UnverifiedExplanations,
+    /// Doc 17 section 2.1: paths a pack ships.
+    #[serde(default)]
+    pub learning_paths: Vec<Value>,
+}
+
+impl LearningTemplates {
+    /// The decay window for a domain, falling back to the pack's default.
+    pub fn decay_days(&self, domain: &str) -> u32 {
+        self.decay_window_days
+            .get(domain)
+            .or_else(|| self.decay_window_days.get("default"))
+            .copied()
+            .unwrap_or(180)
+    }
+
+    /// The kinds of check a level asks for, or nothing when the pack names none
+    /// for it. Nothing rather than a guess: a pack that declares three levels
+    /// has three, and inventing a fourth would ask a question its doctrine
+    /// never sanctioned.
+    pub fn kinds_for(&self, level: u8) -> &[String] {
+        self.check_templates
+            .iter()
+            .find(|t| t.level == level)
+            .map(|t| t.kinds.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckTemplate {
+    pub level: u8,
+    pub kinds: Vec<String>,
+    #[serde(default)]
+    pub options: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QualityRanking {
+    #[serde(default)]
+    pub classes: Vec<String>,
+    #[serde(default)]
+    pub issuer_patterns: Vec<String>,
+    #[serde(default)]
+    pub prefer_primary: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnverifiedExplanations {
+    /// False when a pack says nothing. Doc 12's posture everywhere else is fail
+    /// closed, and silence is not a licence to explain a figure in the tutor's
+    /// own words.
+    #[serde(default)]
+    pub allowed: bool,
+    /// What may never be explained that way, whatever `allowed` says. Doc 17
+    /// section 8's finance example: numbers and obligations.
+    #[serde(default)]
+    pub never_for: Vec<String>,
+}
+
+fn default_mastered_at() -> f64 {
+    0.8
+}
+
+fn default_decay() -> BTreeMap<String, u32> {
+    BTreeMap::from([("default".to_string(), 180)])
 }
 
 fn default_shapes() -> Vec<String> {
@@ -139,6 +226,12 @@ impl Default for LearningTemplates {
             curriculum_shapes: default_shapes(),
             mastery_threshold: default_mastery(),
             intake_questions: Vec::new(),
+            mastered_at: default_mastered_at(),
+            decay_window_days: default_decay(),
+            check_templates: Vec::new(),
+            quality_ranking: QualityRanking::default(),
+            unverified_explanations: UnverifiedExplanations::default(),
+            learning_paths: Vec::new(),
         }
     }
 }
@@ -210,7 +303,11 @@ pub struct SensitivityRule {
 }
 
 /// A loaded pack. Doc 01 section 4.17.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// `Eq` and not `Ord`: doc 17 section 2.3's mastery threshold is a float, so
+/// the pack carries one and equality on it is the exact comparison it has
+/// always been rather than a rounded one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DoctrinePack {
     pub code: String,
     pub version: String,
@@ -584,6 +681,50 @@ mod tests {
     }
 
     #[test]
+    fn every_pack_says_when_a_concept_is_learned_and_when_it_goes_stale() {
+        // Doc 17 sections 2.3 and 8. A pack that names none of this would have
+        // the code decide what mastery means, which is the one thing doctrine
+        // exists to keep out of code.
+        let lib = library();
+        for code in ["general", "finance-eu", "finance-eu-synthetic"] {
+            let pack = lib.get(code).expect(code);
+            let l = &pack.learning_templates;
+            assert!(
+                (0.0..=1.0).contains(&l.mastered_at) && l.mastered_at > 0.0,
+                "{code} does not say what score counts as mastered"
+            );
+            assert!(
+                l.decay_days("anything-at-all") > 0,
+                "{code} names no decay window"
+            );
+            // Doc 17 section 4's four levels, each with something to ask.
+            for level in 1..=4u8 {
+                assert!(
+                    !l.kinds_for(level).is_empty(),
+                    "{code} asks nothing at level {level}"
+                );
+            }
+        }
+
+        // Doc 17 section 8's own example, which is also the rule that keeps the
+        // panel honest: finance may explain in its own words and never a figure.
+        for code in ["finance-eu", "finance-eu-synthetic"] {
+            let policy = &lib
+                .get(code)
+                .expect(code)
+                .learning_templates
+                .unverified_explanations;
+            assert!(policy.allowed);
+            assert!(policy.never_for.iter().any(|k| k == "numbers"));
+            assert!(policy.never_for.iter().any(|k| k == "obligations"));
+        }
+
+        // And a pack that says nothing does not licence it. The default is the
+        // fail closed posture the Verifier takes everywhere else.
+        assert!(!LearningTemplates::default().unverified_explanations.allowed);
+    }
+
+    #[test]
     fn three_packs_ship() {
         // Doc 12 phase 10 names three, and doc 11's mission makes finance the
         // first doctrine pack rather than an optional one.
@@ -639,6 +780,26 @@ mod tests {
             order(real),
             order(twin),
             "the twin ranks the source classes in a different order from the pack it stands for"
+        );
+
+        // Doc 17 section 8's learning doctrine is a rule like any other, so the
+        // twin has to carry the same one: a lesson planned against the corpus
+        // that opened at a different level, or called a concept mastered at a
+        // different score, would not transfer to the shipped pack either.
+        let learning = |p: &DoctrinePack| {
+            let l = &p.learning_templates;
+            (
+                l.mastered_at,
+                l.decay_window_days.clone(),
+                l.check_templates.clone(),
+                l.unverified_explanations.clone(),
+                l.mastery_threshold,
+            )
+        };
+        assert_eq!(
+            learning(real),
+            learning(twin),
+            "the twin would plan a different lesson from the pack it stands for"
         );
 
         // Doc 16 section 3.3: a page ranks 4 in the finance pack, below

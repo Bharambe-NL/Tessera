@@ -3185,6 +3185,50 @@ an edge was created with rides on its proposal event and a replay does not quiet
 
 ---
 
+### BN-129 Two thresholds called mastery, and the one that had to be named differently
+
+**Spec** 17 sections 2.3, 4, 7 and 8.
+
+**Built** 2026-08-27, M16 13a-iii.
+
+**The name collision, resolved by keeping both.** The packs already carry `mastery_threshold: 2`,
+which is doc 14 section 3.6's count of correct checks in one session. Doc 17 section 2.3 wants a
+mastery threshold too, and means something else: a score between 0 and 1 on the concept row, default
+0.8, judging a person's standing with a concept across every session they have had. Two meanings
+behind one name is the BN-086 failure class, so the new one is `mastered_at` and both descriptions
+say what the other is. Renaming the shipped one would have been the other way to fix it and would
+have broken the Tutor's reading of doctrine for a tidier word.
+
+**Doctrine, not code.** A pack now says when a concept is mastered, how long it stays mastered
+without evidence (per domain, with a default), what a check asks at each of doc 17 section 4's four
+levels, how it ranks sources for learning rather than for answering, whether the tutor may explain
+in its own words, and what it may never explain that way. The guard asserts every shipped pack
+answers all of it, because a pack that named none would have the code decide what mastery means,
+which is the one thing doctrine exists to keep out of code.
+
+**Silence is not a licence.** `unverified_explanations` defaults to `allowed: false`. A pack that
+says nothing does not permit the tutor to explain in its own words, which is the fail closed posture
+the Verifier takes everywhere else. Finance allows it and never for numbers or obligations, which is
+doc 17 section 8's own example and the rule that keeps the panel from stating a figure nobody
+checked.
+
+**Twin parity extended.** The synthetic twin now has to carry the same learning doctrine as the pack
+it stands for. A lesson planned against the corpus that opened at a different level, or called a
+concept mastered at a different score, would not transfer to the shipped pack, and transferring is
+the twin's whole reason for existing.
+
+**The eleventh agent's schemas land before it does.** The packet carries the map, the missions, the
+edges and the doctrine, and nothing else: a packet with passages or card text would let the Planner
+write a lesson from material instead of from what the learner has done, so the schema refuses any
+field it does not name and a test hands it passages to prove it. The output has nowhere to say a
+concept is confirmed, which is doc 17 section 7's "proposed, not applied" expressed as a shape
+rather than as a rule somewhere that reads it.
+
+**Verified** Full battery green, 31 schema guards including the two new ones, 17 doctrine tests, the
+workspace tests, clippy at `-D warnings`, 83 generator guards and the bundle round trip.
+
+---
+
 ---
 
 ## Measured findings

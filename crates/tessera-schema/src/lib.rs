@@ -230,6 +230,8 @@ pub mod ids {
     pub const PACKET_EXERCISE: &str = "tessera:packet/exercise.v1";
     pub const PACKET_READER: &str = "tessera:packet/reader.v1";
     pub const PACKET_TUTOR: &str = "tessera:packet/tutor.v1";
+    /// Doc 17 section 7's eleventh agent.
+    pub const PACKET_LEARNING_PLANNER: &str = "tessera:packet/learning-planner.v1";
 
     pub const OUT_ROUTER: &str = "tessera:output/router.v1";
     pub const OUT_PLANNER: &str = "tessera:output/planner.v1";
@@ -240,6 +242,7 @@ pub mod ids {
     pub const OUT_VERIFIER: &str = "tessera:output/verifier.v1";
     pub const OUT_EXERCISE: &str = "tessera:output/exercise.v1";
     pub const OUT_TUTOR: &str = "tessera:output/tutor.v1";
+    pub const OUT_LEARNING_PLANNER: &str = "tessera:output/learning-planner.v1";
 
     /// Every id the build expects to exist, checked by a test so a renamed file
     /// cannot quietly leave a boundary unguarded.
@@ -259,6 +262,7 @@ pub mod ids {
         PACKET_EXERCISE,
         PACKET_READER,
         PACKET_TUTOR,
+        PACKET_LEARNING_PLANNER,
         OUT_ROUTER,
         OUT_PLANNER,
         OUT_RETRIEVER,
@@ -268,5 +272,6 @@ pub mod ids {
         OUT_VERIFIER,
         OUT_EXERCISE,
         OUT_TUTOR,
+        OUT_LEARNING_PLANNER,
     ];
 }

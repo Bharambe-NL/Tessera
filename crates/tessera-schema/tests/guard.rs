@@ -394,6 +394,88 @@ fn the_tutor_may_not_cite() {
         .expect("a reply with no marker passes");
 }
 
+// -------------------------------------------------------- learning planner --
+
+#[test]
+fn the_learning_planner_reads_a_map_and_no_passages() {
+    // Doc 17 section 7: the Planner decides what to learn next from what the
+    // learner has done. A packet carrying card text or passages would let it
+    // write a lesson from material instead of from evidence, so the schema
+    // refuses anything it does not name.
+    let r = registry();
+    let packet = json!({
+        "schema_version": "1.0",
+        "run_id": RUN,
+        "reason": "lesson_ended",
+        "topic": null,
+        "concepts": [{
+            "concept_id": CARD,
+            "term": "liquidity coverage ratio",
+            "learning_state": "rated",
+            "self_rating": 2,
+            "mastery": null,
+            "difficulty_level": null,
+            "last_evidence_at": null,
+            "linked_cards": 3
+        }],
+        "doctrine": { "mastered_at": 0.8, "decay_days": 120, "max_new_concepts": 3 }
+    });
+    r.validate(ids::PACKET_LEARNING_PLANNER, &packet)
+        .expect("a map with no passages is what the Planner reads");
+
+    let mut with_passages = packet.clone();
+    with_passages["passages"] = json!([{ "text": "The buffer is 2.5 %." }]);
+    assert!(
+        r.validate(ids::PACKET_LEARNING_PLANNER, &with_passages).is_err(),
+        "the Planner was handed material to write from"
+    );
+
+    // Doc 17 section 2.1's ratings are 0 to 3. A fourth would be a claim the
+    // placement flow has no tile for.
+    let mut overrated = packet;
+    overrated["concepts"][0]["self_rating"] = json!(4);
+    assert!(r.validate(ids::PACKET_LEARNING_PLANNER, &overrated).is_err());
+}
+
+#[test]
+fn the_learning_planner_proposes_and_never_applies() {
+    // Doc 17 section 7: proposals are "proposed, not applied", and doc 17
+    // section 4's ladder has four levels. Both are in the shape of the output
+    // rather than in a rule somewhere that reads it.
+    let r = registry();
+    let out = json!({
+        "schema_version": "1.0",
+        "agent_id": "learning_planner",
+        "run_id": RUN,
+        "proposed_concepts": [{ "term": "high quality liquid assets", "why": "The ratio is a fraction of these." }],
+        "proposed_edges": [{
+            "from_term": "high quality liquid assets",
+            "to_term": "liquidity coverage ratio",
+            "relation": "prerequisite_of",
+            "weight": 0.9
+        }],
+        "frontier": [CARD],
+        "lesson": { "targets": [CARD], "include_prerequisites": [], "level": 2 },
+        "declined_reason": null,
+        "confidence": 0.6,
+        "caveats": []
+    });
+    r.validate(ids::OUT_LEARNING_PLANNER, &out)
+        .expect("a plan validates");
+
+    // There is nowhere to say a concept is confirmed, which is the point.
+    let mut applied = out.clone();
+    applied["confirmed_concepts"] = json!([{ "term": "high quality liquid assets" }]);
+    assert!(
+        r.validate(ids::OUT_LEARNING_PLANNER, &applied).is_err(),
+        "the Planner found a way to apply its own proposal"
+    );
+
+    let mut level_five = out;
+    level_five["lesson"]["level"] = json!(5);
+    assert!(r.validate(ids::OUT_LEARNING_PLANNER, &level_five).is_err());
+}
+
 // ------------------------------------------------------------------- event --
 
 #[test]

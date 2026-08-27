@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/learning-planner.v1",
+  "title": "Learning Planner packet",
+  "description": "Doc 17 section 7. The eleventh agent reads the map, the missions, the paths and recent evidence, and decides what to learn next. Almost all of that is a rule rather than a judgement: the frontier and the level are computed before this packet is built, and the only thing a model is asked is how a topic nobody has a concept for decomposes. So the packet carries no passages and no card text: a lesson plan is made from what the learner has done, not from material to write from.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "reason", "concepts"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "reason": {
+      "description": "Doc 17 section 7: the Planner runs on mission creation, path load, lesson end, and on demand.",
+      "enum": ["mission_created", "path_loaded", "lesson_ended", "on_demand"]
+    },
+    "topic": {
+      "type": ["string", "null"],
+      "description": "The one thing a model is asked about: a topic with no concepts on the map yet. Null on every other run, and then the Planner does no model work at all."
+    },
+    "mission": {
+      "type": ["object", "null"],
+      "required": ["mission_id", "statement"],
+      "properties": {
+        "mission_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+        "statement": { "type": "string" },
+        "target_concept_ids": { "type": "array", "items": { "$ref": "tessera:entity/common.v1#/$defs/ulid" } },
+        "audience_id": { "type": ["string", "null"] }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "description": "The map as it stands. Doc 17 section 2.1's learning columns, which is what the frontier rule reads.",
+      "items": {
+        "type": "object",
+        "required": ["concept_id", "term"],
+        "properties": {
+          "concept_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "term": { "type": "string" },
+          "learning_state": {
+            "enum": ["unseen", "exposed", "rated", "checked", "mastered", "decayed", null]
+          },
+          "self_rating": { "type": ["integer", "null"], "minimum": 0, "maximum": 3 },
+          "mastery": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "difficulty_level": { "type": ["integer", "null"], "minimum": 1, "maximum": 4 },
+          "last_evidence_at": { "type": ["string", "null"] },
+          "linked_cards": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "description": "Prerequisite structure. Doc 17 section 2.1 keeps these apart from the links that bind a concept to content.",
+      "items": {
+        "type": "object",
+        "required": ["from_concept_id", "to_concept_id", "relation"],
+        "properties": {
+          "from_concept_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "to_concept_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "relation": { "enum": ["prerequisite_of", "part_of", "contrasts_with"] },
+          "status": { "enum": ["proposed", "confirmed"] },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "doctrine": {
+      "type": "object",
+      "description": "Doc 17 section 8's learning doctrine, as the pack states it. The Planner never decides what mastery means.",
+      "properties": {
+        "mastered_at": { "type": "number", "minimum": 0, "maximum": 1 },
+        "decay_days": { "type": "integer", "minimum": 1 },
+        "max_new_concepts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Doc 17 section 7: \"at most three new ones\". A limit on the packet rather than a hope in the prompt."
+        }
+      }
+    }
+  }
+}
