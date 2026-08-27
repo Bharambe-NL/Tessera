@@ -66,6 +66,12 @@ pub struct Card {
     /// arrive at the same one from the card's own state.
     #[serde(default)]
     pub memory_eligible: bool,
+    /// The ledger facts this card states. A re-verification carries them into
+    /// its run record, because doc 02 section 10.2 scores staleness detection
+    /// against cards whose facts were superseded, and without them that metric
+    /// has an empty denominator and reports n/a forever.
+    #[serde(default)]
+    pub fact_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,7 +269,16 @@ fn write_card(
     for citation in &card.citations {
         // One Source per locator, which is what doc 01 section 4.9's dedupe key
         // means: two cards citing the same page cite one Source.
-        let source_id = format!("src-{}", tessera_store::repo::normalise_locator(&citation.locator));
+        //
+        // The locator is the one a retriever would record, relative to the
+        // folder it indexes, not the one the corpus files it under. The corpus
+        // writes `regulatory/reg-car3-v1.md` and the regulatory retriever
+        // reaching the same file records `reg-car3-v1.md`. Importing the corpus
+        // spelling would leave two Source rows for one document, so a card
+        // answered today would never inherit the staleness a re-verification
+        // found on the card that cited it first.
+        let locator = retriever_locator(&citation.locator);
+        let source_id = format!("src-{}", tessera_store::repo::normalise_locator(locator));
         conn.execute(
             "INSERT INTO source (id, profile_id, class, title, locator, retrieved_at,
                  freshness_class, trust_rank, dedupe_key, created_at)
@@ -274,9 +289,9 @@ fn write_card(
                 profile_id,
                 citation.source_class,
                 citation.source_title,
-                citation.locator,
+                locator,
                 now,
-                tessera_store::repo::normalise_locator(&citation.locator)
+                tessera_store::repo::normalise_locator(locator)
             ],
         )?;
         conn.execute(
@@ -303,6 +318,19 @@ fn write_card(
     Ok(())
 }
 
+/// The locator a retriever would record for a corpus path.
+///
+/// The corpus files a document under its folder, `regulatory/reg-car3-v1.md`,
+/// and each retriever indexes one of those folders, so what it records is the
+/// path from that folder down. Stripping the first segment turns one into the
+/// other. A path with no folder segment is already in retriever form.
+fn retriever_locator(corpus_path: &str) -> &str {
+    match corpus_path.split_once('/') {
+        Some(("regulatory" | "internal" | "web", rest)) => rest,
+        _ => corpus_path,
+    }
+}
+
 /// Snapshot labels are `T1`, `T2`, `T3`, so string order is time order.
 ///
 /// A board with no snapshot predates all of them and is always in scope.
@@ -313,6 +341,15 @@ fn at_or_before(board: &str, run: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_corpus_path_becomes_the_locator_a_retriever_records() {
+        assert_eq!(retriever_locator("regulatory/reg-car3-v1.md"), "reg-car3-v1.md");
+        assert_eq!(retriever_locator("internal/Risk/int-model-09.pdf"), "Risk/int-model-09.pdf");
+        assert_eq!(retriever_locator("web/site.invalid/page.html"), "site.invalid/page.html");
+        assert_eq!(retriever_locator("reg-car3-v1.md"), "reg-car3-v1.md");
+        assert_eq!(retriever_locator("B-01/B-01-C03"), "B-01/B-01-C03");
+    }
 
     #[test]
     fn snapshots_order_as_time() {

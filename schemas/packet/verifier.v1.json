@@ -14,7 +14,10 @@
   ],
   "properties": {
     "card_id": {
-      "$ref": "tessera:entity/common.v1#/$defs/ulid"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "A ulid for every card this build produces. A verify_only packet re-verifies a card that already exists, which on the eval corpus is one the generator named, so that kind carries whatever id the store holds and every other kind keeps the ulid rule below."
     },
     "mode": {
       "$ref": "tessera:entity/common.v1#/$defs/depth"
@@ -96,6 +99,32 @@
     },
     "effort_budget": {
       "$ref": "tessera:entity/common.v1#/$defs/effort_budget"
+    }
+  },
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "verify_only"
+      }
+    },
+    "required": [
+      "kind"
+    ]
+  },
+  "then": {
+    "properties": {
+      "card_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "card_id": {
+        "$ref": "tessera:entity/common.v1#/$defs/ulid"
+      }
     }
   }
 }

@@ -5964,9 +5964,11 @@ name = "tessera-eval"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "hex",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tessera-core",
  "tessera-doctrine",
  "tessera-providers",

@@ -561,10 +561,18 @@ fn stale_source(passages: &[Value]) -> Option<Vec<Value>> {
             .iter()
             .filter(|p| p["source"]["stale"].as_bool().unwrap_or(false))
             .map(|p| {
+                // Doc 05 section 7 names three reasons, and they read differently
+                // to whoever opens the flag. A superseded regulation did not
+                // change, and a page that stopped resolving cannot be compared.
+                let reason = match p["source"]["stale_reason"].as_str() {
+                    Some("superseded_version") => "A newer version of the cited source applies now.",
+                    Some("locator_gone") => "The cited source no longer resolves.",
+                    _ => "A cited source has changed since it was read.",
+                };
                 hit(
                     "citation",
                     p["passage_id"].as_str(),
-                    "A cited source has changed since it was read.",
+                    reason,
                     json!({
                         "source": p["source"]["title"].clone(),
                         "reason": p["source"]["stale_reason"].clone()

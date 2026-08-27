@@ -868,6 +868,144 @@ def test_the_v1_regulation_states_its_own_superseded_values(corpus: Path) -> Non
     assert superseded <= planted, "the v1 text does not state the values it is the v1 of"
 
 
+def _score_rows(tmp_path: Path, rows: list[dict], manifest: dict, corpus: Path):
+    """Score a handful of hand written run rows, the way `gen score` would."""
+    results = tmp_path / "run-1"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    (results / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    report = harness.score(results, corpus)
+    return {m.name: m for m in report.metrics}
+
+
+def test_a_re_verified_card_is_never_counted_among_the_answers(
+    tmp_path: Path, corpus: Path
+) -> None:
+    """A re-verification reads a card back. It carries that card's own answer
+    and that card's own facts, so counting it as an answer would credit recall
+    for facts nobody was asked to find."""
+    facts = [
+        json.loads(line)
+        for line in (corpus / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    fact = next(f for f in facts if f["truth"] == "true" and f["kind"] == "number")
+
+    row = {
+        "q_id": "VO-B-01-B-01-C01",
+        "kind": "verify_only",
+        "card_ref": "B-01/B-01-C01",
+        "depth_expected": "deep",
+        "required_facts": [fact["fact_id"]],
+        "answer": fact["statement"],
+        "citations": [],
+        "flags": [],
+        "ok": True,
+        "leg": "verify",
+    }
+    metrics = _score_rows(tmp_path, [row], {"retrievers_enabled": True, "snapshot": "T3"}, corpus)
+
+    assert metrics["fact_recall_deep"].value is None, "a card read back is not an answer"
+    assert metrics["cards_produced"].value is None
+    assert metrics["tokens_per_question"].value is None
+
+
+def test_staleness_detection_names_the_run_it_waits_for(tmp_path: Path, corpus: Path) -> None:
+    """BN-019. No question in this corpus requires a superseded fact, so a run
+    that only asks questions can never measure this and has to say which run
+    would."""
+    row = {
+        "q_id": "Q-0001",
+        "kind": "card",
+        "depth_expected": "deep",
+        "required_facts": [],
+        "answer": "An answer.",
+        "citations": [],
+        "flags": [],
+        "ok": True,
+        "leg": "bulk",
+    }
+    metrics = _score_rows(tmp_path, [row], {"retrievers_enabled": True, "snapshot": "T3"}, corpus)
+    metric = metrics["staleness_detection"]
+    assert metric.value is None
+    assert metric.verdict() == "n/a"
+    assert "verify" in metric.note, metric.note
+
+
+def test_a_superseded_fact_read_back_and_flagged_scores_the_gate(
+    tmp_path: Path, corpus: Path
+) -> None:
+    """The measurement the whole T3 run exists for: a card written at T1 whose
+    fact was superseded by T3 carries a stale flag when it is read back."""
+    facts = [
+        json.loads(line)
+        for line in (corpus / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    superseded = next(f for f in facts if f["truth"] == "superseded")
+
+    def row(card: str, flagged: bool) -> dict:
+        return {
+            "q_id": f"VO-{card}",
+            "kind": "verify_only",
+            "card_ref": card,
+            "depth_expected": "deep",
+            "required_facts": [superseded["fact_id"]],
+            "answer": "An answer written earlier.",
+            "citations": [{"stale": flagged}],
+            "flags": [{"rule_id": "stale_source"}] if flagged else [],
+            "ok": True,
+            "leg": "verify",
+        }
+
+    both = _score_rows(
+        tmp_path / "both",
+        [row("B-02/B-02-M2", True), row("B-03/B-03-M3", True)],
+        {"retrievers_enabled": True, "snapshot": "T3"},
+        corpus,
+    )
+    assert both["staleness_detection"].value == 1.0
+    assert both["staleness_detection"].denominator == 2
+
+    # And a card that was missed scores as missed rather than as unmeasured.
+    missed = _score_rows(
+        tmp_path / "missed",
+        [row("B-02/B-02-M2", True), row("B-03/B-03-M3", False)],
+        {"retrievers_enabled": True, "snapshot": "T3"},
+        corpus,
+    )
+    assert missed["staleness_detection"].value == 0.5
+    assert missed["staleness_detection"].verdict() == "fail"
+
+
+def test_the_verify_leg_never_scores_the_answer_metrics(tmp_path: Path, corpus: Path) -> None:
+    """The verify leg picks its questions because their sources went stale, and
+    the timeline deleted some of those sources outright. Scoring recall on them
+    would measure the timeline: it read 0.000 off one question whose only source
+    was the memo doc 15 section 5 removes on purpose."""
+    row = {
+        "q_id": "Q-0001",
+        "kind": "card",
+        "depth_expected": "research",
+        "required_facts": ["F-0079"],
+        "answer": "No sources were found for this question.",
+        "citations": [],
+        "flags": [],
+        "ok": True,
+        "leg": "verify",
+        "plan": {
+            "constraints": {"stale_ancestor_citations": [{"card_id": "x"}]},
+            "sub_questions": [{"text": "Check which values are current in CAR3."}],
+        },
+    }
+    metrics = _score_rows(tmp_path, [row], {"retrievers_enabled": True, "snapshot": "T3"}, corpus)
+    assert metrics["fact_recall_research"].value is None, "a fixture question is not a sample"
+    # It still carries a plan, which is what the Planner gate reads.
+    assert metrics["stale_ancestor_reverification"].value == 1.0
+
+
 def test_every_memory_metric_reports_n_a_until_the_retriever_exists() -> None:
     """BN-019. A target of zero met by never being tested is a false pass."""
     metrics = harness._memory_metrics([], [], {}, {"memory_enabled": False})

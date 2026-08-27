@@ -17,6 +17,7 @@
 //! score` turns it into metrics.
 
 mod boards;
+mod reverify;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
@@ -139,6 +140,26 @@ struct Args {
     /// throwaway profile, so nothing shares a store.
     #[arg(long, default_value_t = 3)]
     workers: usize,
+
+    /// Re-verify the corpus's own boards instead of asking questions.
+    ///
+    /// Doc 07 section B3's batch: every card the corpus shipped is read back
+    /// against the tree this run points at, and a citation whose source has
+    /// since changed, gone, or been superseded flips the card to flagged. This
+    /// is what doc 02 section 5.4 means by a board written at T1 and reopened at
+    /// T3, and it is what the three staleness gates are scored on.
+    ///
+    /// Runs on one worker against one store, because every card has to see the
+    /// same imported boards.
+    #[arg(long)]
+    verify_only: bool,
+
+    /// The corpus as it stood when those boards were written, usually the T1
+    /// tree. Without it a document that was quietly edited cannot be told from
+    /// one that was not, and the run reports that it could not tell rather than
+    /// reporting that nothing changed.
+    #[arg(long)]
+    baseline: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,6 +241,17 @@ struct RunRecord {
     provider: String,
     /// `reference` or `bulk`.
     leg: String,
+    /// `card` for a question this run asked, `verify_only` for a card it read
+    /// back. The scorer keeps the two apart: a re-verification answers nothing,
+    /// so counting it among the answers would dilute every recall metric with
+    /// rows that were never asked a question.
+    kind: String,
+    /// The corpus's own name for the card being re-verified, `board_id/card_id`.
+    ///
+    /// Doc 15's ground truth names prior cards this way. Matching on `card_id`
+    /// alone would compare a pipeline ulid against a synthetic card id and
+    /// silently never match, which is why the chain is matched on this.
+    card_ref: Option<String>,
 }
 
 fn main() -> std::process::ExitCode {
@@ -257,6 +289,25 @@ fn main() -> std::process::ExitCode {
         }
     };
     println!("{}", plan.describe());
+
+    if args.verify_only {
+        let mut records = run_verify_only(&args, &pack, &plan, &questions);
+        records.sort_by(|a, b| a.q_id.cmp(&b.q_id));
+        let failures = records.iter().filter(|r| !r.ok).count();
+        let dir = args
+            .out
+            .join(corpus_name(&args.corpus))
+            .join(&args.policy)
+            .join(stamp());
+        if let Err(e) = write_records(&dir, &records, &args, &pack, records.len(), failures) {
+            eprintln!("could not write the results: {e}");
+            return std::process::ExitCode::from(2);
+        }
+        println!("\n{} cards re-verified, {failures} failed", records.len());
+        println!("wrote {}", dir.display());
+        println!("score it with: gen score --results {}", dir.display());
+        return std::process::ExitCode::SUCCESS;
+    }
 
     let workers = args.workers.max(1).min(total.max(1));
     println!("{workers} workers");
@@ -608,6 +659,333 @@ fn run_one(
     record
 }
 
+/// Bring one core up, import the corpus's boards, re-verify their sources, and
+/// read every card back.
+///
+/// One store rather than the sweep's three, because a re-verification reads
+/// cards another worker would not have.
+fn run_verify_only(args: &Args, pack: &str, plan: &Plan, questions: &[Question]) -> Vec<RunRecord> {
+    let keys: Box<dyn KeyStore> = if args.mock {
+        Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
+    } else {
+        Box::new(OsKeychain)
+    };
+    let first_key_ref = if args.mock { "test-key" } else { args.bulk_key_ref.as_str() };
+
+    let mut core =
+        match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("could not bring a core up: {e}");
+                return Vec::new();
+            }
+        };
+    core.source = Source::Test;
+    if let Err(e) = core.use_pack(pack) {
+        eprintln!("could not load the `{pack}` pack: {e}");
+        return Vec::new();
+    }
+    // The boards are imported by the same call that indexes the corpus, so the
+    // cards and the tree they are judged against arrive together.
+    if let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot) {
+        eprintln!("could not index the corpus: {e}");
+        return Vec::new();
+    }
+
+    let stale = match reverify::mark(
+        &mut core.store,
+        &args.corpus,
+        args.baseline.as_deref(),
+        "reverify",
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("could not re-verify the cited sources: {e}");
+            return Vec::new();
+        }
+    };
+
+    verify_sweep(&mut core, &args.corpus, questions, &stale)
+}
+
+/// Read every card the corpus shipped back against the tree this run points at.
+///
+/// Doc 07 section B3's batch, and what doc 02 section 5.4 means by a board
+/// written at T1 and reopened at T3. One store and one worker, because every
+/// card has to see the same imported boards and doc 10 section 6 allows one
+/// verifier per board anyway.
+fn verify_sweep(
+    core: &mut Core,
+    corpus: &Path,
+    questions: &[Question],
+    stale: &reverify::StaleReport,
+) -> Vec<RunRecord> {
+    let mut records = Vec::new();
+    let boards = match boards::load(corpus) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("could not read the corpus boards: {e}");
+            return records;
+        }
+    };
+
+    println!(
+        "re-verifying {} boards against {}",
+        boards.len(),
+        corpus.display()
+    );
+    println!(
+        "  {} of {} cited sources went stale{}",
+        stale.stale,
+        stale.checked,
+        if stale.by_reason.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({})",
+                stale
+                    .by_reason
+                    .iter()
+                    .map(|(reason, n)| format!("{n} {reason}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    );
+    if stale.content_comparison_skipped {
+        // BN-019. A run that could not compare says so, rather than letting a
+        // reader take the absence of `content_changed` for evidence of none.
+        println!(
+            "  no baseline tree was given, so a quietly edited document reads as unchanged. \
+             Pass --baseline to measure that."
+        );
+    }
+    if stale.unresolvable > 0 {
+        println!("  {} cited sources point outside the corpus", stale.unresolvable);
+    }
+
+    for board in &boards {
+        for card in &board.cards {
+            // A card that cited nothing has no source to have gone stale, so
+            // re-verifying it would add a row that measures nothing.
+            if card.citations.is_empty() {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let card_ref = format!("{}/{}", board.board_id, card.card_id);
+            let mut record = empty_verify_record(board, card, started);
+
+            match core.verify_card(&board.board_id, &card.card_id) {
+                Ok(outcome) => {
+                    record.ok = true;
+                    record.card_id = Some(outcome.card_id.clone());
+                    record.status = Some(outcome.status);
+                    record.confidence = Some(outcome.confidence);
+                    let view = tessera_store::repo::read_board(&core.store, &board.board_id)
+                        .ok()
+                        .flatten();
+                    if let Some(view) = view
+                        && let Some(found) = view.cards.iter().find(|c| c.id == card.card_id)
+                    {
+                        record.citations = found.citations.clone();
+                        record.flags = found.flags.clone();
+                        record.prior_cards = found
+                            .builds_on
+                            .iter()
+                            .filter_map(|b| {
+                                Some(format!(
+                                    "{}/{}",
+                                    b["board_id"].as_str()?,
+                                    b["card_id"].as_str()?
+                                ))
+                            })
+                            .collect();
+                    }
+                }
+                Err(e) => record.failure = Some(e.to_string()),
+            }
+            record.latency_ms = started.elapsed().as_millis();
+            record.card_ref = Some(card_ref);
+            records.push(record);
+        }
+    }
+
+    let flagged = records
+        .iter()
+        .filter(|r| r.flags.iter().any(|f| f["rule_id"] == json!("stale_source")))
+        .count();
+    println!("  {} cards re-verified, {flagged} carry a stale citation", records.len());
+
+    records.extend(follow_up_on_stale(core, questions, &stale.locators));
+    records
+}
+
+/// Ask a question whose sources have gone stale, then follow up on the answer.
+///
+/// Doc 04 section 12 scores the Planner on whether a request whose ancestor
+/// carries a stale citation earns a sub-question that re-checks it. That needs
+/// such a request to exist, and this is where it comes from.
+///
+/// The pair is asked through the ordinary pipeline rather than on the corpus's
+/// own boards. Those boards keep the generator's card ids so doc 15's ground
+/// truth can name them, and doc 01 section 3 makes every id the product mints a
+/// ulid, so asking a follow-up on an imported card would put a fixture id where
+/// the Router's packet requires a real one. The sources are already marked
+/// stale, so a card that reaches one is flagged exactly as an old card would be,
+/// and its follow-up sees a genuinely stale ancestor.
+///
+/// The follow-up says nothing about verifying or currency on purpose. The
+/// grounded mock echoes the request into its one sub-question, so a question
+/// using those words would score the wording rather than the Planner.
+fn follow_up_on_stale(
+    core: &mut Core,
+    questions: &[Question],
+    stale_locators: &[String],
+) -> Vec<RunRecord> {
+    const FOLLOW_UP: &str = "What does this mean for the position today?";
+    let mut out = Vec::new();
+
+    // Questions whose own required sources are among the ones that went stale.
+    // A question that never reaches a stale source would produce a fresh card
+    // and measure nothing.
+    let stale_docs: HashSet<&str> = stale_locators
+        .iter()
+        .filter_map(|l| Path::new(l).file_stem().and_then(|s| s.to_str()))
+        .collect();
+    let touching: Vec<&Question> = questions
+        .iter()
+        .filter(|q| q.required_sources.iter().any(|s| stale_docs.contains(s.as_str())))
+        .take(12)
+        .collect();
+
+    if touching.is_empty() {
+        println!("  no question in the set reaches a stale source, so no follow-up was asked");
+        return out;
+    }
+
+    let mut failures = 0usize;
+    for q in touching {
+        let mut root = run_one(core, q, None, &mut failures);
+        root.provider = "mock".to_string();
+        root.leg = "verify".to_string();
+        let (Some(board_id), Some(card_id)) = (root.board_id.clone(), root.card_id.clone()) else {
+            out.push(root);
+            continue;
+        };
+        let asked_stale = root.citations.iter().any(|c| c["stale"] == json!(true));
+        out.push(root);
+        if !asked_stale {
+            continue;
+        }
+
+        let started = std::time::Instant::now();
+        let mut record = empty_record(q, String::new(), started);
+        record.q_id = format!("FU-{}", q.q_id);
+        record.text = FOLLOW_UP.to_string();
+        record.depth_expected = "deep".to_string();
+        record.parent_q_id = Some(q.q_id.clone());
+        record.board_id = Some(board_id.clone());
+        // A follow-up asks something the question set never asked, so it carries
+        // no required facts of its own to be scored against.
+        record.required_facts = Vec::new();
+        record.required_sources = Vec::new();
+        record.provider = "mock".to_string();
+        record.leg = "verify".to_string();
+
+        match core.ask_on(&board_id, FOLLOW_UP, Some("deep"), Some(&card_id)) {
+            Ok(outcome) => {
+                record.ok = true;
+                record.card_id = Some(outcome.card_id);
+                record.status = Some(outcome.status);
+                record.confidence = Some(outcome.confidence);
+                record.depth_chosen = Some("deep".to_string());
+            }
+            Err(e) => record.failure = Some(e.to_string()),
+        }
+
+        record.plan = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT s.output FROM step s
+                 JOIN run r ON r.id = s.run_id
+                 WHERE r.board_id = ?1 AND s.agent_id = 'planner' AND s.output IS NOT NULL
+                 ORDER BY s.started_at DESC LIMIT 1",
+                [&board_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
+        record.latency_ms = started.elapsed().as_millis();
+        out.push(record);
+    }
+
+    let planned = out.iter().filter(|r| r.plan.is_some()).count();
+    let with_stale = out
+        .iter()
+        .filter(|r| {
+            r.plan
+                .as_ref()
+                .and_then(|p| p["constraints"]["stale_ancestor_citations"].as_array())
+                .is_some_and(|a| !a.is_empty())
+        })
+        .count();
+    println!(
+        "  {} questions asked over stale sources, {planned} carried a plan, \
+         {with_stale} planned against a stale ancestor",
+        out.len()
+    );
+    out
+}
+
+fn empty_verify_record(
+    board: &boards::Board,
+    card: &boards::Card,
+    started: std::time::Instant,
+) -> RunRecord {
+    RunRecord {
+        q_id: format!("VO-{}-{}", board.board_id, card.card_id),
+        text: card.question.clone(),
+        domain: String::new(),
+        depth_expected: card.depth.clone(),
+        depth_chosen: Some(card.depth.clone()),
+        audience_id: None,
+        // What the card states. Doc 02 section 10.2 scores staleness detection
+        // against the cards whose facts were superseded, and this is where that
+        // denominator comes from.
+        required_facts: card.fact_ids.clone(),
+        required_sources: Vec::new(),
+        forbidden_facts: Vec::new(),
+        expected_visual: String::new(),
+        expected_flags: Vec::new(),
+        edge_case_ids: Vec::new(),
+        parent_q_id: card.parent_card_id.clone(),
+        anchor_text: card.anchor_text.clone(),
+        ok: false,
+        failure: None,
+        card_id: None,
+        board_id: Some(board.board_id.clone()),
+        answer: card.answer.clone(),
+        findings: Vec::new(),
+        visual_type: None,
+        visual_labels: Vec::new(),
+        block_index: Vec::new(),
+        citations: Vec::new(),
+        prior_cards: Vec::new(),
+        plan: None,
+        flags: Vec::new(),
+        status: None,
+        confidence: None,
+        events: Vec::new(),
+        cost: Value::Null,
+        latency_ms: started.elapsed().as_millis(),
+        provider: String::new(),
+        leg: "verify".to_string(),
+        kind: "verify_only".to_string(),
+        card_ref: None,
+    }
+}
+
 fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> RunRecord {
     RunRecord {
         q_id: q.q_id.clone(),
@@ -644,6 +1022,8 @@ fn empty_record(q: &Question, failure: String, started: std::time::Instant) -> R
         latency_ms: started.elapsed().as_millis(),
         provider: String::new(),
         leg: String::new(),
+        kind: "card".to_string(),
+        card_ref: None,
     }
 }
 
@@ -1180,7 +1560,13 @@ fn write_records(
         },
         "reference_provider": if args.mock { "mock" } else { "anthropic" },
         "sample_per_depth": args.sample_per_depth,
-        "questions_run": total,
+        // A re-verification asks nothing, so it counts cards read back rather
+        // than questions run. Reporting them as questions would have the scorer
+        // divide answer metrics by a denominator nobody was asked.
+        "questions_run": if args.verify_only { 0 } else { total },
+        "verify_only": args.verify_only,
+        "cards_reverified": if args.verify_only { records.len() } else { 0 },
+        "baseline": args.baseline.as_deref().map(corpus_name),
         "cards_failed": failures,
         // Doc 07 section B9: the support check is not enabled until its
         // agreement is measured, so every verdict in this run is `unchecked`.

@@ -111,6 +111,157 @@ pub struct CardOutcome {
     pub flags: usize,
 }
 
+/// Re-verify a card that was answered earlier, against the corpus as it stands
+/// now. Doc 07 section B3 and B8.4.
+///
+/// Nothing is retrieved and nothing is rewritten. The card's own citations are
+/// read back with the current state of the sources behind them, so a source a
+/// re-verification marked stale reaches the Verifier's freshness check and can
+/// flip a done card to flagged months after it was written.
+///
+/// The answer is not re-synthesised, so the deterministic checks that read the
+/// draft run against the text the card already carries.
+pub async fn run_verify_only(
+    store: &mut Store,
+    ctx: &RunContext<'_>,
+    board_id: &str,
+    card_id: &str,
+) -> Result<CardOutcome, Failure> {
+    let policy_snapshot = serde_json::to_value(&ctx.policy).unwrap_or(Value::Null);
+    let card = repo::read_card_for_verify(store, card_id)
+        .map_err(|e| Failure::fail_closed("verify_only", e.to_string()))?
+        .ok_or_else(|| Failure::fail_closed("verify_only", "no such card"))?;
+
+    let run_id = repo::start_run(
+        store,
+        repo::NewRun {
+            board_id,
+            card_id: Some(card_id),
+            kind: "verify_only",
+            depth: Some(&card.depth),
+            policy_snapshot: &policy_snapshot,
+            pack_version: &ctx.pack.version,
+        },
+    )?;
+    let at = repo::CardRef {
+        card_id,
+        board_id,
+        run_id: &run_id,
+    };
+
+    // Doc 07 section B5: fast mode runs only the checks that need no passages,
+    // and this run has passages, so the mode the card was written at stands.
+    let packet = json!({
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "card_id": card_id,
+        "mode": card.depth,
+        "kind": "verify_only",
+        "answer": card.answer,
+        "findings": card.findings,
+        "citations": card.citations,
+        "passages": card.passages,
+        "visual": Value::Null,
+        "unsupported_statements": json!([]),
+        "early_flags": json!([]),
+        "plan_constraints": { "must_exclude": ctx.pack.must_exclude(), "value_policy": "cite_only" },
+        "doctrine": {
+            "flag_rules": serde_json::to_value(&ctx.pack.flag_rules).unwrap_or(json!([])),
+            "freshness_classes": serde_json::to_value(&ctx.pack.freshness_classes).unwrap_or(json!({})),
+            "writing_rules": serde_json::to_value(&ctx.pack.writing_rules).unwrap_or(json!({}))
+        },
+        "effort_budget": { "max_tokens": 3000, "answer_max_words": 180 }
+    });
+
+    let verified = run_agent(
+        &Verifier,
+        store,
+        RunAgent {
+            registry: ctx.registry,
+            provider: ctx.provider,
+            run_id: run_id.clone(),
+            card_id: Some(card_id.to_string()),
+            board_id: Some(board_id.to_string()),
+            sequence: 1,
+            source: ctx.source,
+            policy: ctx.policy.clone(),
+        },
+        packet,
+    )
+    .await;
+
+    // Fail closed, as doc 07 section B10 requires everywhere the Verifier runs.
+    // A re-verification that could not complete leaves the card held back rather
+    // than quietly confirming it.
+    let verified = match verified {
+        Ok(o) => o.output,
+        Err(f) => {
+            repo::write_flag(
+                store,
+                at,
+                repo::NewFlag {
+                    rule_id: "verification_failed",
+                    severity: "block",
+                    target: json!({ "kind": "whole_card" }),
+                    reason: &format!(
+                        "Re-verification did not complete, so this card is held back. {}",
+                        f.detail
+                    ),
+                    evidence: Some(json!({ "failure": f.kind, "detail": f.detail })),
+                },
+            )?;
+            json!({
+                "flags": [], "card_confidence": 0.0, "card_status": "flagged"
+            })
+        }
+    };
+
+    let mut flags = 0usize;
+    for flag in verified["flags"].as_array().into_iter().flatten() {
+        repo::write_flag(
+            store,
+            at,
+            repo::NewFlag {
+                rule_id: flag["rule_id"].as_str().unwrap_or("unknown"),
+                severity: flag["severity"].as_str().unwrap_or("info"),
+                target: flag["target"].clone(),
+                reason: flag["reason"].as_str().unwrap_or("A doctrine rule matched."),
+                evidence: Some(flag["evidence"].clone()),
+            },
+        )?;
+        flags += 1;
+    }
+
+    let status = verified["card_status"].as_str().unwrap_or("flagged").to_string();
+    let confidence = verified["card_confidence"].as_f64().unwrap_or(0.0);
+    store
+        .conn()
+        .execute(
+            "UPDATE card SET status = ?1, confidence = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![status, confidence, tessera_store::now_iso8601(), card_id],
+        )
+        .map_err(|e| Failure::fail_closed("verify_only", e.to_string()))?;
+
+    store.append(
+        tessera_store::NewEvent::new(
+            "verify.completed.v1",
+            json!({ "card_id": card_id, "status": status, "flags": flags, "kind": "verify_only" }),
+            tessera_store::Provenance::agent("verifier", run_id.clone()).with_source(ctx.source),
+        )
+        .on_board(board_id)
+        .on_card(card_id),
+    )?;
+    repo::end_run(store, &run_id, "done")?;
+
+    Ok(CardOutcome {
+        card_id: card_id.to_string(),
+        run_id,
+        status,
+        confidence,
+        flags,
+    })
+}
+
 /// Run one card from request to answer.
 ///
 /// Every stage writes its Step and its events as it completes, so a card that

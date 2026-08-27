@@ -156,6 +156,9 @@ class Report:
     #: Doc 07 section B12's gate is per rule, so the breakdown is what makes
     #: "the rule is disabled and listed" actionable.
     per_rule_false_positives: dict[str, float] = field(default_factory=dict)
+    #: Cards read back rather than asked. Reported so a run whose answer metrics
+    #: say n/a shows what it did instead of looking empty.
+    reverified: int = 0
 
     @property
     def failed(self) -> list[Metric]:
@@ -271,7 +274,7 @@ def _answer_text(run: dict) -> str:
 
 
 def score(results: Path, corpus: Path) -> Report:
-    runs, manifest = load_runs(results)
+    everything, manifest = load_runs(results)
     facts = load_facts(corpus)
 
     report = Report(
@@ -281,7 +284,25 @@ def score(results: Path, corpus: Path) -> Report:
         manifest=manifest,
     )
 
-    answered = [r for r in runs if r.get("ok")]
+    # A re-verification asks nothing and answers nothing. It reads a card that
+    # was written months earlier and judges its citations again, so it carries
+    # that card's own answer and that card's own facts. Counting those rows
+    # among the answers would credit recall for facts nobody was asked to find
+    # and would score every flag against an expectation no question set. Every
+    # metric about answering therefore runs on the questions, and the staleness
+    # metrics below read both.
+    runs = [r for r in everything if r.get("kind", "card") != "verify_only"]
+    report.reverified = sum(1 for r in everything if r.get("kind") == "verify_only")
+
+    # The verify leg asks questions to build a stale ancestor for the Planner,
+    # and it picks them because their sources went stale. Several of those
+    # sources were deleted by the snapshot it runs against, so what their recall
+    # measures is the timeline rather than the retriever: on one run
+    # `fact_recall_research` read 0.000 off a single question whose only source
+    # was the memo doc 15 section 5 removes on purpose. They still carry plans,
+    # so the Planner metrics below read them; nothing about answering does.
+    asked = [r for r in runs if r.get("leg") != "verify"]
+    answered = [r for r in asked if r.get("ok")]
     retrievers = bool(manifest.get("retrievers_enabled", False))
     support_check = bool(manifest.get("support_check_enabled", False))
 
@@ -646,8 +667,13 @@ def score(results: Path, corpus: Path) -> Report:
     # The denominator is citations that actually point at a superseded fact, so
     # a run at T1, where nothing is stale yet, reports n/a rather than a perfect
     # score for having found none.
+    #
+    # Read over every row, questions and re-verifications alike. On this corpus
+    # no question requires a superseded fact, so the cards that carry one are the
+    # ones the generator wrote at T1, and a run that only asked questions has
+    # nothing here to measure however carefully it retrieved.
     stale_expected = stale_found = 0
-    for run in runs:
+    for run in everything:
         superseded = {
             fact_id
             for fact_id in (run.get("required_facts") or [])
@@ -672,7 +698,8 @@ def score(results: Path, corpus: Path) -> Report:
             None,
             0,
             0,
-            "no citation in this run points at a superseded value; run the T3 snapshot",
+            "no card in this run states a superseded value; re-verify the boards "
+            "against the T3 corpus with --verify-only",
         )
     )
 
@@ -749,26 +776,29 @@ def score(results: Path, corpus: Path) -> Report:
     )
 
     # ---------------------------------------------------- cost and latency --
-    input_tokens = sum((r.get("cost") or {}).get("input_tokens", 0) or 0 for r in runs)
-    output_tokens = sum((r.get("cost") or {}).get("output_tokens", 0) or 0 for r in runs)
-    calls = sum((r.get("cost") or {}).get("calls", 0) or 0 for r in runs)
-    latencies = sorted(r.get("latency_ms", 0) for r in runs)
+    # Over the questions the run was asked to answer. The verify leg's questions
+    # are excluded with the rest of the answer metrics, so a run that asked none
+    # reports n/a rather than dividing by a denominator it did not sample.
+    input_tokens = sum((r.get("cost") or {}).get("input_tokens", 0) or 0 for r in asked)
+    output_tokens = sum((r.get("cost") or {}).get("output_tokens", 0) or 0 for r in asked)
+    calls = sum((r.get("cost") or {}).get("calls", 0) or 0 for r in asked)
+    latencies = sorted(r.get("latency_ms", 0) for r in asked)
 
     report.metrics.append(
         Metric(
             "cards_produced",
-            len(answered) / len(runs) if runs else None,
+            len(answered) / len(asked) if asked else None,
             len(answered),
-            len(runs),
-            "" if runs else "the run recorded no questions",
+            len(asked),
+            "" if asked else "the run answered no questions",
         )
     )
     report.metrics.append(
         Metric(
             "tokens_per_question",
-            (input_tokens + output_tokens) / len(runs) if runs else None,
+            (input_tokens + output_tokens) / len(asked) if asked else None,
             input_tokens + output_tokens,
-            len(runs),
+            len(asked),
             f"{calls} model calls across the run",
         )
     )
@@ -786,7 +816,9 @@ def score(results: Path, corpus: Path) -> Report:
     report.metrics.extend(_planner_metrics(runs, facts, manifest))
 
     # ----------------------------------------------------------- memory ----
-    report.metrics.extend(_memory_metrics(runs, answered, load_memory(corpus), manifest))
+    # Every row, because stale propagation is matched on `card_ref`, which only
+    # a re-verification records.
+    report.metrics.extend(_memory_metrics(everything, answered, load_memory(corpus), manifest))
 
     # ------------------------------------------------------ breakdowns -----
     # Doc 02 section 10.1 runs the mock deliberately, so the report has to say
@@ -1342,7 +1374,13 @@ def render(report: Report, previous: Path | None) -> str:
         f"Snapshot {report.snapshot}. Matchers {MATCHERS_VERSION}.",
         f"Provider {report.manifest.get('provider', 'unknown')}, "
         f"{report.manifest.get('questions_run', 0)} questions, "
-        f"{report.manifest.get('cards_failed', 0)} produced no card.",
+        f"{report.manifest.get('cards_failed', 0)} produced no card."
+        + (
+            f" {report.reverified} cards were read back rather than asked, so every "
+            "metric about answering reports n/a."
+            if report.reverified
+            else ""
+        ),
         "",
         "| Metric | Value | Threshold | Verdict | Note |",
         "| --- | --- | --- | --- | --- |",

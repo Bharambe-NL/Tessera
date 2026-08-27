@@ -153,6 +153,7 @@ impl Agent for Planner {
         step(ctx, "assigning_retrievers")?;
         let mut sub_questions =
             assign_retrievers(&draft, packet, &enabled, max_sq, depth, &stale);
+        add_reverification(&mut sub_questions, &stale, &enabled);
 
         // ---------------------------------------------- 8.5 constraints ----
         step(ctx, "constraining")?;
@@ -505,6 +506,63 @@ fn assign_retrievers(
         }));
     }
     out
+}
+
+/// Add the sub-question that re-checks a stale ancestor's values.
+///
+/// Doc 04 section 8 step 2 gives every stale ancestor citation a sub-question
+/// that re-verifies it. The system prompt asks the model for one, and a model
+/// that forgets would leave the card standing on a value nobody checked, so the
+/// plan carries it whether or not the draft did. This is the freshness gate
+/// doing its own work rather than trusting a prompt to have been obeyed.
+///
+/// Nothing is added when no ancestor is stale, so an ordinary follow-up plans
+/// exactly as it did before.
+fn add_reverification(sub_questions: &mut Vec<Value>, stale: &[Value], enabled: &[String]) {
+    if stale.is_empty() {
+        return;
+    }
+    // A draft that already re-verifies needs no second one.
+    if sub_questions.iter().any(|sq| {
+        let text = sq["text"].as_str().unwrap_or_default().to_lowercase();
+        text.contains("verif") || text.contains("current")
+    }) {
+        return;
+    }
+
+    let titles: Vec<String> = stale
+        .iter()
+        .filter_map(|c| c["source_title"].as_str())
+        .map(str::to_string)
+        .collect();
+    let subject = match titles.first() {
+        Some(title) if titles.len() == 1 => format!("in {title}"),
+        Some(title) => format!("in {title} and the other sources the earlier cards cited"),
+        None => "in the sources the earlier cards cited".to_string(),
+    };
+    let text = format!("Check which values are current {subject}.");
+
+    let per_sq_cap = 6i64;
+    let retrievers: Vec<Value> = enabled
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "query": text,
+                "filters": Value::Object(Map::new()),
+                "max_passages": (per_sq_cap / enabled.len().max(1) as i64).max(1),
+            })
+        })
+        .collect();
+
+    sub_questions.push(json!({
+        "sq_id": format!("sq-{}", sub_questions.len() + 1),
+        "text": text,
+        "purpose": "re-verify a value an earlier card cited",
+        "retrievers": retrievers,
+        "entity_refs": [],
+        "depends_on": [],
+    }));
 }
 
 /// The concept ids of resolved entities the sub-question mentions, and the

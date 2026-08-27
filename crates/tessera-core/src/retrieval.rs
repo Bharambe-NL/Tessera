@@ -249,7 +249,9 @@ pub fn run(
         // The stored passage id is what a citation will point at, so the
         // Synthesizer has to see that one and not the index entry id it was
         // found by.
-        let ids = retained.map(|r| r.passage_ids).unwrap_or_default();
+        let (ids, stale) = retained
+            .map(|r| (r.passage_ids, r.stale))
+            .unwrap_or_default();
         for (i, passage) in retrieved.passages.iter().enumerate() {
             // A prior card's locator is `board_id/card_id`, which is exactly
             // what doc 01 section 4.4 records and what doc 15's ground truth
@@ -279,6 +281,13 @@ pub fn run(
                     "trust_rank": passage.source.trust_rank,
                     "published_at": passage.source.published_at,
                     "version_ref": passage.source.version_ref,
+                    // Doc 07 section B8.4's freshness check reads these. A source
+                    // a re-verification already marked stale is still stale when
+                    // it is reached again, so the state comes from the row rather
+                    // than from the fact that this run just read it.
+                    "stale": stale.get(i).map(Option::is_some).unwrap_or(false),
+                    "stale_reason": stale.get(i).cloned().flatten(),
+                    "locator": passage.source.locator,
                 },
             }));
         }

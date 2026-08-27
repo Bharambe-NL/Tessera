@@ -214,6 +214,46 @@ impl Core {
     /// so?" answerable: on its own it names no subject, and the pipeline reads
     /// the parent's question and answer back out of this chain. Asked without a
     /// parent, such a question retrieves nothing, correctly and uselessly.
+    /// Re-verify a card already on a board, against the corpus as it stands now.
+    ///
+    /// Doc 07 section B3 batches these when a source goes stale. Nothing is
+    /// retrieved and no answer is rewritten, so this is what a board reopened
+    /// months later runs before the user reads it.
+    pub fn verify_card(
+        &mut self,
+        board_id: &str,
+        card_id: &str,
+    ) -> Result<pipeline::CardOutcome, CoreError> {
+        let policy = self.resolved()?;
+        let pack = self.packs.get(&self.pack_code)?.clone();
+        let ctx = RunContext {
+            registry: &self.registry,
+            provider: self.provider.as_ref(),
+            pack: &pack,
+            policy,
+            profile_id: self.profile_id.clone(),
+            source: self.source,
+            ledger: &self.ledger,
+            retrievers: &self.retrievers,
+        };
+
+        let result = self
+            .runtime
+            .handle()
+            .clone()
+            .block_on(pipeline::run_verify_only(
+                &mut self.store,
+                &ctx,
+                board_id,
+                card_id,
+            ));
+
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(f) => Err(CoreError::Runtime(f.to_string())),
+        }
+    }
+
     pub fn ask_on(
         &mut self,
         board_id: &str,
