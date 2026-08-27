@@ -4,6 +4,7 @@
 //! do is a method registered here, so the web client that arrives later talks to
 //! the identical protocol over a socket rather than to a second, thinner API.
 
+use rusqlite::OptionalExtension;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -521,6 +522,203 @@ impl Core {
         )?)
     }
 
+    /// Doc 17 section 6: the Map is "a board of `mode: map`", one per profile,
+    /// created the first time anything needs it.
+    ///
+    /// A board rather than a view of its own, so viewport, events and export
+    /// come free; and one per profile, because a second map would be a second
+    /// answer to where the learner stands.
+    pub fn map_board(&mut self) -> Result<String, CoreError> {
+        let existing: Option<String> = self
+            .store
+            .conn()
+            .query_row(
+                "SELECT id FROM board WHERE profile_id = ?1 AND mode = 'map' LIMIT 1",
+                rusqlite::params![self.profile_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(tessera_store::StoreError::from)?;
+        if let Some(existing) = existing {
+            return Ok(existing);
+        }
+        let board_id = self.create_board(MAP_TITLE, "deep")?;
+        self.store
+            .conn()
+            .execute(
+                "UPDATE board SET mode = 'map', named_by_user = 1 WHERE id = ?1",
+                rusqlite::params![board_id],
+            )
+            .map_err(tessera_store::StoreError::from)?;
+        Ok(board_id)
+    }
+
+    /// Load a learning path. Doc 17 section 2.1: "creates or links the
+    /// concepts, creates the edges as confirmed, and offers a mission".
+    ///
+    /// Confirmed rather than proposed, and that is the one place an edge starts
+    /// there: a path is doctrine somebody wrote down, not a guess an agent
+    /// made, and asking the learner to confirm what the pack already states
+    /// would be asking them to check the author's work.
+    pub fn load_path(&mut self, path: &Value) -> Result<Value, CoreError> {
+        let pack_id = self.active_pack_id()?;
+        let profile_id = self.profile_id.clone();
+        let path_id = tessera_store::new_id();
+
+        let mut ids: std::collections::BTreeMap<String, String> = Default::default();
+        for concept in path["concepts"].as_array().into_iter().flatten() {
+            let Some(term) = concept["concept_term"]
+                .as_str()
+                .or_else(|| concept["term"].as_str())
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            else {
+                continue;
+            };
+            let id = repo::ensure_concept(&mut self.store, &profile_id, &pack_id, term)?;
+            ids.insert(term.to_lowercase(), id);
+        }
+
+        let mut edges = 0usize;
+        for concept in path["concepts"].as_array().into_iter().flatten() {
+            let Some(to) = concept["concept_term"]
+                .as_str()
+                .or_else(|| concept["term"].as_str())
+                .and_then(|t| ids.get(&t.trim().to_lowercase()))
+                .cloned()
+            else {
+                continue;
+            };
+            for prerequisite in concept["prerequisite_terms"].as_array().into_iter().flatten() {
+                let Some(from) = prerequisite
+                    .as_str()
+                    .and_then(|t| ids.get(&t.trim().to_lowercase()))
+                    .cloned()
+                else {
+                    continue;
+                };
+                repo::propose_edge(
+                    &mut self.store,
+                    repo::NewEdge {
+                        from_concept_id: &from,
+                        to_concept_id: &to,
+                        relation: "prerequisite_of",
+                        proposed_by: "path",
+                        status: "confirmed",
+                        weight: 1.0,
+                    },
+                )?;
+                edges += 1;
+            }
+        }
+
+        let concept_ids: Vec<String> = ids.values().cloned().collect();
+        self.store.append(tessera_store::event::NewEvent::new(
+            "path.loaded.v1",
+            json!({
+                "path_id": path_id,
+                "code": path["code"].clone(),
+                "concept_ids": concept_ids,
+            }),
+            tessera_store::event::Provenance::user(),
+        ))?;
+
+        // Doc 17 section 2.1: the path "offers a mission". Offered rather than
+        // started: the statement is the pack's template until the learner says
+        // why they want it, and a mission nobody meant is a lesson planned
+        // against a reason nobody has.
+        let mission = path["mission_template"].as_str().map(str::to_string);
+
+        Ok(json!({
+            "path_id": path_id,
+            "concepts": concept_ids.len(),
+            "edges": edges,
+            "mission_offered": mission,
+        }))
+    }
+
+    /// Run the Learning Planner. Doc 17 section 7.
+    pub fn plan_learning(&mut self, reason: &str, topic: Option<&str>) -> Result<Value, CoreError> {
+        let board_id = self.map_board()?;
+        let pack = self.packs.get(&self.pack_code)?.clone();
+        let (concepts, edges) = repo::read_map(&self.store, &self.profile_id)?;
+        let mission = repo::active_mission(&self.store, &self.profile_id)?;
+
+        let templates = &pack.learning_templates;
+        let packet = json!({
+            "schema_version": "1.0",
+            "run_id": Value::Null,
+            "reason": reason,
+            "topic": topic,
+            "mission": mission,
+            "concepts": concepts,
+            "edges": edges,
+            "doctrine": {
+                "mastered_at": templates.mastered_at,
+                "decay_days": templates.decay_days("default"),
+                "max_new_concepts": MAX_NEW_CONCEPTS,
+            }
+        });
+
+        let policy = self.resolved()?;
+        let policy_snapshot = serde_json::to_value(&self.policy).unwrap_or(Value::Null);
+        let run_id = repo::start_run(
+            &self.store,
+            repo::NewRun {
+                board_id: &board_id,
+                card_id: None,
+                kind: "card",
+                depth: None,
+                policy_snapshot: &policy_snapshot,
+                pack_version: &pack.version,
+            },
+        )?;
+
+        let mut packet = packet;
+        packet["run_id"] = json!(run_id);
+
+        let ctx = RunContext {
+            registry: &self.registry,
+            provider: self.provider.as_ref(),
+            pack: &pack,
+            policy,
+            profile_id: self.profile_id.clone(),
+            source: self.source,
+            ledger: &self.ledger,
+            retrievers: &self.retrievers,
+        };
+
+        let out = self
+            .runtime
+            .handle()
+            .clone()
+            .block_on(pipeline::run_learning_planner(
+                &mut self.store,
+                &ctx,
+                &board_id,
+                &run_id,
+                packet,
+            ))
+            .map_err(|f| CoreError::Runtime(f.to_string()))?;
+
+        // Doc 17 section 9: the frontier is recorded where the Map reads it.
+        self.store.append(
+            tessera_store::event::NewEvent::new(
+                "frontier.computed.v1",
+                json!({
+                    "reason": reason,
+                    "concept_ids": out["frontier"].clone(),
+                    "level": out["lesson"]["level"].clone(),
+                }),
+                tessera_store::event::Provenance::harness("learning_planner", Some(run_id.clone())),
+            )
+            .on_board(&board_id),
+        )?;
+        repo::end_run(&self.store, &run_id, "done")?;
+
+        Ok(out)
+    }
+
     /// Ask a question and run the card to completion.
     ///
     /// Blocking on purpose: the RPC surface is synchronous so both the in
@@ -864,6 +1062,12 @@ pub const NOTEBOOK_RETRIEVERS: &[&str] = &["vault", "boards"];
 /// sticky one by one.
 const NOTE_COLOUR: &str = "amber";
 
+/// Doc 17 section 6's singleton map board, before anyone renames it.
+const MAP_TITLE: &str = "What I am learning";
+
+/// Doc 17 section 7: "at most three new ones".
+const MAX_NEW_CONCEPTS: u64 = 3;
+
 /// Where a sticky lands when the caller names no place: to the right of the
 /// first column, in board coordinates. The caller that knows better, which is
 /// the canvas, sends its own.
@@ -1119,6 +1323,131 @@ pub fn build_router() -> Router<Core> {
         let p: Remove = params(p)?;
         repo::remove_note(&mut core.store, &p.note_id).map_err(store_error)?;
         Ok(json!({ "note_id": p.note_id }))
+    });
+
+    // ---------------------------------------------------------- learning --
+    //
+    // Doc 17. The map is read, rated and planned against; nothing here teaches,
+    // because a lesson is a board and the Tutor runs it.
+
+    r.register("map.read", |core: &mut Core, _| {
+        let (concepts, edges) = repo::read_map(&core.store, &core.profile_id).map_err(store_error)?;
+        let mission = repo::active_mission(&core.store, &core.profile_id).map_err(store_error)?;
+        let board_id = core.map_board().map_err(core_error)?;
+        Ok(json!({
+            "board_id": board_id,
+            "concepts": concepts,
+            "edges": edges,
+            "mission": mission,
+        }))
+    });
+
+    // Doc 17 section 2.1: loading a path creates or links the concepts, creates
+    // the edges as confirmed, and offers a mission.
+    r.register("path.load", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Load {
+            /// A path from the active pack, by code.
+            #[serde(default)]
+            code: Option<String>,
+            /// Or the path itself, which is what an authored one is.
+            #[serde(default)]
+            path: Option<Value>,
+        }
+        let p: Load = params(p)?;
+        let path = match (p.path, p.code) {
+            (Some(path), _) => path,
+            (None, Some(code)) => {
+                let pack = core
+                    .packs
+                    .get(&core.pack_code)
+                    .map_err(|e| RpcError::core("pack_missing", e.to_string()))?;
+                pack.learning_templates
+                    .learning_paths
+                    .iter()
+                    .find(|path| path["code"].as_str() == Some(code.as_str()))
+                    .cloned()
+                    .ok_or_else(|| {
+                        RpcError::core("no_such_path", "This pack ships no path with that code.")
+                    })?
+            }
+            (None, None) => {
+                return Err(RpcError::core(
+                    "no_path",
+                    "Name a path in the pack, or send one to load.",
+                ));
+            }
+        };
+        core.load_path(&path).map_err(core_error)
+    });
+
+    // Doc 17 section 2.1: a rating is a claim, never evidence.
+    r.register("concept.rate", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Rate {
+            concept_id: String,
+            rating: i64,
+        }
+        let p: Rate = params(p)?;
+        if !(0..=3).contains(&p.rating) {
+            return Err(RpcError::core(
+                "rating_out_of_range",
+                "A rating runs from 0, never heard of it, to 3, can apply it.",
+            ));
+        }
+        repo::rate_concept(&mut core.store, &p.concept_id, p.rating).map_err(store_error)?;
+        Ok(json!({ "concept_id": p.concept_id, "rating": p.rating }))
+    });
+
+    // Doc 01 section 4.10, one layer up: the learner confirms an edge an agent
+    // proposed.
+    r.register("concept.confirm_edge", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Confirm {
+            edge_id: String,
+        }
+        let p: Confirm = params(p)?;
+        repo::confirm_edge(&mut core.store, &p.edge_id).map_err(store_error)?;
+        Ok(json!({ "edge_id": p.edge_id }))
+    });
+
+    r.register("mission.create", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Create {
+            statement: String,
+            #[serde(default)]
+            target_concept_ids: Vec<String>,
+        }
+        let p: Create = params(p)?;
+        if p.statement.trim().is_empty() {
+            return Err(RpcError::core(
+                "empty_mission",
+                "Say why you want this, so a lesson can fit the reason.",
+            ));
+        }
+        let profile_id = core.profile_id.clone();
+        let mission_id =
+            repo::create_mission(&mut core.store, &profile_id, &p.statement, &p.target_concept_ids)
+                .map_err(store_error)?;
+        Ok(json!({ "mission_id": mission_id }))
+    });
+
+    // Doc 17 section 7: runs on mission creation, path load, lesson end, and on
+    // demand. The reason travels because the Planner reads it.
+    r.register("learning.plan", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Plan {
+            #[serde(default = "on_demand")]
+            reason: String,
+            #[serde(default)]
+            topic: Option<String>,
+        }
+        fn on_demand() -> String {
+            "on_demand".to_string()
+        }
+        let p: Plan = params(p)?;
+        core.plan_learning(&p.reason, p.topic.as_deref())
+            .map_err(core_error)
     });
 
     // Doc 09 section 5's Edit verb on a board. Renaming is what turns off the

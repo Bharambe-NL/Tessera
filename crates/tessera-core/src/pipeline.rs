@@ -296,6 +296,37 @@ pub async fn run_verify_only(
     })
 }
 
+/// Run the Learning Planner. Doc 17 section 7.
+///
+/// The run and the board are the caller's, because the Planner is asked about a
+/// profile and doc 17 section 6 gives that a board: the map. Nothing is written
+/// here, which is the point of the agent as well: it proposes.
+pub async fn run_learning_planner(
+    store: &mut Store,
+    ctx: &RunContext<'_>,
+    board_id: &str,
+    run_id: &str,
+    packet: Value,
+) -> Result<Value, Failure> {
+    let out = run_agent(
+        &tessera_agents::LearningPlanner,
+        store,
+        RunAgent {
+            registry: ctx.registry,
+            provider: ctx.provider,
+            run_id: run_id.to_string(),
+            card_id: None,
+            board_id: Some(board_id.to_string()),
+            sequence: 1,
+            source: ctx.source,
+            policy: ctx.policy.clone(),
+        },
+        packet,
+    )
+    .await?;
+    Ok(out.output)
+}
+
 /// Run one Tutor turn. Doc 14 section 3.3.
 ///
 /// A turn, not a session: doc 14 section 3.4's machine is a row that outlives
