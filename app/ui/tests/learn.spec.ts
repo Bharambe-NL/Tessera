@@ -147,6 +147,35 @@ test('ending the session reports the score and leaves the board standing', async
   await expect(page.locator('#cards .card')).toHaveCount(3);
 });
 
+test('a lesson ends as a page the learner is told about', async ({ page }) => {
+  // Doc 17 section 5: "each lesson ends with a learning record ... saved to the
+  // vault under vault/learning/<mission>/<date>.md". The page is generated from
+  // rows, and what this covers is the half Rust cannot: that the learner is
+  // told it exists and finds it where they keep everything else they wrote.
+  await startLearning(page, 'world models');
+  await answerIntake(page);
+  await page.locator('#learn-open-plan').click();
+
+  const check = page.locator('#tutor-body .ask').last();
+  await expect(check.locator('.opt')).toHaveCount(3, { timeout: 90_000 });
+  await check.locator('.opt').first().click();
+  await expect(page.locator('#tutor-body .feedback')).toBeVisible({ timeout: 30_000 });
+
+  await page.locator('[data-learn-act="stop"]').click();
+  await expect(page.locator('#toasts')).toContainText('Your notes from this lesson are in Pages.', {
+    timeout: 30_000,
+  });
+
+  await page.locator('#rail [data-view="pages"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Pages');
+  await page.locator('.lib-row').first().locator('[data-page-act="open"]').click();
+  // Doc 17 section 5's path and its three sections.
+  await expect(page.locator('.page-file')).toContainText('vault/learning/', { timeout: 30_000 });
+  await expect(page.locator('.page-read')).toContainText('What was covered');
+  await expect(page.locator('.page-read')).toContainText('What was checked');
+  await expect(page.locator('.page-read')).toContainText('What remains');
+});
+
 test('closing the panel ends the session', async ({ page }) => {
   await startLearning(page, 'world models');
   await expect(page.locator('#tutor-body .ask').first()).toBeVisible({ timeout: 30_000 });

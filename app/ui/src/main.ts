@@ -822,7 +822,10 @@ async function endLearning(): Promise<void> {
   }
   try {
     const summary = await rpc.endLearn(boardId);
-    toast(`${COPY.learnEnded} ${summary.correct} ${COPY.builtOf} ${summary.checks}.`);
+    // Doc 17 section 5: the record is a page, and a page nobody is told about
+    // is a file the learner finds by accident.
+    const saved = summary.record_page_id ? ` ${COPY.learnRecordSaved}` : '';
+    toast(`${COPY.learnEnded} ${summary.correct} ${COPY.builtOf} ${summary.checks}.${saved}`);
   } catch {
     // Ending is a courtesy to the record, not a gate on closing the panel.
   }

@@ -3816,6 +3816,88 @@ leg unchanged at four rungs walked, and the 20 board bundle round trip whole.
 
 ---
 
+### BN-143 The carried citation that named no passage, since the day the column landed
+
+**Spec** Doc 16 section 3.2.
+
+**What was wrong.** Save as page copies the card's citations rather than re-deriving them, and doc
+16 section 3.2 gives the carried shape as `{ordinal, passage_id}`. Every page written since 12b
+carried `{"ordinal": 1, "passage_id": ""}`: `repo::read_citations` never selected `c.passage_id`,
+so `save_card_as_page` read a key that was not in the row and wrote an empty string in its place.
+
+**Why nothing caught it.** The test asserted a count. Twenty four pages in the corpus carried
+citations, the bundle round trip reported "0 carried citations dropped", and the number was right
+every time: there were as many entries as the card had, and each one pointed nowhere. A count is
+not a claim about what is in the entries, and the whole point of carrying evidence is that a figure
+on a page still rests on the passage the card cited.
+
+**The fix and the assertion.** One column in one `SELECT`, and the reader now hands back what the
+schema always said it did. The Save as page test looks up every carried passage in the `passage`
+table, so a carried citation that names nothing fails rather than counts, and doc 17 section 10's
+new traceability gate reads the same rows for the same reason.
+
+**Verified** Probed before and after on the same board: `CARRIED [{"ordinal":1,"passage_id":""}]`
+became a ULID the `passage` table holds.
+
+---
+
+### BN-144 The lesson ends as a page, and every line of it names a row
+
+**Spec** Doc 17 sections 5, 9 and 10, phase 13f.
+
+**What landed.** `learn.end` writes doc 17 section 5's learning record: a page under
+`vault/learning/<mission>/<date>.md` with what was covered, what was checked and what remains,
+carrying the cards' own citations. The page is generated from rows, never from a model. Covered
+comes from the same eligibility the Exercise agent uses, so a record cannot list a card the
+Verifier refused; checked comes from the session's own check rows; remains is the concepts this
+lesson asked about and left failed, which is not the same as the next rung. `vault::write_page_in`
+grew the folder argument 12a-ii promised, and the shell tells the learner where the page went.
+
+**Why the citations are carried rather than re-derived.** Doc 16 section 3.2 settled that for Save
+as page and the reason holds here: the record is a note about cards, and a figure on it rests on
+the passage the card cited rather than on the page having repeated it. Reading them off the
+exercise packet is the mistake the first version made, because that packet's citations are
+`{n, source_title}`, which is what an item may ask about rather than what the evidence is. The
+board's own citations carry the passage id, which is also what made BN-143 visible.
+
+**The gate reads the log, not the markdown.** `learning_record.saved.v1` gained a `lines` array:
+one entry per line of the page, naming the card, the check or the concept behind it. The learner
+leg writes it out with each carried passage looked up in the store, and the scorer asks the
+session's own rows whether each line is there. A record that parsed its own markdown back would be
+measuring a formatter; this measures whether the rows exist. The guard breaks four ways on purpose:
+a card the Verifier never stood behind, a check at a rung nobody was asked, a concept named as open
+that the learner passed, and a carried citation whose passage is not in the store.
+
+**What the fixture had to become.** The end to end test first built its card over a watched folder
+and got a record with no evidence on it: `LESSON_RETRIEVERS` is web, vault and boards, and doc 17
+section 5 leaves local out, so nothing answered. A vault page alone does not work either, because
+doc 16 section 3.2 makes a page context rather than evidence for a figure and
+`own_card_sole_support` blocks the card, which then is not one of "the lesson's verified cards".
+The fixture now serves one page on loopback, which is what a lesson can actually cite.
+
+**One thing this found and did not fix.** The Planner packet is built from the profile's configured
+retrievers with no regard for the posture the run will use, so a lesson on a profile with only a
+local folder passes doc 04 section 10's `no_retriever_enabled` and then retrieves nothing, and a
+notebook question is planned against retrievers the fan-out will skip. Notebook mode is special
+cased inside the Planner's own guard, which is the same disagreement written once. That is BN-140's
+class one layer up and it is a change with a wide blast radius, so it is named here rather than
+folded into a step about records.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --grounded --learner`. Four
+lessons, 72 record lines.
+
+| Metric | Threshold | Result |
+|---|---|---|
+| `learning_record_traceability` | 1.00 | 1.000 |
+
+**Verified** Full battery green: workspace tests including a new end to end one that walks a lesson
+from a loopback page to a saved record, clippy at `-D warnings`, fmt, style lint, 91 generator
+guards with the new gate broken four ways, 72 Playwright tests, a 40 question grounded sweep with
+nothing below threshold and 29 of 53 metrics measured, and the 20 board bundle round trip whole.
+
+---
+
+
 ---
 
 ## Measured findings

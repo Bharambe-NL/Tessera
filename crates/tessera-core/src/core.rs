@@ -785,6 +785,67 @@ impl Core {
             .map_err(|f| CoreError::Runtime(f.to_string()))
     }
 
+    /// Doc 17 section 5's learning record, written to the vault at lesson end.
+    ///
+    /// Nothing when the board is not running a lesson, which is what an ordinary
+    /// board closing a panel it never opened should produce. A failure to write
+    /// is not a failure to end the lesson: the session is the record of what
+    /// happened and the page is a copy of it, so the learner keeps the first
+    /// even when the second cannot be saved.
+    pub fn write_learning_record(&mut self, board_id: &str) -> Result<Option<String>, CoreError> {
+        let Some(session) = repo::read_learn_session(&self.store, board_id)? else {
+            return Ok(None);
+        };
+        let mission = repo::active_mission(&self.store, &self.profile_id)?;
+        let today = tessera_store::now_iso8601()
+            .split('T')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let record = crate::record::build(&self.store, board_id, &session, &mission, &today)?;
+
+        let pack_id = self.active_pack_id()?;
+        let profile_id = self.profile_id.clone();
+        let page_id = crate::vault::write_page_in(
+            &mut self.store,
+            &profile_id,
+            Some(&pack_id),
+            None,
+            &record.folder,
+            &record.title,
+            &record.body,
+            record.citations_carried.clone(),
+        )
+        .map_err(|e| CoreError::Runtime(e.to_string()))?;
+
+        self.store.append(
+            tessera_store::event::NewEvent::new(
+                "learning_record.saved.v1",
+                json!({
+                    "page_id": page_id,
+                    "mission_id": mission["mission_id"].clone(),
+                    "covered": record.covered,
+                    "checked": record.checked,
+                    "remains": record.remains,
+                    "citations_carried": record
+                        .citations_carried
+                        .as_array()
+                        .map(Vec::len)
+                        .unwrap_or(0),
+                    // Doc 17 section 10's traceability gate reads this. One
+                    // entry per line of the page, naming the row it came from,
+                    // so the claim "every line is something the session
+                    // recorded" is checkable by something that never saw the
+                    // generator and never parses the markdown back.
+                    "lines": record.lines,
+                }),
+                tessera_store::event::Provenance::user(),
+            )
+            .on_board(board_id),
+        )?;
+        Ok(Some(page_id))
+    }
+
     /// Grade one check and let doc 17 section 4's ladder decide what follows.
     ///
     /// The rule lives in `tessera-agents`; what this adds is the two things it
@@ -1788,8 +1849,13 @@ pub fn build_router() -> Router<Core> {
 
     r.register("learn.end", |core: &mut Core, p| {
         let p: BoardRef = params(p)?;
-        let summary = pipeline::end_learn_session(&mut core.store, &p.board_id)
+        // The record is built before the session ends, because ending it takes
+        // the board out of learn mode and the record is a note about the lesson
+        // that was.
+        let record = core.write_learning_record(&p.board_id).ok().flatten();
+        let mut summary = pipeline::end_learn_session(&mut core.store, &p.board_id)
             .map_err(|f| RpcError::core("learn", f.to_string()))?;
+        summary["record_page_id"] = json!(record);
         Ok(summary)
     });
 

@@ -197,10 +197,14 @@ export class Rpc {
   }
 
   endLearn(boardId: string) {
-    return this.call<{ checks: number; correct: number; mastery: Record<string, number> }>(
-      'learn.end',
-      { board_id: boardId },
-    );
+    return this.call<{
+      checks: number;
+      correct: number;
+      mastery: Record<string, number>;
+      // Doc 17 section 5's learning record. Null when the lesson wrote none,
+      // which is what a board that was never in a lesson produces.
+      record_page_id: string | null;
+    }>('learn.end', { board_id: boardId });
   }
 
   sources(limit?: number) {
