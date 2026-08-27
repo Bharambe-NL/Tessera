@@ -110,6 +110,25 @@ fn core_with(provider: Arc<MockProvider>) -> Core {
     Core::in_memory(provider).expect("core comes up")
 }
 
+/// A mock that answers every stage for as long as it is asked.
+///
+/// `MockProvider::on` queues one response per stage and then falls through to
+/// garbage, which is right for a test asserting one card and wrong for one that
+/// needs two: the second card finds the script empty and fails closed. A
+/// scripted default is consulted rather than consumed.
+fn repeating_mock() -> Arc<MockProvider> {
+    Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "synthesize" => MockResponse::Json(synth_output()),
+                "visualize" => MockResponse::Json(visual_output()),
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    )
+}
+
 #[test]
 fn a_question_becomes_a_card_with_a_visual() {
     let provider = mock();
@@ -384,6 +403,249 @@ fn the_shell_can_drive_a_whole_board_through_the_rpc_surface() {
         !kinds.contains(&"model_call"),
         "the log's detail stays in the log"
     );
+}
+
+#[test]
+fn a_board_goes_to_trash_and_comes_back() {
+    // Doc 09 open question 1, adopted by doc 11: Trash is a filter on Home, so
+    // it is the same list read with a different word rather than a second view.
+    let router = build_router();
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let active = call(&router, &mut core, "board.list", json!({}));
+    assert_eq!(active["boards"].as_array().map(Vec::len), Some(1));
+
+    call(&router, &mut core, "board.trash", json!({ "board_id": board_id }));
+    assert_eq!(
+        call(&router, &mut core, "board.list", json!({}))["boards"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "a trashed board is off Home"
+    );
+    let trashed = call(&router, &mut core, "board.list", json!({ "status": "trashed" }));
+    assert_eq!(trashed["boards"].as_array().map(Vec::len), Some(1));
+
+    call(&router, &mut core, "board.restore", json!({ "board_id": board_id }));
+    assert_eq!(
+        call(&router, &mut core, "board.list", json!({}))["boards"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_purge_needs_a_trashed_board_and_leaves_the_events_behind() {
+    // The one verb with nothing behind it, so it is two steps rather than one.
+    // The events survive: the log is append only and the database enforces that
+    // with a trigger, which is what makes `board.purged.v1` readable afterwards.
+    let router = build_router();
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let refused = router
+        .dispatch(
+            &mut core,
+            Request::new("board.purge", json!({ "board_id": board_id }), 1),
+        )
+        .expect("reply");
+    assert_eq!(
+        refused.error.expect("an error").data.expect("data")["kind"],
+        "purge_needs_trash"
+    );
+
+    call(&router, &mut core, "board.trash", json!({ "board_id": board_id }));
+    call(&router, &mut core, "board.purge", json!({ "board_id": board_id }));
+
+    let cards: i64 = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM card WHERE board_id = ?1",
+            rusqlite::params![board_id],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(cards, 0, "cards cascade from the board");
+
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(types.contains(&"board.purged.v1".to_string()));
+    assert!(
+        types.contains(&"card.answered.v1".to_string()),
+        "the trail that says the board existed survives the purge"
+    );
+}
+
+#[test]
+fn the_flags_queue_reads_across_boards_and_records_a_decision() {
+    // Doc 09 section 6. `read_flags` is per card and feeds the chip; this is the
+    // other shape the same table is read in, and the `flag_open` index in the
+    // migration was written for it.
+    let router = build_router();
+    let mut core = core_with(repeating_mock());
+    let first = core.create_board("First", "fast").expect("board");
+    let second = core.create_board("Second", "fast").expect("board");
+    core.ask(&first, "what are world models?", None).expect("card");
+    core.ask(&second, "what are world models?", None).expect("card");
+
+    let listed = call(&router, &mut core, "flag.list", json!({}));
+    let flags = listed["flags"].as_array().expect("flags").clone();
+    assert!(flags.len() >= 2, "a fast card carries fast_mode_notice, got {flags:?}");
+
+    let boards: std::collections::BTreeSet<&str> =
+        flags.iter().filter_map(|f| f["board_id"].as_str()).collect();
+    assert_eq!(boards.len(), 2, "the queue spans boards");
+    // Every row carries what doc 09 section 6 asks it to show.
+    for flag in &flags {
+        assert!(flag["rule_id"].as_str().is_some());
+        assert!(flag["reason"].as_str().is_some_and(|r| !r.is_empty()));
+        assert!(flag["card_title"].as_str().is_some_and(|t| !t.is_empty()));
+        assert!(flag["board_title"].as_str().is_some());
+    }
+
+    let ids: Vec<&str> = flags.iter().filter_map(|f| f["id"].as_str()).collect();
+    let decided = call(
+        &router,
+        &mut core,
+        "flag.decide",
+        json!({ "flag_ids": ids, "decision": "dismiss" }),
+    );
+    assert_eq!(decided["decided"].as_u64(), Some(ids.len() as u64));
+
+    assert_eq!(
+        call(&router, &mut core, "flag.list", json!({}))["flags"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "a dismissed flag leaves the queue"
+    );
+
+    // Reviews are immutable, so the decision is a row and an event, not an edit.
+    let reviews: i64 = core
+        .store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM review", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(reviews, 1);
+    let decided_events = core
+        .store
+        .events(None)
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.event_type == "review.decided.v1")
+        .count();
+    assert_eq!(
+        decided_events, 2,
+        "one event per card, because the projection reads the card from the event"
+    );
+}
+
+#[test]
+fn deciding_a_flag_that_is_already_decided_says_so() {
+    let router = build_router();
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let ids: Vec<String> = call(&router, &mut core, "flag.list", json!({}))["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .filter_map(|f| f["id"].as_str().map(str::to_string))
+        .collect();
+    call(
+        &router,
+        &mut core,
+        "flag.decide",
+        json!({ "flag_ids": ids, "decision": "accept" }),
+    );
+
+    // A second decision over the same ids would leave a Review that decided
+    // nothing, so it is refused with something the reader can act on.
+    let again = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "flag.decide",
+                json!({ "flag_ids": ids, "decision": "accept" }),
+                1,
+            ),
+        )
+        .expect("reply");
+    assert_eq!(
+        again.error.expect("an error").data.expect("data")["kind"],
+        "no_open_flag"
+    );
+}
+
+#[test]
+fn the_profile_page_reports_key_presence_and_never_a_key() {
+    // Doc 10 section 8 and the standing rule: a key lives in the OS keychain and
+    // is never printed, logged or passed as an argument. This is the boundary
+    // that would leak one if any did.
+    use tessera_providers::MemoryKeyStore;
+
+    let root = std::env::temp_dir().join(format!("tessera-profile-{}", tessera_store::new_id()));
+    let mut core = Core::open(
+        &root,
+        Box::new(MemoryKeyStore::with("anthropic-default", "sk-secret-value")),
+        mock(),
+        "anthropic-default",
+    )
+    .expect("core");
+    let router = build_router();
+
+    let profile = call(&router, &mut core, "profile.get", json!({}));
+    let text = profile.to_string();
+    assert!(
+        !text.contains("sk-secret-value"),
+        "the profile read leaked a key"
+    );
+
+    let aliases = profile["aliases"].as_array().expect("aliases");
+    assert!(!aliases.is_empty());
+    assert!(
+        aliases.iter().all(|a| a["key_present"].is_boolean()),
+        "every alias says whether the keychain has its key"
+    );
+    assert!(aliases.iter().any(|a| a["key_present"] == true));
+
+    // Diagnostics is counts rather than a verdict, so a page can show the one
+    // number that is wrong instead of a tick that hides it.
+    assert!(profile["diagnostics"]["boards"].is_number());
+    assert!(profile["diagnostics"]["events"].is_number());
+
+    // A key goes in and nothing comes back out.
+    let saved = call(
+        &router,
+        &mut core,
+        "profile.set_key",
+        json!({ "key_ref": "openai-default", "secret": "sk-another-secret" }),
+    );
+    assert_eq!(saved["key_present"], true);
+    assert!(!saved.to_string().contains("sk-another-secret"));
+}
+
+#[test]
+fn the_library_lists_what_the_profile_has_retrieved() {
+    // Doc 09 section 9. A fresh profile has neither, and both say so with an
+    // empty list rather than an error.
+    let router = build_router();
+    let mut core = core_with(mock());
+
+    let sources = call(&router, &mut core, "library.sources", json!({}));
+    assert_eq!(sources["sources"].as_array().map(Vec::len), Some(0));
+    let concepts = call(&router, &mut core, "library.concepts", json!({}));
+    assert_eq!(concepts["concepts"].as_array().map(Vec::len), Some(0));
 }
 
 #[test]

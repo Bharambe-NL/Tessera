@@ -39,6 +39,15 @@ impl RetrieverSet {
         self.indexed.is_empty()
     }
 
+    /// Whether this profile has told the retriever where to read from.
+    ///
+    /// Doc 05 section 10 separates "not configured" from "configured and
+    /// empty": the first is a Profile problem the user can fix, and the Profile
+    /// page is where they see which it is.
+    pub fn configured(&self, retriever_id: &str) -> bool {
+        self.config(retriever_id).is_some()
+    }
+
     fn config(&self, retriever_id: &str) -> Option<&IndexedConfig> {
         self.indexed.iter().find(|(id, _)| id == retriever_id).map(|(_, c)| c)
     }

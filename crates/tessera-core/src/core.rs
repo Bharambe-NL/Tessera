@@ -421,6 +421,20 @@ struct CardRef {
     card_id: String,
 }
 
+fn default_board_status() -> String {
+    "active".to_string()
+}
+
+/// Enough rows for the queue to be worth scrolling, few enough that a profile
+/// with thousands of flags does not hand the webview all of them at once.
+fn default_flag_limit() -> i64 {
+    200
+}
+
+fn default_library_limit() -> i64 {
+    500
+}
+
 /// Register every method the shell may call. Doc 10 section 2's boundary.
 pub fn build_router() -> Router<Core> {
     let mut r = Router::new();
@@ -436,8 +450,24 @@ pub fn build_router() -> Router<Core> {
         Ok(json!({ "board_id": id }))
     });
 
-    r.register("board.list", |core: &mut Core, _| {
-        let boards = repo::list_boards(&core.store, &core.profile_id, "active").map_err(store_error)?;
+    r.register("board.list", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Which {
+            /// Doc 09 open question 1: Trash is a filter on Home, so it is this
+            /// word rather than a second method.
+            #[serde(default = "default_board_status")]
+            status: String,
+        }
+        let p: Which = params(p).unwrap_or(Which {
+            status: default_board_status(),
+        });
+        if !matches!(p.status.as_str(), "active" | "trashed") {
+            return Err(RpcError::core(
+                "unknown_status",
+                "A board is active or trashed.",
+            ));
+        }
+        let boards = repo::list_boards(&core.store, &core.profile_id, &p.status).map_err(store_error)?;
         Ok(json!({ "boards": boards }))
     });
 
@@ -470,6 +500,111 @@ pub fn build_router() -> Router<Core> {
         }
         repo::rename_board(&mut core.store, &p.board_id, title).map_err(store_error)?;
         Ok(json!({ "board_id": p.board_id, "title": title }))
+    });
+
+    // Doc 09 section 5's Remove verb on a board, and its two undos. Doc 09 open
+    // question 1, adopted by doc 11: Trash is a filter on Home rather than a
+    // rail item, so these three are what that filter acts on.
+    r.register("board.trash", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        repo::trash_board(&mut core.store, &p.board_id).map_err(store_error)?;
+        Ok(json!({ "board_id": p.board_id, "status": "trashed" }))
+    });
+
+    r.register("board.restore", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        repo::restore_board(&mut core.store, &p.board_id).map_err(store_error)?;
+        Ok(json!({ "board_id": p.board_id, "status": "active" }))
+    });
+
+    // The one verb with nothing behind it. A purged board is gone; its events
+    // stay, because the log is append only and the database enforces that.
+    r.register("board.purge", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        let trashed: bool = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT status = 'trashed' FROM board WHERE id = ?1",
+                rusqlite::params![p.board_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+        if !trashed {
+            return Err(RpcError::core(
+                "purge_needs_trash",
+                "Move the board to Trash first, so a purge is never one click from a board in use.",
+            ));
+        }
+        repo::purge_board(&mut core.store, &p.board_id).map_err(store_error)?;
+        Ok(json!({ "board_id": p.board_id, "status": "purged" }))
+    });
+
+    // Doc 09 section 6: the queue reads open flags across every board, so it is
+    // a profile query rather than a board one.
+    r.register("flag.list", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Query {
+            #[serde(default = "default_flag_limit")]
+            limit: i64,
+        }
+        let p: Query = params(p)?;
+        let flags = repo::open_flags(&core.store, &core.profile_id, p.limit.clamp(1, 500))
+            .map_err(store_error)?;
+        Ok(json!({ "flags": flags }))
+    });
+
+    // Doc 09 section 6's row actions and its bulk decisions, which are the same
+    // call with more ids.
+    r.register("flag.decide", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Decide {
+            flag_ids: Vec<String>,
+            decision: String,
+            #[serde(default)]
+            note: Option<String>,
+        }
+        let p: Decide = params(p)?;
+        if !matches!(p.decision.as_str(), "accept" | "dismiss" | "rerun" | "edit") {
+            return Err(RpcError::core(
+                "unknown_decision",
+                "A flag is accepted, dismissed, rerun or edited.",
+            ));
+        }
+        match repo::decide_flags(&mut core.store, &p.flag_ids, &p.decision, p.note.as_deref())
+            .map_err(store_error)?
+        {
+            Some(review_id) => Ok(json!({ "review_id": review_id, "decided": p.flag_ids.len() })),
+            None => Err(RpcError::core(
+                "no_open_flag",
+                "Those flags were decided already. Reload the queue to see where they went.",
+            )),
+        }
+    });
+
+    // Doc 09 section 9's two Library tabs.
+    r.register("library.sources", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Query {
+            #[serde(default = "default_library_limit")]
+            limit: i64,
+        }
+        let p: Query = params(p)?;
+        let sources = repo::list_sources(&core.store, &core.profile_id, p.limit.clamp(1, 1000))
+            .map_err(store_error)?;
+        Ok(json!({ "sources": sources }))
+    });
+
+    r.register("library.concepts", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Query {
+            #[serde(default = "default_library_limit")]
+            limit: i64,
+        }
+        let p: Query = params(p)?;
+        let concepts = repo::list_concepts(&core.store, &core.profile_id, p.limit.clamp(1, 1000))
+            .map_err(store_error)?;
+        Ok(json!({ "concepts": concepts }))
     });
 
     // Doc 09 section 12: board history, rendered from events.
@@ -549,13 +684,78 @@ pub fn build_router() -> Router<Core> {
     });
 
     r.register("profile.get", |core: &mut Core, _| {
+        // Doc 11 section 6's Profile pages, in one read: Context, Models,
+        // Retrievers, Doctrine, Diagnostics. Every one of them is a projection
+        // of state the core already holds, so this is a read and not five.
+        //
+        // Doc 10 section 8 and the standing constraint: a key lives in the OS
+        // keychain and is never printed, logged or passed as an argument. So
+        // `aliases` says which key_ref each alias wants and whether the keychain
+        // has it, and nothing here can say what it is.
+        let aliases: Vec<Value> = core
+            .policy
+            .aliases
+            .iter()
+            .map(|(name, alias)| {
+                json!({
+                    "alias": name,
+                    "provider": alias.provider,
+                    "model": alias.model,
+                    "key_ref": alias.key_ref,
+                    "key_present": core.keys.has(&alias.key_ref),
+                })
+            })
+            .collect();
+
+        let retrievers: Vec<Value> = core
+            .packs
+            .get(&core.pack_code)
+            .map(|pack| {
+                pack.retrievers
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "id": r.id,
+                            "enabled_by_default": r.enabled_by_default,
+                            "configured": core.retrievers.configured(&r.id),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let counts = repo::profile_counts(&core.store, &core.profile_id).map_err(store_error)?;
+
         Ok(json!({
             "profile_id": core.profile_id,
             "packs": core.packs.codes().collect::<Vec<_>>(),
             "active_pack": core.pack_code,
             "provider": core.provider.id(),
             "policy": serde_json::to_value(&core.policy).unwrap_or(Value::Null),
+            "aliases": aliases,
+            "retrievers": retrievers,
+            "diagnostics": counts,
         }))
+    });
+
+    // Doc 11 section 6's Models page, which is what retires the `tessera-keys`
+    // CLI. The secret goes straight to the keychain: it is never written to the
+    // store, never logged, and never echoed back, so the only answer this gives
+    // is whether the keychain took it.
+    r.register("profile.set_key", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct SetKey {
+            key_ref: String,
+            secret: String,
+        }
+        let p: SetKey = params(p)?;
+        if p.secret.trim().is_empty() {
+            return Err(RpcError::core("empty_key", "Paste the key, then save it."));
+        }
+        core.keys
+            .set(&p.key_ref, p.secret.trim())
+            .map_err(|e| RpcError::core("keychain", e.to_string()))?;
+        Ok(json!({ "key_ref": p.key_ref, "key_present": true }))
     });
 
     r
