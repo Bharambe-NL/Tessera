@@ -87,6 +87,19 @@ ROOT_TEMPLATES = {
     ],
 }
 
+#: The shapes the canvas can draw, mirroring the switch in
+#: `app/ui/src/canvas/visual.ts`. Ground truth may only expect a shape the
+#: product can put on screen: a question expecting one the renderer has no case
+#: for would score a miss the model could do nothing about.
+#:
+#: `flow` and `stats` arrive with doc 16 section 3.5 and are drawable from
+#: 12e-ii, but no question expects one yet: an expectation is a claim about what
+#: a good answer would draw, and nothing planted in this corpus is a cycle or a
+#: set of figures in differing units. The day one is, this is where it says so.
+DRAWABLE_VISUALS = frozenset(
+    {"tree", "table", "list", "steps", "figure", "image", "flow", "stats", "none"}
+)
+
 EXPECTED_VISUAL = {
     "number": "table",
     "date": "table",

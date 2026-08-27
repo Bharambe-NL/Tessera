@@ -18,7 +18,9 @@ export type VisualType =
   | 'figure'
   | 'image'
   | 'chart'
-  | 'widget';
+  | 'widget'
+  | 'flow'
+  | 'stats';
 export type Severity = 'info' | 'warn' | 'block';
 export type CitationVerdict = 'supported' | 'weak' | 'unsupported' | 'unchecked';
 
@@ -28,6 +30,31 @@ export interface TreeNode {
   note?: string;
   citation_ordinals?: number[];
   children?: TreeNode[];
+}
+
+/**
+ * Doc 16 section 3.5. A flow is nodes and the edges between them, which a tree
+ * cannot express because it has no cycles and no cross links.
+ */
+export interface FlowNode {
+  id: string;
+  label: string;
+  note?: string;
+  citation_ordinals?: number[];
+}
+
+export interface FlowEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+/** Doc 16 section 3.5. At most six large numerals, every one of them cited. */
+export interface Tile {
+  value: string;
+  unit?: string;
+  label: string;
+  citation_ordinals?: number[];
 }
 
 export interface BottomLine {
@@ -44,6 +71,8 @@ export type VisualPayload =
       bottom_line?: BottomLine;
     }
   | { steps: { label: string; note?: string; citation_ordinals?: number[] }[] }
+  | { nodes: FlowNode[]; edges?: FlowEdge[]; bottom_line?: BottomLine }
+  | { tiles: Tile[]; bottom_line?: BottomLine }
   | { svg: string; caption?: string }
   | { image_id: string; caption?: string; prompt?: string };
 

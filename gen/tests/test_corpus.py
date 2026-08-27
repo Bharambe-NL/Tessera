@@ -701,6 +701,28 @@ def test_every_exported_board_carries_a_page(corpus: Path) -> None:
         assert board["page_collision"] in titles
 
 
+def test_every_expected_visual_is_a_shape_the_canvas_draws(corpus: Path) -> None:
+    """Doc 06 section B12 scores the type against `expected_visual`, so a shape
+    the renderer has no case for would score a miss the model could do nothing
+    about. The set mirrors the switch in `app/ui/src/canvas/visual.ts`."""
+    expected: set[str] = set()
+    for name in ("questions.jsonl", "questions_breadth.jsonl", "questions_vault.jsonl"):
+        path = corpus / name
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            value = json.loads(line).get("expected_visual")
+            if value:
+                expected.add(value)
+
+    assert expected, "no question expects a visual at all"
+    assert expected <= questions_mod.DRAWABLE_VISUALS, sorted(
+        expected - questions_mod.DRAWABLE_VISUALS
+    )
+
+
 def test_a_sketch_records_the_structure_it_draws(corpus: Path) -> None:
     """Doc 02 section 7: the structure is ground truth for the Reader. Ink with
     no recorded structure scores nothing, which is fine, but ink that claims a

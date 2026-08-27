@@ -195,6 +195,46 @@ test('clicking a block of a visual offers to investigate it', async ({ page }) =
   await expect(page.locator('#cards .card').nth(1)).not.toHaveAttribute('data-status', 'failed');
 });
 
+/** Ask something other than the default question and wait for its card. */
+async function ask(page: import('@playwright/test').Page, question: string): Promise<void> {
+  await page.goto('/');
+  await expect(page.locator('#mode-label')).toHaveText('Live');
+  await page.locator('#ask').fill(question);
+  await page.locator('#ask').press('Enter');
+  await expect(page.locator('#cards .card')).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.locator('#cards .card .answer')).toBeVisible();
+}
+
+test('a summary that loops is drawn as a flow, with the edge that goes back', async ({ page }) => {
+  // Doc 16 section 3.5: a tree has no cycles, so the edge returning to the
+  // draft is the one a tree could not have shown at all.
+  await ask(page, 'how does the review loop work?');
+  const card = page.locator('#cards .card').first();
+
+  const flow = card.locator('.vis.flow');
+  await expect(flow).toBeVisible();
+  await expect(flow.locator('.node[data-ref="/nodes/0"]')).toHaveText('Draft');
+  await expect(flow.locator('.edges .edge')).toHaveCount(2);
+  await expect(flow.locator('.edge .how[data-ref="/edges/1"]')).toHaveText('returns to');
+
+  // And a node is a block like any other, so it can be investigated.
+  await flow.locator('.node[data-ref="/nodes/1"]').click();
+  await expect(page.locator('#anchor-pop')).toBeVisible();
+});
+
+test('two quantities are drawn as tiles', async ({ page }) => {
+  await ask(page, 'tell me about the hall in numbers');
+  const card = page.locator('#cards .card').first();
+
+  const tiles = card.locator('.vis .tiles .tile');
+  await expect(tiles).toHaveCount(2);
+  await expect(tiles.nth(0)).toContainText('1949');
+  // The unit sits with its numeral rather than in the label under it.
+  await expect(tiles.nth(1).locator('b i')).toHaveText('m');
+  await expect(tiles.nth(1).locator('span')).toHaveText('floor space');
+  await expect(tiles.nth(0)).toHaveAttribute('data-ref', '/tiles/0');
+});
+
 test('escape puts the popover away without asking anything', async ({ page }) => {
   await askFirst(page);
   const parent = page.locator('#cards .card').first();

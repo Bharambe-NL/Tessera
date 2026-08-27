@@ -70,18 +70,12 @@ fn mock() -> Arc<MockProvider> {
                     "constraints": { "must_exclude": [], "value_policy": "cite_only" }
                 })),
                 "synthesize" => synthesize_reply(request),
-                "visualize" => MockResponse::Json(json!({
-                    "title": "Parts of a world model",
-                    "payload": {
-                        "root": {
-                            "label": "World model",
-                            "children": [
-                                { "label": "Perception", "note": "Turns observations into a state." },
-                                { "label": "Dynamics predictor", "note": "Predicts the next state." }
-                            ]
-                        }
-                    }
-                })),
+                // Doc 06 section B8: the Visualizer names the shape it chose
+                // from the summary, and the fixture answers in that shape. A
+                // fixture that always drew a tree would leave doc 16 section
+                // 3.5's two types unreachable from the product, which is the
+                // only place they can be seen.
+                "visualize" => visualize_reply(request),
                 // Doc 07 sections B8.2 and B8.5 both run on the verify stage and
                 // want different shapes, so answering one fails the other and
                 // the card is held back. Fail closed is right; a fixture that
@@ -333,6 +327,36 @@ fn synthesize_reply(request: &tessera_providers::CompletionRequest) -> MockRespo
     let passages = passages_in(&prompt);
 
     if passages.is_empty() {
+        // Doc 16 section 3.5's two shapes are chosen from the summary, so the
+        // only way to see one on screen is for the fixture to write a summary
+        // that has one. The question says which: a loop, or a subject with two
+        // quantities to it.
+        if prompt.to_lowercase().contains("loop") {
+            return MockResponse::Json(json!({
+                "answer": "A draft goes to review, and review returns it to the draft.",
+                "findings": [],
+                "structured_summary": {
+                    "entities": ["Draft", "Review"],
+                    "relations": [
+                        { "from": "Draft", "to": "Review", "kind": "goes to" },
+                        { "from": "Review", "to": "Draft", "kind": "returns to" }
+                    ]
+                }
+            }));
+        }
+        if prompt.to_lowercase().contains("in numbers") {
+            return MockResponse::Json(json!({
+                "answer": "The hall opened in 1949 and has 120 m of floor space.",
+                "findings": [],
+                "structured_summary": {
+                    "entities": ["The hall"],
+                    "values": [
+                        { "label": "opened", "value": "1949", "unit": "" },
+                        { "label": "floor space", "value": "120", "unit": "m" }
+                    ]
+                }
+            }));
+        }
         return MockResponse::Json(json!({
             "answer": "A world model is an internal representation an agent uses to predict how \
                        a situation will change. It lets the agent try an action in simulation \
@@ -367,6 +391,54 @@ fn synthesize_reply(request: &tessera_providers::CompletionRequest) -> MockRespo
             "relations": [{ "from": "World model", "to": "Perception", "kind": "has" }]
         }
     }))
+}
+
+/// Lay the summary out in the shape the Visualizer asked for.
+///
+/// The type is read back out of the prompt rather than guessed, because the
+/// Visualizer chose it from the summary and a payload of the wrong shape is
+/// declined: the card would arrive with no visual and the screen would say
+/// nothing about why.
+fn visualize_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
+    let prompt = prompt_of(request);
+    let visual_type = prompt
+        .split(" as a ")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .unwrap_or("tree")
+        .trim();
+
+    MockResponse::Json(match visual_type {
+        "flow" => json!({
+            "title": "The review loop",
+            "payload": {
+                "nodes": [{ "id": "a", "label": "Draft" }, { "id": "b", "label": "Review" }],
+                "edges": [
+                    { "from": "a", "to": "b", "label": "goes to" },
+                    { "from": "b", "to": "a", "label": "returns to" }
+                ]
+            }
+        }),
+        "stats" => json!({
+            "title": "The hall in numbers",
+            "payload": { "tiles": [
+                { "value": "1949", "unit": "", "label": "opened" },
+                { "value": "120", "unit": "m", "label": "floor space" }
+            ]}
+        }),
+        _ => json!({
+            "title": "Parts of a world model",
+            "payload": {
+                "root": {
+                    "label": "World model",
+                    "children": [
+                        { "label": "Perception", "note": "Turns observations into a state." },
+                        { "label": "Dynamics predictor", "note": "Predicts the next state." }
+                    ]
+                }
+            }
+        }),
+    })
 }
 
 /// Every `<passage n="…">` the prompt carried, in packet order.
