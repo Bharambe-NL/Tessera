@@ -3274,6 +3274,42 @@ threshold, and the bundle round trip whole.
 
 ---
 
+### BN-131 The rules a model never gets asked
+
+**Spec** 17 sections 2.3, 3 and 4.
+
+**Built** 2026-08-27, M16 13b-i.
+
+**Doc 17 section 7's first half, on its own.** "Frontier selection and level selection are rules;
+only decomposition of a new topic into concepts and prerequisites is model work." This module is the
+rules, as pure functions of a map and a fact: no store, no provider, no events. That is what makes
+them testable against the cases doc 17 describes rather than against a session that happened to
+reach them, and it is what the Learning Planner will be, minus one model call.
+
+**A rating never verifies itself.** The frontier is "the lowest prerequisite level where rated
+concepts have a rating of 2 or more and mastery is still unverified", and unverified means no check
+has moved the score. A concept sitting at exactly the prior its rating set is still the frontier,
+however confident the rating was, which is the overconfident rater doc 17 section 3 exists to catch.
+Skipping every tile leaves an empty frontier rather than a guess at the first concept.
+
+**Two failures at the bottom look underneath.** The first failure at level 1 is a remedial card on
+the concept; the second says the problem is a prerequisite, and the one it opens is the heaviest
+confirmed edge. A confirmed edge outranks a heavier proposed one, because doc 01 section 4.10 has an
+agent propose and a person confirm, and a planner's confident guess does not outrank what the
+learner agreed to.
+
+**A cycle still lays out.** Prerequisite depth is computed with a bounded walk, so a map someone
+drew a loop into still orders and the concepts in it sit at the depth their other prerequisites
+give them. A learner who draws a cycle gets a lesson, not a hang.
+
+**Decay is a subtraction, not a scheduler.** Only `mastered` decays, because a concept at `checked`
+was never claimed to be finished. A missing or unreadable timestamp is not evidence of age, so it
+leaves the state alone rather than demoting someone on a parse failure.
+
+**Verified** Full battery green, ten rule tests, the workspace tests and clippy at `-D warnings`.
+
+---
+
 ---
 
 ## Measured findings

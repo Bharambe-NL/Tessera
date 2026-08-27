@@ -5936,6 +5936,7 @@ dependencies = [
 name = "tessera-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "png 0.18.1",
  "rusqlite",
  "serde",

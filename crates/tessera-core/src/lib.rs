@@ -11,6 +11,7 @@
 
 pub mod bridge;
 pub mod core;
+pub mod learning;
 pub mod pipeline;
 pub mod raster;
 pub mod retrieval;
