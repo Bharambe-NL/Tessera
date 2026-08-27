@@ -1239,6 +1239,93 @@ including the empty one. An agent that answers nothing still has to say who it w
 **Reason** Two boundaries, two catches, no reader involved. Worth writing down as evidence that the
 schema first principle pays rather than as two mistakes.
 
+### BN-081 The Reader, and the half of it a mock can measure
+
+**Spec** 07 part A, 12 phase 9.
+
+**Decision** The Reader is built. Its deterministic half is fully exercised on the mock; its vision
+half is measured on a live run and nowhere else, and the metric says so rather than reporting a
+number the fixture wrote.
+
+**What is deterministic here, and why it is separated.** Doc 07 section A6 makes preprocessing,
+structuring and summarising deterministic and only recognising a model call. So the injection check,
+the mapping into the Synthesizer format, the traceability rule and the confidence are pure functions
+with unit tests, and the vision call is one seam. That split is what lets doc 07 section A12's
+"injected image text obeyed 0 times" and "summary values traceable to structure 1.00" be tested for
+nothing while "structure recovery F1 0.80" waits for eyes.
+
+**The injection check is about the address, not the verb.** A table that says "ignore rows below the
+double line" is a table; one that says "ignore your previous instructions" is an attack. What
+separates them is whether the sentence is speaking to a model, so the list is of phrasings that
+address one. Doc 07 section A10 continues with the block excluded rather than dropping the image: one
+sentence written on a page must not destroy a reader's diagram.
+
+**Confidence does not score an unmeasured term as full marks.** Doc 07 section A9 has three terms and
+one of them is OCR agreement with a local pass that does not exist. Its weight goes to the terms that
+are measured rather than being counted as perfect agreement, and a test asserts a clean picture with
+nothing recovered does not read as confident. Scoring an absent term as a pass is the shape of
+dishonesty this project keeps finding.
+
+**`reader_structure_recovery_f1` is advisory on a mock, and no `--read` eval leg was built.** A mock
+has no eyes. A fixture that returned the structure the corpus recorded as `sketch_truth` would be
+scoring this repository against itself, and a fixture that returned anything else would measure the
+fixture. Either way the number would be about the harness. The eval also imports no ink, so a read
+leg would have had to invent its own subject. What it would have produced is one meaningless number
+and one that the Rust tests already assert more directly, so it is not built. The metric joins
+`visual_type_match` and `verifier_agreement` on the advisory list, gated the day a vision run sets
+`reader_enabled`.
+
+The note on `reader_enabled` said "the Reader arrives at M10". It has arrived, so it now names what
+it actually waits for.
+
+**Reason** Doc 12 phase 9's second half. The vision entry point exists, and the part of it that can
+be held to a standard for free is held to one.
+
+---
+
+### BN-082 The sketch raster path, and one test that earns its keep
+
+**Spec** 12 phase 9, 07 section A6.
+
+**Decision** Ink strokes rasterise to a greyscale png, cropped to what was drawn, bounded at the
+vision alias long edge, and the ink survives it.
+
+**Cropped, because a sketch in the corner of a large board should not hand a vision model a page that
+is nine tenths empty.** One scale for both axes, because a drawing stretched on one of them is a
+different drawing. Greyscale, because ink is one colour and a vision model gains nothing from three
+channels of the same number.
+
+**The test worth naming** is `the_ink_actually_lands_on_the_page`. It decodes the png back and counts
+dark pixels. The failure it guards is a rasteriser that encodes a valid, empty image: every other
+check in that file would still pass, and the only symptom downstream would be a vision model
+reporting `unrecognised` for a picture that really was blank.
+
+**Reason** Doc 07 section A2 has the Reader read an Image row and doc 07 section A4's packet carries
+a `blob_ref`. Something had to turn the strokes a person drew into a picture, and doc 12 phase 9
+names it.
+
+---
+
+### BN-083 A paste rule that read correctly and would have blocked every paste
+
+**Spec** 07 section A3.
+
+**Decision** An image on the clipboard is read. A paste that also carries text, into a box that takes
+text, stays text.
+
+**What the first version did.** It checked the focus: a paste into an input or a textarea is text,
+whatever else is on the clipboard. That reads as obviously right and is wrong in practice, because
+`boot` focuses the composer, so the composer always has focus and no image would ever have been read
+at all. The rule now asks whether there is text to prefer rather than whether a text box is focused.
+
+**Two rounds were spent on a fixture rather than the product.** The test pasted a base64 string that
+looked like a png and was not one: its chunk table walked off the end, `createImageBitmap` refused
+it, and the page correctly reported that the image could not be read. The fixture is generated now
+rather than remembered, and the comment says why.
+
+**Reason** Recorded because the first defect is the interesting one: a guard can be correct about the
+case it names and wrong about every case that occurs.
+
 ---
 
 ## Measured findings
