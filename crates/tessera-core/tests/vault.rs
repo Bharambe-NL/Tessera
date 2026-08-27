@@ -452,3 +452,237 @@ fn a_vault_that_is_not_there_is_not_an_error() {
     assert_eq!(report, vault::SyncReport::default());
     std::fs::remove_dir_all(&f.root).ok();
 }
+
+// ----------------------------------------------------------- wikilinks
+
+use tessera_core::wikilink;
+
+#[test]
+fn a_link_resolves_to_the_page_it_names_and_survives_its_rename() {
+    // Doc 16 section 2.2's whole point: the assessed package resolved by title
+    // string, so a rename silently broke every link into a page. These resolve
+    // to the id.
+    let mut f = fixture();
+    let target = write_page(&mut f, "Liquidity risk", "The rule.");
+    let from = write_page(&mut f, "Reading notes", "See [[Liquidity risk]] for the rule.");
+    vault::save_links(
+        &mut f.store,
+        &f.profile.clone(),
+        &from,
+        "See [[Liquidity risk]] for the rule.",
+    )
+    .expect("links");
+
+    let back = repo::backlinks(&f.store, "page", &target).expect("backlinks");
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].page_id, from);
+    assert_eq!(back[0].page_title, "Reading notes");
+
+    // The target is renamed. The body still says the old words, and the link
+    // still arrives.
+    repo::rename_page(
+        &mut f.store,
+        &target,
+        "Liquidity coverage",
+        "vault/liquidity-coverage.md",
+    )
+    .expect("rename");
+    let after = repo::backlinks(&f.store, "page", &target).expect("backlinks");
+    assert_eq!(after.len(), 1, "the rename broke the link into the page");
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_link_that_names_no_page_falls_to_the_concept_that_carries_the_term() {
+    // Doc 16 section 3.1: "a wikilink whose title matches a Concept term or
+    // alias links to the concept".
+    let mut f = fixture();
+    let concept = new_id();
+    f.store
+        .conn()
+        .execute(
+            "INSERT INTO concept (id, profile_id, term, aliases, doctrine_pack_id, status,
+                 created_at, updated_at)
+             VALUES (?1, ?2, 'Countercyclical buffer', '[\"CCyB\"]', ?3, 'confirmed', ?4, ?4)",
+            rusqlite::params![concept, f.profile, f.pack, now_iso8601()],
+        )
+        .expect("concept");
+
+    let body = "Both [[Countercyclical buffer]] and [[CCyB|the buffer]] point at the term.";
+    let page = write_page(&mut f, "Reading notes", body);
+    vault::save_links(&mut f.store, &f.profile.clone(), &page, body).expect("links");
+
+    let back = repo::backlinks(&f.store, "concept", &concept).expect("backlinks");
+    assert_eq!(back.len(), 2, "the alias is a way in as much as the term is");
+    assert_eq!(back[1].display_text, "the buffer", "the body shows what it says");
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_link_to_nothing_waits_for_the_page_rather_than_being_dropped() {
+    // Doc 16 section 3.1: unresolved links are kept and created on click. The
+    // title is what the click needs, and `[[Basel III|the accord]]` shows
+    // something else, which is why the row stores both.
+    let mut f = fixture();
+    let body = "I should read [[Basel III|the accord]].";
+    let page = write_page(&mut f, "Reading notes", body);
+    vault::save_links(&mut f.store, &f.profile.clone(), &page, body).expect("links");
+
+    let links = repo::page_links(&f.store, &page).expect("links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0]["target_kind"], "unresolved");
+    assert_eq!(links[0]["target_title"], "Basel III");
+    assert_eq!(links[0]["display_text"], "the accord");
+
+    // The page arrives, by hand or from the vault, and the link lights up.
+    let arrived = write_page(&mut f, "Basel III", "The accord.");
+    let resolved = repo::resolve_pending_links(&f.store, "page", &arrived, "Basel III").expect("resolve");
+    assert_eq!(resolved, 1);
+    assert_eq!(
+        repo::backlinks(&f.store, "page", &arrived)
+            .expect("backlinks")
+            .len(),
+        1
+    );
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_body_edited_to_drop_a_link_drops_the_backlink_with_it() {
+    // Replace rather than merge: the body is the truth about what it links to.
+    let mut f = fixture();
+    let target = write_page(&mut f, "Liquidity risk", "The rule.");
+    let from = write_page(&mut f, "Reading notes", "See [[Liquidity risk]].");
+    let profile = f.profile.clone();
+    vault::save_links(&mut f.store, &profile, &from, "See [[Liquidity risk]].").expect("links");
+    assert_eq!(repo::backlinks(&f.store, "page", &target).expect("b").len(), 1);
+
+    vault::save_links(&mut f.store, &profile, &from, "I removed that link.").expect("links");
+    assert!(
+        repo::backlinks(&f.store, "page", &target).expect("b").is_empty(),
+        "a link the person deleted still shows in the target's backlinks"
+    );
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn backlinks_are_an_index_lookup_rather_than_a_scan() {
+    // Doc 16 phase 12c accepts on exactly this. A backlinks panel that scanned
+    // every body in the vault would work on ten pages and stop working on a
+    // thousand, which is the size at which a person starts needing it.
+    let f = fixture();
+    let plan: String = f
+        .store
+        .conn()
+        .query_row(
+            "EXPLAIN QUERY PLAN
+             SELECT l.from_page_id FROM page_link l JOIN page p ON p.id = l.from_page_id
+              WHERE l.target_kind = 'page' AND l.target_id = 'x'",
+            [],
+            |r| r.get(3),
+        )
+        .expect("plan");
+    assert!(
+        plan.contains("USING INDEX page_link_target"),
+        "the backlink query stopped using its index: {plan}"
+    );
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn every_link_in_a_vault_is_reachable_from_the_page_it_names() {
+    // Doc 16's backlink completeness, gated at 1.00 and absolute. The eval half
+    // of it needs the synthetic vault at 12a-iv; this is the same property
+    // asserted exhaustively over a vault the test builds, where the answer is
+    // known rather than sampled.
+    let mut f = fixture();
+    let profile = f.profile.clone();
+    let titles: Vec<String> = (0..12).map(|n| format!("Page {n}")).collect();
+    let ids: Vec<String> = titles
+        .iter()
+        .map(|t| write_page(&mut f, t, "placeholder"))
+        .collect();
+
+    // Every page links to every page after it, so the counts differ per target
+    // and an off by one would show.
+    let mut expected: std::collections::BTreeMap<String, usize> = Default::default();
+    for (i, id) in ids.iter().enumerate() {
+        let body = titles[i + 1..]
+            .iter()
+            .map(|t| format!("[[{t}]]"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        repo::edit_page(&mut f.store, id, &body).expect("edit");
+        vault::save_links(&mut f.store, &profile, id, &body).expect("links");
+        for t in &titles[i + 1..] {
+            *expected.entry(t.clone()).or_default() += 1;
+        }
+    }
+
+    for (i, id) in ids.iter().enumerate() {
+        let found = repo::backlinks(&f.store, "page", id).expect("backlinks").len();
+        assert_eq!(
+            found,
+            expected.get(&titles[i]).copied().unwrap_or(0),
+            "page {} has the wrong number of links into it",
+            titles[i]
+        );
+    }
+    let rows: i64 = f
+        .store
+        .conn()
+        .query_row("SELECT count(*) FROM page_link", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(
+        rows as usize,
+        expected.values().sum::<usize>(),
+        "a link went missing"
+    );
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn a_vault_file_that_links_is_read_and_its_links_stored() {
+    // The mirror and the parser meet here: a file written in an editor arrives
+    // as a page, and what it links to arrives with it.
+    let mut f = fixture();
+    let target = write_page(&mut f, "Liquidity risk", "The rule.");
+    sync(&mut f);
+
+    std::fs::write(
+        f.root.join("vault/from-the-editor.md"),
+        "# From the editor\n\nSee [[Liquidity risk]].",
+    )
+    .expect("write");
+    let report = sync(&mut f);
+    assert_eq!(report.created, 1, "{report:?}");
+
+    let back = repo::backlinks(&f.store, "page", &target).expect("backlinks");
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].page_title, "From the editor");
+
+    std::fs::remove_dir_all(&f.root).ok();
+}
+
+#[test]
+fn the_parser_and_the_store_agree_about_what_a_link_is() {
+    // The bodies below are the ones a vault about this feature would contain.
+    let mut f = fixture();
+    let profile = f.profile.clone();
+    let body = "Write `[[Title]]` to link.\n\n```\n[[Also ignored]]\n```\n\nBut [[Real one]] counts.";
+    let page = write_page(&mut f, "How linking works", body);
+    vault::save_links(&mut f.store, &profile, &page, body).expect("links");
+
+    let links = repo::page_links(&f.store, &page).expect("links");
+    assert_eq!(links.len(), 1, "code samples became links: {links:?}");
+    assert_eq!(links[0]["target_title"], "Real one");
+    assert_eq!(wikilink::parse(body).len(), 1);
+
+    std::fs::remove_dir_all(&f.root).ok();
+}

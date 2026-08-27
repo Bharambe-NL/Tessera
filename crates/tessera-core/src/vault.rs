@@ -347,6 +347,52 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
     Some(out)
 }
 
+// ------------------------------------------------------------------ links --
+
+/// Parse a page's body and store what its wikilinks point at.
+///
+/// Doc 16 sections 2.2 and 3.1. Resolution order is page, then concept, then
+/// nothing: a page is a document a person can open and a concept is a term in
+/// the glossary, so when both carry the title the page is what they meant to
+/// follow. The concept detail lists pages beside cards either way.
+///
+/// Called wherever a body is written, which is why it takes the body rather
+/// than reading it back: the caller has just decided what the body is.
+pub fn save_links(
+    store: &mut tessera_store::Store,
+    profile_id: &str,
+    page_id: &str,
+    body: &str,
+) -> Result<(), tessera_store::StoreError> {
+    let parsed = crate::wikilink::parse(body);
+    let mut links = Vec::with_capacity(parsed.len());
+    for link in parsed {
+        let (kind, target) = resolve(store, profile_id, &link.target_title)?;
+        links.push(repo::NewPageLink {
+            target_kind: kind.to_string(),
+            target_id: target,
+            target_title: link.target_title,
+            display_text: link.display_text,
+            position: link.position as i64,
+        });
+    }
+    repo::replace_page_links(store, page_id, &links)
+}
+
+fn resolve(
+    store: &tessera_store::Store,
+    profile_id: &str,
+    title: &str,
+) -> Result<(&'static str, Option<String>), tessera_store::StoreError> {
+    if let Some(page) = repo::page_by_title(store, profile_id, title)? {
+        return Ok(("page", Some(page.id)));
+    }
+    if let Some(concept) = repo::concept_by_term_or_alias(store, profile_id, title)? {
+        return Ok(("concept", Some(concept)));
+    }
+    Ok(("unresolved", None))
+}
+
 /// What one pass over the vault did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SyncReport {
@@ -395,6 +441,7 @@ pub fn sync(
             }
             Action::AdoptBody { page_id, body, .. } => {
                 repo::adopt_page_body(store, &page_id, &body)?;
+                save_links(store, profile_id, &page_id, &body)?;
                 report.adopted += 1;
             }
             Action::Conflict {
@@ -412,7 +459,7 @@ pub fn sync(
                 if !write_file(&root, &conflict_path, &conflict_body, None) {
                     continue;
                 }
-                repo::create_page(
+                let copy = repo::create_page(
                     store,
                     repo::NewPage {
                         profile_id,
@@ -424,11 +471,13 @@ pub fn sync(
                         doctrine_pack_id,
                     },
                 )?;
+                save_links(store, profile_id, &copy, &conflict_body)?;
                 repo::adopt_page_body(store, &page_id, &body)?;
+                save_links(store, profile_id, &page_id, &body)?;
                 report.conflicts += 1;
             }
             Action::Adopt { path, title, body } => {
-                repo::create_page(
+                let page_id = repo::create_page(
                     store,
                     repo::NewPage {
                         profile_id,
@@ -440,6 +489,11 @@ pub fn sync(
                         doctrine_pack_id,
                     },
                 )?;
+                save_links(store, profile_id, &page_id, &body)?;
+                // A page that arrives is a title somebody may already have
+                // linked to. Doc 16 section 3.1 keeps an unresolved link rather
+                // than dropping it, and this is the moment it was kept for.
+                repo::resolve_pending_links(store, "page", &page_id, &title)?;
                 report.created += 1;
             }
             Action::Skipped { path, reason } => report.skipped.push((path, reason)),
