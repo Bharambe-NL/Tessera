@@ -2762,6 +2762,46 @@ run that asks a notebook question, which is an eval leg rather than a missing fe
 
 ---
 
+### BN-119 The notebook on screen, and the retriever rule that had to bend
+
+**Spec** 16 sections 2.1 and 3.4.
+
+**Built** 2026-08-27, M15 12d-ii.
+
+**A chat over the vault.** Turns rather than cards on a canvas: the question, the answer, the
+grounding chip, what it read, and two verbs. Save as page is the same verb the board has; Open on
+a board asks the question again on an explore board, because a board is where a question grows
+follow-ups and a card that arrived without a run of its own would have no trail behind it.
+
+**"Search the web instead" ships disabled and says why.** Doc 16 section 3.4 gives the ungrounded
+state a one click way out, and the web retriever is 13e. A control that failed when pressed would
+be worse than one that says what it is waiting for, so it carries the reason in its title.
+
+**The rule that had to bend, and how far.** Doc 04 section 10 refuses a plan whose only
+retrievers are the profile's own memory: a profile that can corroborate itself learns nothing.
+M14.2's step extended that to the vault for the same reason. A notebook question is the one place
+that reading is wrong, because doc 16 section 3.4 asks the vault on purpose and restricts the run
+to it, so the first notebook question ever asked failed with `no_retriever_enabled`. The Planner
+packet now carries the board's mode and the vault counts inside a notebook. What keeps it honest
+is untouched: a figure resting on a page alone is still flagged, because that rule is the
+Verifier's.
+
+**A fixture that broke another test, and why it was not folded in.** The vault page answers the
+same question the dev server's corpus document does. Put it in the memory fixture and the card
+that rests on it is flagged for page sole support, and a flagged card is not remembered, which is
+the premise doc 15's own test is built on. So the vault is its own reset flag, and each test gets
+the fixture its claim needs.
+
+**Two vaults for two states.** A lexical index over one page answers most things somewhat, so
+asking about marine biology still came back grounded. The honest way to reach the ungrounded
+state is a profile whose vault is empty, which is also the state most people's first question
+meets.
+
+**Verified** Full battery green, 60 Playwright tests, the contrast gate extended to the new view,
+the grounded sweep and the bundle round trip.
+
+---
+
 ---
 
 ## Measured findings

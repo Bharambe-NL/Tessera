@@ -325,6 +325,26 @@ export const COPY = {
   pagesFileNote: 'On this machine at',
   pagesWriteFailed: 'That page was not saved.',
 
+  // -------------------------------------------- notebook, doc 16 3.4 --
+
+  railNotebook: 'Notebook',
+  notebookEmpty: 'Ask your own notes a question, and the answer comes from what you wrote.',
+  notebookStart: 'Ask my notes',
+  notebookNew: 'Start another session',
+  notebookNoTurns: 'Ask the first question.',
+  notebookPlaceholder: 'Ask your notes',
+  notebookAsk: 'Ask',
+  notebookAsking: 'Reading your notes',
+  notebookThinking: 'Reading your notes',
+  /** Doc 16 section 3.4's three states. */
+  notebookGrounded: 'From your notes',
+  notebookPartly: 'Partly from your notes',
+  notebookUngrounded: 'Nothing in your notes',
+  notebookUngroundedNote: 'Your vault has nothing on this, so nothing here is an answer from it.',
+  notebookSearchWeb: 'Search the web instead',
+  notebookWebLater: 'The web retriever arrives with the learning system, so this waits for it.',
+  notebookOpenOnBoard: 'Open on a board',
+
   profileDoctrine: 'Doctrine',
   /** Doc 10 section 9: a pack is data, and importing one is reading a file. */
   profilePackImport: 'Import a doctrine pack',

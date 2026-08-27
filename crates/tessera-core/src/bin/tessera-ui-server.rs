@@ -51,12 +51,21 @@ fn mock() -> Arc<MockProvider> {
                         "is_follow_up_of_context": false
                     }
                 })),
+                // Every retriever the fixture configures, so a board question
+                // reads the corpus and a notebook question reads the vault. The
+                // difference between them is what the run is allowed to open,
+                // not what the Planner asked for, which is the thing doc 16
+                // section 3.4 is worth testing about.
                 "plan" => MockResponse::Json(json!({
                     "sub_questions": [{
                         "sq_id": "sq1",
                         "text": "what is being asked",
                         "purpose": "establish the definition",
-                        "retrievers": [{ "id": "local", "query": "world model" }]
+                        "retrievers": [
+                            { "id": "regulatory", "query": "world model" },
+                            { "id": "vault", "query": "world model" },
+                            { "id": "boards", "query": "world model" }
+                        ]
                     }],
                     "constraints": { "must_exclude": [], "value_policy": "cite_only" }
                 })),
@@ -160,6 +169,37 @@ fn with_memory(core: &mut Core) {
         ],
         embedder: None,
     };
+}
+
+/// A vault with one page in it. Doc 16 section 3.4.
+///
+/// Layered on top of `with_memory` rather than folded into it, and behind its
+/// own flag, because a page that answers the same question as the corpus
+/// changes what every other test sees: the card that rests on it is flagged for
+/// page sole support, and a flagged card is not remembered, which is the
+/// premise doc 15's own test is built on.
+fn with_vault(core: &mut Core) {
+    use tessera_retrievers::IndexedConfig;
+
+    let profile_id = core.profile_id.clone();
+    let pack_id = core.active_pack_id().expect("pack id");
+    // Written through the path the Pages view writes through, so what
+    // Playwright drives is what a person would have.
+    tessera_core::vault::write_page(
+        &mut core.store,
+        &profile_id,
+        Some(&pack_id),
+        None,
+        "World models",
+        "# World models\n\nA world model is an internal representation an agent uses to \
+         predict how a situation will change. I wrote this down after reading about it.",
+    )
+    .expect("a page in the vault");
+
+    core.retrievers.indexed.push((
+        "vault".into(),
+        IndexedConfig::pages(vec![tessera_retrievers::VAULT_FOLDER.to_string()]),
+    ));
 }
 
 fn tutor_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
@@ -509,6 +549,12 @@ fn handle(stream: &mut TcpStream, root: &Path, core: &mut Core, router: &tessera
         // Library counts sources.
         if path.contains("memory") {
             with_memory(core);
+        }
+        // `/reset?vault=1` adds a page to the vault, which is what a notebook
+        // question reads. Its own flag rather than part of the memory fixture:
+        // see `with_vault`.
+        if path.contains("vault") {
+            with_vault(core);
         }
         respond(
             stream,

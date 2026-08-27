@@ -1663,6 +1663,88 @@ pub fn build_router() -> Router<Core> {
         Ok(json!({ "board_id": board_id, "mode": crate::core::NOTEBOOK }))
     });
 
+    r.register("notebook.session", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Which {
+            board_id: String,
+        }
+        let p: Which = params(p)?;
+        let board = repo::read_board(&core.store, &p.board_id)
+            .map_err(store_error)?
+            .ok_or_else(|| RpcError::core("board_missing", "That session is not on this profile."))?;
+
+        // Doc 16 section 3.4's three states, read from the log rather than
+        // recomputed here: the core wrote them when the answer settled, and two
+        // places deciding how grounded an answer is would eventually disagree.
+        let grounding: std::collections::BTreeMap<String, Value> = core
+            .store
+            .events(Some(&p.board_id))
+            .map_err(store_error)?
+            .into_iter()
+            .filter(|e| e.event_type == "notebook.grounding.v1")
+            .filter_map(|e| Some((e.card_id?, e.payload)))
+            .collect();
+
+        let turns: Vec<Value> = board
+            .cards
+            .iter()
+            .map(|card| {
+                json!({
+                    "card_id": card.id,
+                    "question": card.question,
+                    "answer": card.answer,
+                    "status": card.status,
+                    "page_id": card.page_id,
+                    "citations": card.citations,
+                    "grounding": grounding
+                        .get(&card.id)
+                        .and_then(|g| g["state"].as_str())
+                        // A card with no grounding event was asked before this
+                        // board became a session. Saying so beats calling it
+                        // grounded, which is the reading a missing value would
+                        // otherwise get.
+                        .unwrap_or("unknown"),
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "board_id": board.id,
+            "title": board.title,
+            "mode": board.mode,
+            "turns": turns,
+        }))
+    });
+
+    // Doc 16 section 3.4: "Open on a board (creates a root card from the
+    // session)". The question is asked again rather than the card moved,
+    // because a board is where a question grows follow-ups and branches, and a
+    // card that arrived without a run of its own would have no trail behind it.
+    r.register("notebook.open_on_board", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Which {
+            board_id: String,
+            card_id: String,
+        }
+        let p: Which = params(p)?;
+        let question = repo::read_cards(&core.store, &p.board_id)
+            .map_err(store_error)?
+            .into_iter()
+            .find(|c| c.id == p.card_id)
+            .map(|c| c.question)
+            .ok_or_else(|| RpcError::core("card_missing", "That question is not in this session."))?;
+
+        let board_id = core
+            .create_board(&truncate_title(&question), "deep")
+            .map_err(core_error)?;
+        let outcome = core.ask(&board_id, &question, Some("deep")).map_err(core_error)?;
+        Ok(json!({
+            "board_id": board_id,
+            "card_id": outcome.card_id,
+            "status": outcome.status,
+        }))
+    });
+
     r.register("notebook.sessions", |core: &mut Core, _| {
         let boards = repo::list_boards_in(&core.store, &core.profile_id, "active", &[NOTEBOOK])
             .map_err(store_error)?;

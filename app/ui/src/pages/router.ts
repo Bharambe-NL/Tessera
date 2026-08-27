@@ -19,6 +19,7 @@ import { COPY } from '../strings.js';
 import { flagsHTML, bulkHTML } from './flags.js';
 import { homeHTML, homeToolsHTML, type HomeFilter } from './home.js';
 import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './library.js';
+import { notebookHTML, notebookToolsHTML, type NotebookState } from './notebook.js';
 import { pagesHTML, pagesToolsHTML, type PagesState } from './pages.js';
 import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
 import { setupHTML, type SetupState } from './setup.js';
@@ -28,7 +29,15 @@ import { setupHTML, type SetupState } from './setup.js';
  * use and inherits its focus handling and its escape. It is not on the rail:
  * nobody navigates to a first run, they arrive at one.
  */
-export type View = 'board' | 'home' | 'flags' | 'library' | 'pages' | 'profile' | 'setup';
+export type View =
+  | 'board'
+  | 'home'
+  | 'flags'
+  | 'library'
+  | 'notebook'
+  | 'pages'
+  | 'profile'
+  | 'setup';
 
 export interface RouterHosts {
   rail: HTMLElement;
@@ -57,6 +66,7 @@ export class Router {
   private libraryTab: LibraryTab = 'sources';
   private profileTab: ProfileTab = 'context';
   private pages: PagesState = { open: null, editing: false };
+  private notebook: NotebookState = { session: null, asking: false };
   /** Flags selected for a bulk decision, kept across a re-render. */
   private picked = new Set<string>();
   /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
@@ -124,6 +134,24 @@ export class Router {
             const { concepts } = await this.rpc.concepts();
             body.innerHTML = conceptsHTML(concepts);
           }
+          break;
+        }
+        case 'notebook': {
+          // Doc 16 section 3.4. One session at a time, the most recent unless
+          // the person started another, because a chat with three histories on
+          // screen is not a chat.
+          title.textContent = COPY.railNotebook;
+          if (!this.notebook.session) {
+            const { sessions } = await this.rpc.notebookSessions();
+            if (sessions.length > 0) {
+              this.notebook = {
+                session: await this.rpc.notebookSession(sessions[0].id),
+                asking: false,
+              };
+            }
+          }
+          tools.innerHTML = notebookToolsHTML(this.notebook);
+          body.innerHTML = notebookHTML(this.notebook);
           break;
         }
         case 'pages': {
@@ -281,6 +309,14 @@ export class Router {
         void this.setKey(keyVerb.closest<HTMLElement>('[data-key-ref]')?.dataset.keyRef ?? '');
         return;
       }
+      // ---- Notebook
+      const notebookVerb = target.closest<HTMLElement>('[data-notebook-act]');
+      if (notebookVerb) {
+        const turn = notebookVerb.closest<HTMLElement>('[data-card]');
+        void this.notebookVerb(notebookVerb.dataset.notebookAct ?? '', turn?.dataset.card);
+        return;
+      }
+
       // ---- Pages
       const pageVerb = target.closest<HTMLElement>('[data-page-act]');
       if (pageVerb) {
@@ -350,6 +386,7 @@ export class Router {
       if (form?.id === 'setup-folder') void this.watchFolder();
       if (form?.id === 'pack-import') void this.importPack();
       if (form?.id === 'page-edit') void this.savePage();
+      if (form?.id === 'notebook-ask') void this.askNotebook();
     });
 
     // Row selection, which is a change rather than a click.
@@ -381,6 +418,66 @@ export class Router {
       await this.rpc.setKey(keyRef, secret);
       this.setup.keySaved = true;
     });
+  }
+
+  /**
+   * Doc 16 section 3.4's verbs on a turn.
+   *
+   * Every one ends by re-reading the session, because what a turn shows is what
+   * the core recorded about it: the grounding state is on the event log and the
+   * page chip is on the card.
+   */
+  private async notebookVerb(verb: string, cardId?: string): Promise<void> {
+    const boardId = this.notebook.session?.board_id;
+    try {
+      switch (verb) {
+        case 'new': {
+          const { board_id } = await this.rpc.openNotebook();
+          this.notebook = { session: await this.rpc.notebookSession(board_id), asking: false };
+          break;
+        }
+        case 'save': {
+          if (!boardId || !cardId) return;
+          const saved = await this.rpc.saveAsPage(boardId, cardId);
+          if (saved.created) this.actions.toast(`${COPY.savedAsPage}: ${saved.title ?? ''}`.trim());
+          this.notebook = { session: await this.rpc.notebookSession(boardId), asking: false };
+          break;
+        }
+        case 'open-board': {
+          if (!boardId || !cardId) return;
+          const opened = await this.rpc.openOnBoard(boardId, cardId);
+          await this.actions.openBoard(opened.board_id);
+          return;
+        }
+        default:
+          return;
+      }
+      await this.render();
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.pageUnread, 'error');
+    }
+  }
+
+  private async askNotebook(): Promise<void> {
+    const input = this.hosts.body.querySelector<HTMLInputElement>('#notebook-question');
+    const question = input?.value.trim() ?? '';
+    if (!question) return;
+    if (input) input.value = '';
+
+    // A session on the first question, so a person who types before pressing
+    // the button gets what they asked for rather than a refusal.
+    let boardId = this.notebook.session?.board_id;
+    try {
+      if (!boardId) boardId = (await this.rpc.openNotebook()).board_id;
+      this.notebook = { ...this.notebook, asking: true };
+      await this.render();
+      await this.rpc.ask(boardId, question, 'deep');
+      this.notebook = { session: await this.rpc.notebookSession(boardId), asking: false };
+    } catch (e) {
+      this.notebook = { ...this.notebook, asking: false };
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.askFailed, 'error');
+    }
+    await this.render();
   }
 
   /**

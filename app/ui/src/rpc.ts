@@ -233,6 +233,33 @@ export class Rpc {
     }>('board.update_pack', { board_id: boardId });
   }
 
+  // ---------------------------------------------------------- notebook --
+  // Doc 16 section 3.4. A session is a board, so what the shell asks for is
+  // one board's turns and their grounding.
+
+  openNotebook(boardId?: string) {
+    return this.call<{ board_id: string; mode: string }>(
+      'notebook.open',
+      boardId === undefined ? {} : { board_id: boardId },
+    );
+  }
+
+  notebookSessions() {
+    return this.call<{ sessions: BoardSummary[] }>('notebook.sessions');
+  }
+
+  notebookSession(boardId: string) {
+    return this.call<NotebookSession>('notebook.session', { board_id: boardId });
+  }
+
+  /** Doc 16 section 3.4: a question from the session grows into a board. */
+  openOnBoard(boardId: string, cardId: string) {
+    return this.call<{ board_id: string; card_id: string; status: string }>(
+      'notebook.open_on_board',
+      { board_id: boardId, card_id: cardId },
+    );
+  }
+
   // ------------------------------------------------------------- pages --
   // Doc 16 section 3.7's rail item, over the five verbs the core registers.
 
@@ -572,6 +599,26 @@ export interface FirstRun {
   packs: string[];
   active_pack: string;
   key_refs: string[];
+}
+
+/** One question and its answer in a session. Doc 16 section 3.4. */
+export interface NotebookTurn {
+  card_id: string;
+  question: string;
+  answer: string | null;
+  status: string;
+  page_id: string | null;
+  citations: { ordinal: number; source_title: string; source_class: string }[];
+  /** Doc 16 section 3.4's three states, plus `unknown` for a card asked before
+   * the board became a session. */
+  grounding: 'grounded' | 'partly_grounded' | 'ungrounded' | 'unknown';
+}
+
+export interface NotebookSession {
+  board_id: string;
+  title: string;
+  mode: string;
+  turns: NotebookTurn[];
 }
 
 /** One page in the explorer. Doc 16 section 3.7. */

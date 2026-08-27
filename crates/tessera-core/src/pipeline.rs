@@ -1696,6 +1696,11 @@ fn build_planner_packet(
     // rather than killing a card over a glossary.
     let concepts = repo::concepts_for_packet(store, &ctx.profile_id, 40).unwrap_or_default();
 
+    // Doc 16 section 3.4: what a notebook question may open is the vault and
+    // the profile's own cards, and the Planner has to be able to tell that from
+    // a profile that has configured nothing at all.
+    let board_mode = board["mode"].as_str().unwrap_or("explore").to_string();
+
     let mut retrievers: Vec<Value> = ctx
         .pack
         .retrievers
@@ -1764,6 +1769,7 @@ fn build_planner_packet(
             // Doc 04 section 9 puts the board seed and context in scope for the
             // Planner. They were null while the board carried both, so a board
             // opened with a seed answered as though it had none.
+            "board_mode": board_mode,
             "board_seed": board["seed_label"].clone(),
             "board_context": board["context"].clone(),
             "ancestors": ancestor_blocks(subject.ancestors),

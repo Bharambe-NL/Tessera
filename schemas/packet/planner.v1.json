@@ -115,6 +115,14 @@
     "context": {
       "type": "object",
       "properties": {
+        "board_mode": {
+          "enum": [
+            "explore",
+            "learn",
+            "notebook",
+            "map"
+          ]
+        },
         "board_seed": {
           "type": [
             "string",
