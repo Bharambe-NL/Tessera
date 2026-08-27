@@ -110,6 +110,51 @@ fn core_with(provider: Arc<MockProvider>) -> Core {
     Core::in_memory(provider).expect("core comes up")
 }
 
+/// A profile that has told a retriever where to read, with nothing there yet.
+///
+/// Doc 05 section 10 separates "not configured" from "configured and empty",
+/// and the Planner reads the first: a profile that has pointed nothing anywhere
+/// is doc 04 section 10's `no_retriever_enabled`, which has its own test. Every
+/// test that wants a deep card to run and find nothing wants the second case,
+/// so it says so rather than relying on the pack alone. BN-140.
+fn with_empty_folder(core: &mut Core) {
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO watched_folder (id, profile_id, root, label, created_at)
+             VALUES ('empty', ?1, 'corpus/empty', 'Nothing indexed yet', 'now')",
+            rusqlite::params![core.profile_id],
+        )
+        .expect("a folder with nothing in it");
+    core.rebuild_retrievers().expect("retrievers");
+}
+
+/// A profile that has configured every retriever its pack enables.
+///
+/// For the tests that assert which retrievers the Planner picks for a domain.
+/// That is a rule about doctrine and the question, and it can only be read on a
+/// profile where all of them are available to pick from. `regulatory` is added
+/// by hand because a corpus subscription has no product path yet, which doc 05
+/// section 10 calls not configured and this test is not about.
+fn with_every_retriever(core: &mut Core) {
+    with_empty_folder(core);
+    core.store
+        .conn()
+        .execute(
+            "UPDATE profile SET retriever_config = ?1 WHERE id = ?2",
+            rusqlite::params![
+                json!({ "web_seeds": ["http://127.0.0.1:9/"] }).to_string(),
+                core.profile_id
+            ],
+        )
+        .expect("a web seed");
+    core.rebuild_retrievers().expect("retrievers");
+    core.retrievers.indexed.push((
+        "regulatory".into(),
+        tessera_retrievers::IndexedConfig::regulatory("reg"),
+    ));
+}
+
 /// A mock that answers every stage for as long as it is asked.
 ///
 /// `MockProvider::on` queues one response per stage and then falls through to
@@ -200,6 +245,7 @@ fn a_deep_card_with_no_retrievers_reports_no_sources_rather_than_guessing() {
     // 04 section 10's failure, tested separately, not this honest thin card.
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
     let outcome = core
         .ask(&board_id, "what changed in the capital rule?", Some("deep"))
@@ -1203,6 +1249,7 @@ fn the_planner_packet_carries_the_concepts_the_profile_knows() {
     // M5 because nothing wrote one.
     let mut core = core_with(repeating_mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "research").expect("board");
 
     // The first card proposes; the second plans with what the first left.
@@ -2707,6 +2754,7 @@ fn the_shell_can_branch_from_a_highlight_and_from_a_block() {
     let router = build_router();
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
 
     let parent = call(
@@ -2805,6 +2853,7 @@ fn the_shell_can_rerun_a_card_through_the_rpc_surface() {
     let router = build_router();
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
 
     let asked = call(
@@ -2955,6 +3004,7 @@ fn an_unknown_domain_costs_the_card_nothing() {
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_every_retriever(&mut core);
 
     let board_id = core.create_board("Board", "research").expect("board");
     core.ask(&board_id, "how do the new rules treat this?", Some("research"))
@@ -3075,6 +3125,7 @@ fn a_research_card_is_planned_before_it_is_synthesized() {
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_every_retriever(&mut core);
 
     let board_id = core.create_board("Board", "research").expect("board");
     core.ask(&board_id, "what changed in the capital buffer?", Some("research"))
@@ -3112,6 +3163,53 @@ fn a_research_card_is_planned_before_it_is_synthesized() {
             "no Concept graph exists yet, so every literal is unknown"
         );
     }
+}
+
+/// BN-140: the Planner is told what the profile configured, not what the pack
+/// wants.
+///
+/// The two answer different questions. A pack says whether a domain may use a
+/// connector at all; a profile says where it reads. A Planner told only the
+/// first plans assignments the fan-out then skips, and the card comes back thin
+/// with nothing saying why.
+#[test]
+fn the_planner_is_told_what_the_profile_configured_and_not_what_the_pack_wants() {
+    let mut core = core_with(mock());
+    // The finance pack enables regulatory, local and web. The profile has
+    // pointed none of them anywhere, so none of them is available to plan with,
+    // and doc 04 section 10's failure is the honest answer.
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+    let refused = core
+        .ask(&board_id, "what changed in the capital rule?", Some("deep"))
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(
+        refused.contains("no_retriever_enabled"),
+        "a plan was made from connectors the profile has not got: {refused}"
+    );
+
+    // One watched folder, and the same question plans. What the packet says is
+    // enabled is now what the fan-out will actually reach.
+    with_empty_folder(&mut core);
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(&board_id, "what changed in the capital rule?", Some("deep"))
+        .expect("the card runs");
+
+    let packet = packet_for(&core, &board_id, "planner");
+    let enabled: Vec<&str> = packet["retrievers"]
+        .as_array()
+        .expect("retrievers")
+        .iter()
+        .filter(|r| r["enabled"] == true)
+        .filter_map(|r| r["id"].as_str())
+        .collect();
+    assert!(enabled.contains(&"local"), "the folder was not seen: {enabled:?}");
+    assert!(
+        !enabled.contains(&"regulatory") && !enabled.contains(&"web"),
+        "the packet claims a connector the profile has not got: {enabled:?}"
+    );
 }
 
 #[test]
@@ -3333,6 +3431,7 @@ fn a_page_in_the_vault_is_cited_by_a_deep_card_as_a_page() {
     let root = std::env::temp_dir().join(format!("tessera-vaultcard-{}", tessera_store::new_id()));
     let mut core = core_at_with(&root, Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
 
     // A page written in an editor, found by the mirror at start.
     std::fs::create_dir_all(root.join("vault")).expect("dir");
@@ -3552,6 +3651,7 @@ fn a_figure_that_rests_on_a_page_alone_is_flagged_and_stands_when_its_source_is_
         ),
     );
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
 
     std::fs::create_dir_all(root.join("vault")).expect("dir");
     std::fs::write(
@@ -3806,8 +3906,16 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     core.retrievers = tessera_core::retrieval::RetrieverSet {
-        indexed: vec![("boards".into(), IndexedConfig::boards())],
+        // Memory is what this test is about, and `local` is what lets the first
+        // card be planned at all: doc 04 section 10 refuses a plan whose only
+        // retriever is the profile's own prior cards, because a profile that
+        // can only read itself corroborates itself. BN-140.
+        indexed: vec![
+            ("local".into(), IndexedConfig::local(vec!["empty".into()])),
+            ("boards".into(), IndexedConfig::boards()),
+        ],
         web: None,
         embedder: None,
     };
@@ -3940,6 +4048,7 @@ fn packet_for(core: &Core, board_id: &str, agent: &str) -> Value {
 fn a_follow_up_carries_its_parent_into_the_router_packet() {
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
     let parent = core
         .ask(&board_id, "what are world models?", Some("deep"))
@@ -3975,6 +4084,7 @@ fn a_follow_up_carries_its_ancestors_into_the_planner_packet() {
     // array.
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
     let parent = core
         .ask(&board_id, "what are world models?", Some("research"))
@@ -4006,6 +4116,7 @@ fn a_root_card_still_reports_no_parent() {
     // and never invented where it does not.
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
     core.ask(&board_id, "what are world models?", Some("deep"))
         .expect("runs");
@@ -4021,6 +4132,7 @@ fn the_ancestor_chain_stops_at_three() {
     // must not put the whole board into a prompt.
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
 
     let mut previous = core
@@ -4051,6 +4163,7 @@ fn the_board_seed_reaches_the_planner() {
     // as though it had none.
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
     let board_id = core.create_board("Board", "deep").expect("board");
     core.store
         .conn()

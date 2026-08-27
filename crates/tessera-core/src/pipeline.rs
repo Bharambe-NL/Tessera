@@ -2020,9 +2020,15 @@ fn build_planner_packet(
     // a profile that has configured nothing at all.
     let board_mode = board["mode"].as_str().unwrap_or("explore").to_string();
 
-    // What doctrine enables, not what the profile has configured. Doc 05
-    // section 10 separates the two, and this reads the first: BN-140 records
-    // the gap and why closing it is its own step rather than a line here.
+    // Doc 05 section 10 separates a retriever doctrine wants from one the
+    // profile has told where to read, and the Planner is told the second.
+    //
+    // It plans assignments, and an assignment naming a connector the fan-out
+    // will skip is a sub-question with no source behind it: the card comes back
+    // thin and nothing says why. It also decides doc 04 section 10's
+    // `no_retriever_enabled`, whose message reads "Enable at least web or local
+    // in Profile", which only means anything if what it read is what Profile
+    // controls. BN-140.
     let mut retrievers: Vec<Value> = ctx
         .pack
         .retrievers
@@ -2030,7 +2036,7 @@ fn build_planner_packet(
         .map(|r| {
             json!({
                 "id": r.id,
-                "enabled": r.enabled_by_default,
+                "enabled": r.enabled_by_default && ctx.retrievers.configured(&r.id),
                 "config_summary": "",
             })
         })
