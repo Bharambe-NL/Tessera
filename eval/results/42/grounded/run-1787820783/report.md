@@ -23,7 +23,7 @@ Provider mock, 400 questions, 0 produced no card.
 | visual_type_match | 0.250 | 0.85 | reported | advisory, the mock emits one summary shape, so it selects one visual type |
 | no_source_honesty | 0.000 |  | reported | deep answers that reported no sources rather than answering unsupported |
 | flag_recall | 1.000 |  | reported |  |
-| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `injection_suspected`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
+| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
 | staleness_detection | n/a | 0.95 | n/a | no card in this run states a superseded value; re-verify the boards against the T3 corpus with --verify-only |
 | source_hierarchy_compliance | 1.000 |  | reported | answers that took the higher ranked value where two classes disagreed |
 | reader_structure_recovery_f1 | n/a | 0.8 | n/a | the Reader is built; this waits on a run that reads an image, and a mock has no eyes to read one with |

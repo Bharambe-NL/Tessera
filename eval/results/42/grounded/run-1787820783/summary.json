@@ -211,10 +211,10 @@
       "verdict": "reported"
     },
     {
-      "denominator": 89,
+      "denominator": 111,
       "name": "flag_false_positive_rate",
-      "note": "worst rule `injection_suspected`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
-      "numerator": 89,
+      "note": "worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
+      "numerator": 111,
       "reported": "1.000",
       "threshold": null,
       "value": 1.0,

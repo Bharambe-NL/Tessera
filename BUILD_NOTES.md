@@ -1858,6 +1858,33 @@ have reported a failure that was not one, on the first run that cost money.
 
 ---
 
+### BN-100 A run record whose numbers moved when it was read again
+
+**Spec** 02 section 10.2, 07 section B12.
+
+**Found** by a stop hook, of all things. It reported uncommitted changes in the
+tree, and the changes were a committed sweep's `report.md` and `summary.json`,
+which had been rewritten by rescoring the same run after BN-099.
+
+**Nothing about the run had changed.** `flag_false_positive_rate` names the worst
+offending rule, because one rule crying wolf is enough to make the Flags queue
+something a user learns to ignore and an average would hide it. Six rules sat at
+exactly 1.0 on the grounded sweep, and the pick was `max` over a dict, which
+returns whichever the iteration reached first. So the rule the metric named
+changed between two readings of one run, and the denominator reported beside it
+went from 89 to 153 with it.
+
+**Decision** The tie breaks by name. Scoring one run twice now names the same
+rule, and a genuinely worse rule still wins whatever it is called.
+
+**Reason** Worth its own note because of what it threatens rather than what it
+broke. A run against a live provider costs money and cannot be reproduced
+exactly, which is the whole argument for committing its record. A record that
+reads differently each time it is scored is not one, and this would have been
+found on a paid run rather than a free one if the hook had not caught the diff.
+
+---
+
 ---
 
 ## Measured findings
