@@ -201,36 +201,16 @@ impl LearningPlanner {
 // ------------------------------------------------------------------ rules ---
 
 fn read_concepts(packet: &Value) -> Vec<learning::Concept> {
-    packet["concepts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|c| learning::Concept {
-            id: c["concept_id"].as_str().unwrap_or_default().to_string(),
-            term: c["term"].as_str().unwrap_or_default().to_string(),
-            state: c["learning_state"].as_str().map(str::to_string),
-            self_rating: c["self_rating"].as_i64(),
-            mastery: c["mastery"].as_f64(),
-            difficulty_level: c["difficulty_level"].as_u64().map(|l| l as u8),
-            last_evidence_at: c["last_evidence_at"].as_str().map(str::to_string),
-            domain: c["domain"].as_str().map(str::to_string),
-        })
-        .collect()
+    learning::concepts_from(
+        packet["concepts"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
+    )
 }
 
 fn read_edges(packet: &Value) -> Vec<learning::Edge> {
-    packet["edges"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|e| learning::Edge {
-            from: e["from_concept_id"].as_str().unwrap_or_default().to_string(),
-            to: e["to_concept_id"].as_str().unwrap_or_default().to_string(),
-            relation: e["relation"].as_str().unwrap_or("prerequisite_of").to_string(),
-            status: e["status"].as_str().unwrap_or("proposed").to_string(),
-            weight: e["weight"].as_f64().unwrap_or(1.0),
-        })
-        .collect()
+    learning::edges_from(packet["edges"].as_array().map(Vec::as_slice).unwrap_or_default())
 }
 
 /// Doc 17 section 5: "the plan targets one or two concepts at the frontier plus
@@ -241,7 +221,7 @@ fn read_edges(packet: &Value) -> Vec<learning::Edge> {
 /// passed. Null when there is no frontier, because a learner who rated nothing
 /// has not said where to start and guessing would teach them something they may
 /// already know.
-fn plan_lesson(frontier: &[String], concepts: &[learning::Concept], edges: &[learning::Edge]) -> Value {
+pub fn plan_lesson(frontier: &[String], concepts: &[learning::Concept], edges: &[learning::Edge]) -> Value {
     let targets: Vec<String> = frontier.iter().take(2).cloned().collect();
     if targets.is_empty() {
         return Value::Null;

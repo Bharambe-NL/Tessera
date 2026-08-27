@@ -879,10 +879,19 @@ function wireLearn(): void {
     const pick = target.closest<HTMLElement>('[data-check-pick]');
     if (pick && tutorState.turn?.check?.item) {
       const item = tutorState.turn.check.item;
+      // Doc 17 section 4: the ladder moves a concept, so grading is told which
+      // one the check was about. The turn named it; the shell hands it back.
+      const about = tutorState.turn.check.concept_id;
       void rpc
-        .answerCheck(id, item, pick.dataset.checkPick ?? '')
+        .answerCheck(id, item, pick.dataset.checkPick ?? '', about ? [about] : [])
         .then((result) => {
-          tutorState.feedback = { correct: result.correct, explanation: item.explanation };
+          const remedy =
+            result.remedy.kind === 'prerequisite'
+              ? COPY.learnRemedyPrerequisite
+              : result.remedy.kind === 'card'
+                ? COPY.learnRemedyCard
+                : undefined;
+          tutorState.feedback = { correct: result.correct, explanation: item.explanation, remedy };
           renderTutor();
           void refreshSession();
         })

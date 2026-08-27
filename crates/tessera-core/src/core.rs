@@ -767,6 +767,29 @@ impl Core {
             .map_err(|f| CoreError::Runtime(f.to_string()))
     }
 
+    /// Grade one check and let doc 17 section 4's ladder decide what follows.
+    ///
+    /// The rule lives in `tessera-agents`; what this adds is the two things it
+    /// needs and cannot read for itself: the pack's mastery threshold and the
+    /// map's prerequisite edges.
+    pub fn record_check(
+        &mut self,
+        board_id: &str,
+        item: &Value,
+        picked: &str,
+        concept_ids: &[String],
+    ) -> Result<pipeline::Adaptation, CoreError> {
+        let pack = self.packs.get(&self.pack_code)?.clone();
+        let (_, edge_rows) = repo::read_map(&self.store, &self.profile_id)?;
+        let edges = tessera_agents::learning::edges_from(&edge_rows);
+        let ladder = pipeline::Ladder {
+            mastered_at: pack.learning_templates.mastered_at,
+            edges: &edges,
+        };
+        pipeline::record_check(&mut self.store, board_id, item, picked, concept_ids, &ladder)
+            .map_err(|f| CoreError::Runtime(f.to_string()))
+    }
+
     /// Read an image into a card. Doc 07 part A.
     pub fn read_image(&mut self, board_id: &str, image_id: &str) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
@@ -1669,10 +1692,10 @@ pub fn build_router() -> Router<Core> {
             concept_ids: Vec<String>,
         }
         let p: Answered = params(p)?;
-        let correct =
-            pipeline::record_check(&mut core.store, &p.board_id, &p.item, &p.picked, &p.concept_ids)
-                .map_err(|f| RpcError::core("learn", f.to_string()))?;
-        Ok(json!({ "correct": correct }))
+        let adaptation = core
+            .record_check(&p.board_id, &p.item, &p.picked, &p.concept_ids)
+            .map_err(core_error)?;
+        Ok(adaptation.to_json())
     });
 
     r.register("learn.say", |core: &mut Core, p| {

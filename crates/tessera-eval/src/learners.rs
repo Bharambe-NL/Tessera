@@ -33,6 +33,15 @@ pub struct Learner {
     pub learner_id: String,
     pub policy: String,
     pub ratings: BTreeMap<String, i64>,
+    /// What this learner can actually answer, per concept, per level. Doc 17
+    /// section 10's scripted policy.
+    ///
+    /// Placement never reads it: a placement is decided before any check is
+    /// asked, and reading the answer sheet while marking the paper is the
+    /// failure the two files exist to prevent. The lesson below does read it,
+    /// because a check has been asked by then and something has to answer.
+    #[serde(default)]
+    pub answers: BTreeMap<String, Vec<u8>>,
     #[serde(default)]
     pub expected_frontier: Vec<String>,
 }
@@ -61,6 +70,14 @@ pub struct SessionRecord {
     /// Doc 17 section 2.4's honesty rule, as rows rather than a verdict: every
     /// concept whose only evidence is a rating, with the score it ended at.
     pub rated_only: Vec<Value>,
+    /// Doc 17 section 4, one row per check the lesson asked: the rung, whether
+    /// it was passed, and the card it came from. The scorer re-derives the
+    /// ladder from these rather than from what the product said it did.
+    pub checks: Vec<Value>,
+    /// The cards the lesson board holds that the Verifier stood behind. Doc 17
+    /// section 4's "no item is ever generated from unverified text" is checked
+    /// against this rather than against the product's own idea of eligibility.
+    pub verified_cards: Vec<String>,
     pub note: String,
 }
 
@@ -87,6 +104,8 @@ pub fn place(
         proposed_edges: 0,
         confirmed_edges_not_from_the_path: 0,
         rated_only: Vec::new(),
+        checks: Vec::new(),
+        verified_cards: Vec::new(),
         note: String::new(),
     };
 
@@ -242,6 +261,154 @@ pub fn place(
     record
 }
 
+/// How many checks one lesson asks. Doc 17 section 4's ladder needs a run of
+/// them to be a ladder, and six is enough to walk from rung 1 to rung 4 and
+/// back down twice.
+const CHECKS_PER_LESSON: usize = 6;
+
+/// Run one lesson on a board the corpus already filled, answering each check
+/// the way the policy says the learner would.
+///
+/// Doc 17 section 4's two rules are what this exists to measure: the rung of
+/// each check follows the last one, and every check names a card the Verifier
+/// stood behind. The tutor writes the question, the product grades it, and
+/// nothing here decides either.
+pub fn teach(
+    core: &mut Core,
+    router: &Router<Core>,
+    truth: &LearningTruth,
+    learner: &Learner,
+    board_id: &str,
+    record: &mut SessionRecord,
+) {
+    record.verified_cards = verified_cards(core, board_id);
+    if record.verified_cards.is_empty() {
+        record.note = "the lesson board holds no card the Verifier stood behind".into();
+        return;
+    }
+
+    if let Err(e) = call(
+        router,
+        core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "the synthetic path" }),
+    ) {
+        record.note = format!("learn.start: {e}");
+        return;
+    }
+
+    // The corpus names concepts by its own ids and the product by ULIDs, so the
+    // policy is looked up through the terms both agree on.
+    let map = call(router, core, "map.read", json!({})).unwrap_or_else(|_| json!({}));
+    let term_of: BTreeMap<String, String> = map["concepts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            Some((
+                c["concept_id"].as_str()?.to_string(),
+                c["term"].as_str()?.to_lowercase(),
+            ))
+        })
+        .collect();
+    let corpus_of: BTreeMap<String, String> = truth
+        .path
+        .iter()
+        .map(|c| (c.term.to_lowercase(), c.concept_id.clone()))
+        .collect();
+
+    for _ in 0..CHECKS_PER_LESSON {
+        let turn = match call(router, core, "learn.check", json!({ "board_id": board_id })) {
+            Ok(turn) => turn,
+            Err(e) => {
+                record.note = format!("learn.check: {e}");
+                return;
+            }
+        };
+        let item = turn["turn"]["check"]["item"].clone();
+        let Some(item_id) = item["id"].as_str() else {
+            // Doc 17 section 4's last resort, or a check the rules dropped.
+            // Either way there is nothing to answer and saying so beats an
+            // empty row that reads as a check that happened.
+            record.note = "a turn produced no check".into();
+            return;
+        };
+        let _ = item_id;
+
+        // Doc 17 section 6: the turn names the concept its check is about, which
+        // is what the shell hands back when the answer is graded.
+        let target = turn["turn"]["check"]["concept_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let level = item["level"].as_u64().unwrap_or(1) as u8;
+        let knows = term_of
+            .get(&target)
+            .and_then(|term| corpus_of.get(term))
+            .and_then(|id| learner.answers.get(id))
+            .is_some_and(|levels| levels.contains(&level));
+
+        let answer_id = item["answer_id"].as_str().unwrap_or_default().to_string();
+        let wrong = item["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|o| o["id"].as_str())
+            .find(|id| *id != answer_id)
+            .unwrap_or("")
+            .to_string();
+        let picked = if knows { answer_id } else { wrong };
+
+        let graded = match call(
+            router,
+            core,
+            "learn.answer_check",
+            json!({
+                "board_id": board_id,
+                "item": item,
+                "picked": picked,
+                "concept_ids": if target.is_empty() { vec![] } else { vec![target.clone()] },
+            }),
+        ) {
+            Ok(graded) => graded,
+            Err(e) => {
+                record.note = format!("learn.answer_check: {e}");
+                return;
+            }
+        };
+
+        record.checks.push(json!({
+            "concept_id": target,
+            "level": level,
+            "correct": graded["correct"],
+            "next_level": graded["next_level"],
+            "remedy": graded["remedy"],
+            "card_id": item["source_card_id"],
+        }));
+    }
+
+    let _ = call(router, core, "learn.end", json!({ "board_id": board_id }));
+}
+
+/// The cards on a board that are done or warn flagged, read from the store
+/// rather than from the product's own eligibility rule.
+fn verified_cards(core: &Core, board_id: &str) -> Vec<String> {
+    let conn = core.store.conn();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT c.id FROM card c
+         WHERE c.board_id = ?1 AND c.status IN ('done', 'flagged') AND c.answer IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM flag f
+             WHERE f.card_id = c.id AND f.status = 'open' AND f.severity = 'block'
+           )",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map(rusqlite::params![board_id], |r| r.get::<_, String>(0))
+        .map(|rows| rows.filter_map(std::result::Result::ok).collect())
+        .unwrap_or_default()
+}
+
 fn call(router: &Router<Core>, core: &mut Core, method: &str, params: Value) -> Result<Value, String> {
     let response = router
         .dispatch(core, Request::new(method, params, 1))
@@ -258,12 +425,23 @@ fn call(router: &Router<Core>, core: &mut Core, method: &str, params: Value) -> 
 /// happened.
 pub fn report(records: &[SessionRecord]) -> String {
     let mut out = String::from(
-        "| Learner | Frontier | Expected | Level | Proposed | Applied |\n\
-         | --- | --- | --- | --- | --- | --- |\n",
+        "| Learner | Frontier | Expected | Level | Proposed | Applied | Rungs asked |\n\
+         | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for r in records {
+        let rungs: Vec<String> = r
+            .checks
+            .iter()
+            .map(|c| {
+                let level = c["level"].as_u64().unwrap_or(0);
+                // The rung and whether it was passed, because a run of fours
+                // that were all wrong is a different lesson from a run of fours
+                // that were right.
+                format!("{level}{}", if c["correct"] == true { "" } else { "x" })
+            })
+            .collect();
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
             r.learner_id,
             r.frontier.join(" "),
             r.expected_frontier.join(" "),
@@ -272,9 +450,14 @@ pub fn report(records: &[SessionRecord]) -> String {
                 .unwrap_or_else(|| "none".into()),
             r.proposed_concepts + r.proposed_edges,
             r.confirmed_edges_not_from_the_path,
+            if rungs.is_empty() {
+                "none".to_string()
+            } else {
+                rungs.join(" ")
+            },
         ));
         if !r.note.is_empty() {
-            out.push_str(&format!("| | | | | | {} |\n", r.note));
+            out.push_str(&format!("| {} | | | | | | {} |\n", r.learner_id, r.note));
         }
     }
     out

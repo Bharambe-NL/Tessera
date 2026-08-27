@@ -1535,6 +1535,281 @@ fn a_learn_session_runs_intake_a_plan_a_check_and_an_ending() {
     );
 }
 
+/// Doc 17 section 4's adaptation rule, through the RPC that grades a check.
+///
+/// Pass at n moves the next check to n+1, fail moves it to n-1 with a remedial
+/// card, and two failures at level 1 open the concept's strongest prerequisite
+/// instead. The rules are unit tested in `tessera-agents`; what this asserts is
+/// that grading calls them and that the answer reaches the shell.
+#[test]
+fn a_failed_check_walks_the_ladder_down_and_then_reaches_for_a_prerequisite() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "world models" }),
+    );
+    let card = call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+    let card_id = card["card_id"].as_str().expect("card").to_string();
+
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    let now = tessera_store::now_iso8601();
+    for (id, term) in [
+        ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "world model"),
+        ("01BX5ZZKBKACTAV9WEVGEMMVRZ", "state space"),
+    ] {
+        core.store
+            .conn()
+            .execute(
+                "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                     created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'confirmed', ?5, ?5)",
+                rusqlite::params![id, profile_id, term, pack_id, now],
+            )
+            .expect("concept");
+    }
+    // A confirmed prerequisite, which is what the third failure reaches for.
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept_edge (id, from_concept_id, to_concept_id, relation, status,
+                 weight, proposed_by, created_at, updated_at)
+             VALUES ('01D78XYFJ1PRM1WPBCBT3VHMNV', '01BX5ZZKBKACTAV9WEVGEMMVRZ',
+                     '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'prerequisite_of', 'confirmed', 1.0,
+                     'learner', ?1, ?1)",
+            rusqlite::params![now],
+        )
+        .expect("edge");
+
+    let item = |level: u64| {
+        json!({
+            "id": format!("i{level}"),
+            "kind": "recall",
+            "level": level,
+            "prompt": "what is it?",
+            "options": [{ "id": "a", "text": "right" }, { "id": "b", "text": "wrong" }],
+            "answer_id": "a",
+            "explanation": "the card states it",
+            "source_card_id": card_id,
+        })
+    };
+    let answer = |core: &mut Core, item: Value, picked: &str| {
+        call(
+            &router,
+            core,
+            "learn.answer_check",
+            json!({
+                "board_id": board_id, "item": item, "picked": picked,
+                "concept_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+            }),
+        )
+    };
+
+    // A pass at 2 moves the next check to 3 and calls for nothing.
+    let passed = answer(&mut core, item(2), "a");
+    assert_eq!(passed["correct"], true);
+    assert_eq!(passed["next_level"], 3);
+    assert_eq!(passed["remedy"]["kind"], "none");
+
+    // A failure at 2 drops to 1 and opens a remedial card there.
+    let failed = answer(&mut core, item(2), "b");
+    assert_eq!(failed["next_level"], 1);
+    assert_eq!(failed["remedy"], json!({ "kind": "card", "level": 1 }));
+
+    // One failure at the bottom rung stays on the concept.
+    let first = answer(&mut core, item(1), "b");
+    assert_eq!(first["next_level"], 1);
+    assert_eq!(first["remedy"], json!({ "kind": "card", "level": 1 }));
+
+    // The second reaches for the prerequisite instead, which is the one thing
+    // in this rule that looks at the map rather than at the transcript.
+    let second = answer(&mut core, item(1), "b");
+    assert_eq!(
+        second["remedy"],
+        json!({ "kind": "prerequisite", "concept_id": "01BX5ZZKBKACTAV9WEVGEMMVRZ", "level": 1 })
+    );
+
+    // Doc 17 section 2.1: `difficulty_level` is "the level of the last check the
+    // learner passed", so the three failures after the pass at 2 leave it there.
+    let (state, difficulty): (Option<String>, Option<i64>) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT learning_state, difficulty_level FROM concept WHERE id = ?1",
+            rusqlite::params!["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("concept");
+    assert_eq!(state.as_deref(), Some("checked"));
+    assert_eq!(difficulty, Some(2));
+
+    // And no `concept.state_changed.v1`, which is the boundary working rather
+    // than a gap. The projection folds evidence up to `checked` and stops,
+    // because `mastered` needs the pack's threshold; this learner never reached
+    // it, so the core had nothing to add. An event here would be the same move
+    // written twice by two layers.
+    let moved = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.event_type == "concept.state_changed.v1")
+        .count();
+    assert_eq!(moved, 0, "the core restated a move the projection already made");
+}
+
+/// Doc 17 sections 4 and 5, which answer two different questions about a rung.
+///
+/// The Planner picks the level a lesson opens at, from the last check the
+/// learner passed. The ladder moves the level within a lesson, from the last
+/// check they took. Only the session knows the second, so a second check on the
+/// same concept opens one rung above the first.
+#[test]
+fn the_second_check_in_a_lesson_opens_one_rung_above_the_first() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "world models" }),
+    );
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![board_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    let now = tessera_store::now_iso8601();
+    let concept_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status, self_rating,
+                 learning_state, created_at, updated_at)
+             VALUES (?1, ?2, 'world model', ?3, 'confirmed', 3, 'rated', ?4, ?4)",
+            rusqlite::params![concept_id, profile_id, pack_id, now],
+        )
+        .expect("concept");
+
+    let mut levels = Vec::new();
+    for _ in 0..3 {
+        let turn = call(&router, &mut core, "learn.check", json!({ "board_id": board_id }));
+        let item = turn["turn"]["check"]["item"].clone();
+        levels.push(item["level"].as_u64().unwrap_or(0));
+        call(
+            &router,
+            &mut core,
+            "learn.answer_check",
+            json!({
+                "board_id": board_id, "item": item, "picked": "a",
+                "concept_ids": [concept_id]
+            }),
+        );
+    }
+    assert_eq!(levels, vec![1, 2, 3], "the ladder did not move: {levels:?}");
+}
+
+/// Doc 17 section 4's item sourcing order, and the rule underneath it: "no item
+/// is ever generated from unverified text".
+///
+/// A lesson board with no checked card of its own reaches for verified cards
+/// elsewhere on the map before it asks anything, and when there are none it
+/// requests a card rather than writing a question from nothing.
+#[test]
+fn a_lesson_with_no_card_of_its_own_reaches_for_the_map_and_then_asks_for_one() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+
+    // A first board, answered, so the map has a verified card somewhere.
+    let elsewhere = core.create_board("Elsewhere", "fast").expect("board");
+    let card = core
+        .ask(&elsewhere, "what are world models?", None)
+        .expect("card");
+
+    let lesson = core.create_board("Lesson", "fast").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": lesson, "topic": "world models" }),
+    );
+
+    // With nothing linked and nothing on the board, the packet says so and the
+    // tutor is told to open a card instead of asking one.
+    call(&router, &mut core, "learn.check", json!({ "board_id": lesson }));
+    assert_eq!(packet_for(&core, &lesson, "tutor")["sourcing"], "none");
+
+    // Now the map holds a confirmed link from a rated concept to that card, and
+    // the frontier names the concept, so the second source has something in it.
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![lesson],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    let now = tessera_store::now_iso8601();
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status, self_rating,
+                 learning_state, created_at, updated_at)
+             VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', ?1, 'world model', ?2, 'confirmed', 3,
+                     'rated', ?3, ?3)",
+            rusqlite::params![profile_id, pack_id, now],
+        )
+        .expect("concept");
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept_link (id, concept_id, target_type, target_ref, relation,
+                 proposed_by, status, created_at)
+             VALUES ('01BX5ZZKBKACTAV9WEVGEMMVRZ', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'card', ?1,
+                     'explains', 'librarian', 'confirmed', ?2)",
+            rusqlite::params![card.card_id, now],
+        )
+        .expect("link");
+
+    call(&router, &mut core, "learn.check", json!({ "board_id": lesson }));
+    let packet = packet_for(&core, &lesson, "tutor");
+    assert_eq!(packet["sourcing"], "map");
+    assert_eq!(
+        packet["cards"][0]["card_id"].as_str(),
+        Some(card.card_id.as_str()),
+        "the packet did not reach the verified card on the map: {:?}",
+        packet["cards"]
+    );
+    // Doc 17 section 6: the rung and the target come from the plan, not from
+    // the tutor's own choice.
+    assert_eq!(packet["plan"]["targets"][0], "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    assert_eq!(packet["plan"]["level"], 1);
+}
+
 #[test]
 fn a_tutor_reply_carrying_a_citation_marker_never_reaches_the_learner() {
     // Doc 14 section 3.5's load bearing rule, end to end. A marker means the

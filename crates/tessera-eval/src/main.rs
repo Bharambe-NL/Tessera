@@ -663,8 +663,11 @@ fn main() -> std::process::ExitCode {
                         })
                         .cloned()
                         .collect();
-                    let taken: Vec<String> =
-                        eligible.iter().take(EXERCISE_BOARDS_PER_WORKER).cloned().collect();
+                    let taken: Vec<String> = eligible
+                        .iter()
+                        .take(EXERCISE_BOARDS_PER_WORKER)
+                        .cloned()
+                        .collect();
                     if boards_seen.len() > taken.len() {
                         // No silent caps: a run that sampled 5 of 40 boards
                         // says so, because "traceability 1.00" over five boards
@@ -967,6 +970,50 @@ fn run_one(
 ///
 /// One profile per learner, because a map is per profile and four learners
 /// sharing one would each be placed on the last one's ratings.
+/// Write the corpus's boards into this learner's profile and name the first.
+///
+/// No embedder and no retrievers: the lesson reads cards from the board, not
+/// from an index, and an index built here would be a second thing to go wrong.
+fn seed_lesson_board(core: &mut Core, corpus: &Path, snapshot: &str) -> Result<Option<String>, String> {
+    let mut boards = boards::load(corpus)?;
+    // The corpus names boards `B-01` and the packet schemas take ULIDs. The
+    // bundle leg remaps for the same reason: a corpus id is a name a person
+    // reads and a store id is a value the schemas validate, and a leg that
+    // wrote one where the other belongs is refused at the boundary.
+    let mut ids: std::collections::BTreeMap<String, String> = Default::default();
+    let ulid_of = |name: &str, ids: &mut std::collections::BTreeMap<String, String>| {
+        ids.entry(name.to_string())
+            .or_insert_with(tessera_store::new_id)
+            .clone()
+    };
+    for board in &mut boards {
+        board.board_id = ulid_of(&board.board_id.clone(), &mut ids);
+        for card in &mut board.cards {
+            card.card_id = ulid_of(&card.card_id.clone(), &mut ids);
+            if let Some(parent) = card.parent_card_id.clone() {
+                card.parent_card_id = Some(ulid_of(&parent, &mut ids));
+            }
+        }
+        for flag in &mut board.flags {
+            flag.card_id = ulid_of(&flag.card_id.clone(), &mut ids);
+        }
+        for concept in &mut board.concepts {
+            concept.concept_id = ulid_of(&concept.concept_id.clone(), &mut ids);
+            for card_id in &mut concept.linked_cards {
+                *card_id = ulid_of(&card_id.clone(), &mut ids);
+            }
+        }
+    }
+
+    let profile_id = core.profile_id.clone();
+    let pack_id = core.active_pack_id().map_err(|e| format!("pack: {e}"))?;
+    boards::seed(&mut core.store, &profile_id, &pack_id, &boards, snapshot, None)?;
+    Ok(boards
+        .iter()
+        .find(|b| !b.trashed && !b.cards.is_empty())
+        .map(|b| b.board_id.clone()))
+}
+
 fn run_learners(args: &Args, pack: &str, plan: &Plan) -> std::process::ExitCode {
     let truth = match learners::load(&args.corpus) {
         Ok(t) => t,
@@ -1001,7 +1048,22 @@ fn run_learners(args: &Args, pack: &str, plan: &Plan) -> std::process::ExitCode 
             eprintln!("could not load the `{pack}` pack: {e}");
             return std::process::ExitCode::from(2);
         }
-        records.push(learners::place(&mut core, &router, &truth, learner));
+        let mut record = learners::place(&mut core, &router, &truth, learner);
+
+        // Doc 17 section 4's item sourcing order starts at "verified cards on
+        // the lesson board", so the lesson needs a board that has some. The
+        // corpus's own boards are written straight in: they are already
+        // answered and already verified, and asking twenty questions per
+        // learner to arrive at the same place would measure the pipeline again
+        // rather than the ladder.
+        match seed_lesson_board(&mut core, &args.corpus, &args.snapshot) {
+            Ok(Some(board_id)) => {
+                learners::teach(&mut core, &router, &truth, learner, &board_id, &mut record)
+            }
+            Ok(None) => record.note = "the corpus has no board to teach from".into(),
+            Err(e) => record.note = format!("seeding the lesson board: {e}"),
+        }
+        records.push(record);
     }
 
     println!("{}", learners::report(&records));

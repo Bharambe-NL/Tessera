@@ -60,6 +60,20 @@ export async function vaultCore(page: Page): Promise<void> {
   if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
 }
 
+/**
+ * A core with one rated concept on the map.
+ *
+ * Doc 17 section 3 places a learner from their own ratings, and section 4's
+ * ladder moves a concept. A profile that has rated nothing has no frontier, so
+ * a check names no concept and nothing adapts. Its own flag because a concept
+ * on the map is a Library row, and the Library test asserts what a proposed
+ * concept looks like on a profile that had none.
+ */
+export async function learningCore(page: Page): Promise<void> {
+  const response = await page.request.post('/reset?learning=1');
+  if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);
+}
+
 export async function memoryCore(page: Page): Promise<void> {
   const response = await page.request.post('/reset?memory=1');
   if (!response.ok()) throw new Error(`the dev server would not reset: ${response.status()}`);

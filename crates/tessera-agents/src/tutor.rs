@@ -160,12 +160,26 @@ impl Tutor {
                 answers(&mut prompt, packet);
             }
             "checking" => {
-                prompt.push_str(
-                    "Write one multiple choice question about the target card below, and two \
-                     follow-up questions: one to open if they get it right and one if they get it \
-                     wrong. Both must be about something the target card names.\n",
-                );
-                cards(&mut prompt, packet, packet["target_card_id"].as_str());
+                if packet["sourcing"].as_str() == Some("none") {
+                    // Doc 17 section 4's last resort: "when none exist, the
+                    // tutor requests a card for that concept before checking".
+                    // Written as an instruction here and enforced below, since
+                    // an item can only name a card the packet carries and there
+                    // are none.
+                    prompt.push_str(
+                        "There is no checked card to ask about yet. Do not write a question. Put \
+                         the card you would open in `open` and say in `reply` that you want to \
+                         cover it first.\n",
+                    );
+                } else {
+                    prompt.push_str(
+                        "Write one multiple choice question about the target card below, and two \
+                         follow-up questions: one to open if they get it right and one if they get \
+                         it wrong. Both must be about something the target card names.\n",
+                    );
+                    plan_targets(&mut prompt, packet);
+                    cards(&mut prompt, packet, packet["target_card_id"].as_str());
+                }
             }
             _ => {
                 if let Some(message) = packet["learner_message"].as_str() {
@@ -205,6 +219,48 @@ fn answers(prompt: &mut String, packet: &Value) {
             continue;
         };
         prompt.push_str(&format!("They answered \"{q}\" with: {a}\n"));
+    }
+}
+
+/// Doc 17 section 6: the check's concept and rung come from the plan.
+///
+/// Said as terms rather than ids, because a model writing a question needs the
+/// words the learner would recognise and an id is neither.
+fn plan_targets(prompt: &mut String, packet: &Value) {
+    let terms: Vec<&str> = packet["plan"]["targets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|id| {
+            packet["concepts"]
+                .as_array()?
+                .iter()
+                .find(|c| c["concept_id"].as_str() == Some(id))?["term"]
+                .as_str()
+        })
+        .collect();
+    if !terms.is_empty() {
+        prompt.push_str(&format!(
+            "Check what they understand about: {}.\n",
+            terms.join(", ")
+        ));
+    }
+    if let Some(level) = packet["plan"]["level"].as_u64() {
+        prompt.push_str(&format!("{}\n", level_guidance(level)));
+    }
+}
+
+/// Doc 17 section 4's ladder, said as what to ask rather than as a number.
+fn level_guidance(level: u64) -> &'static str {
+    match level {
+        1 => "Ask at level 1: state the definition or the fact.",
+        2 => "Ask at level 2: choose the correct explanation of why or how.",
+        3 => "Ask at level 3: give a short scenario and ask which rule or outcome applies.",
+        _ => {
+            "Ask at level 4: take two near cases and ask which one differs and why. The wrong \
+             options must not be true of either case."
+        }
     }
 }
 
@@ -278,7 +334,8 @@ fn stage_schema(stage: &str) -> Value {
                         "additionalProperties": false,
                         "properties": {
                             "id": { "type": "string" },
-                            "kind": { "enum": ["recall", "apply", "contrast", "trace"] },
+                            "kind": { "enum": ["recall", "apply", "contrast", "trace", "explain", "discriminate"] },
+                            "level": { "type": "integer", "minimum": 1, "maximum": 4 },
                             "prompt": { "type": "string" },
                             "options": { "type": "array", "minItems": 3, "maxItems": 4, "items": {
                                 "type": "object", "required": ["id", "text"], "additionalProperties": false,
@@ -357,9 +414,17 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
 
     // Rules 1 and 2, on the check.
     let check = decided["check"].clone();
-    let item = check["item"].clone();
+    let mut item = check["item"].clone();
     let cards = packet_cards(packet);
     let scope: Vec<&str> = cards.iter().filter_map(|c| c["card_id"].as_str()).collect();
+
+    // Doc 17 section 6: the rung comes from the plan, not from the model. The
+    // ladder moves the next check from the level this one stood on, so a level
+    // the tutor chose for itself would move a learner up a ladder nobody put
+    // them on. Same rule as the Exercise agent's: the level asked for wins.
+    if let Some(level) = packet["plan"]["level"].as_u64() {
+        item["level"] = json!(level);
+    }
 
     // Rule 1: the Exercise agent's own two checks, reused. A check item is an
     // Exercise item (doc 14 section 1), so it is held to an Exercise item's
@@ -382,6 +447,7 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
     };
 
     let mut kept = check.clone();
+    kept["item"] = item.clone();
     for field in ["next_if_right", "next_if_wrong"] {
         let question = check[field].as_str().unwrap_or_default();
         if !overlaps(question, card) {
@@ -393,7 +459,13 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
                     "remedial"
                 }
             ));
-            kept[field] = Value::Null;
+            // Absent, not null. The output schema types both as strings, so a
+            // null is a claim that there is a next question and it is nothing,
+            // and the boundary refuses the whole turn over it. The same rule
+            // this agent already follows for its top level fields.
+            if let Some(object) = kept.as_object_mut() {
+                object.remove(field);
+            }
         }
     }
     out.check = kept;

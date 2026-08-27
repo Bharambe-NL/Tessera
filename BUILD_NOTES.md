@@ -3511,6 +3511,85 @@ and the 20 board bundle round trip whole.
 
 ---
 
+### BN-137 The ladder moves where grading already lives, and a lesson stays on its concept
+
+**Spec** 17 sections 4, 5 and 6.
+
+**What landed.** `record_check` now runs doc 17 section 4's adaptation rule and returns what it
+decided: whether the answer was right, the rung it stood on, the rung the next check on that concept
+opens at, and the remedy a failure calls for. The Tutor's check selection comes from the Planner's
+targets and level rather than from a free choice, item sourcing follows doc 17's order, and the
+learner leg now teaches as well as places, which is what made both gates measurable.
+
+**Two rules about a rung, and they answer different questions.** Doc 17 section 5 has the Planner
+pick the level a lesson opens at, from `difficulty_level`, which section 2.1 defines as the last
+check the learner passed. Section 4's ladder moves the level within a lesson, from the last check
+they took, pass or fail. Reading either one as the other breaks the other: a plan level alone never
+drops after a failure, and a ladder level alone has nowhere to start. So the Planner sets the
+opening rung and the session's own transcript moves it from there. Nothing new is stored: the
+session already records every check, and the rung is a function of the last one.
+
+**A lesson stays on the concept it is checking.** The first version recomputed the frontier every
+turn, and one passed check takes a concept off the frontier, so the second check of every lesson
+was about a different concept at level 1 again. Doc 17 section 4 says "the next check on that
+concept", so a lesson carries its target until the concept is mastered and only then asks the
+frontier what comes next. The end to end test that caught this asserts three checks in a row open at
+1, 2, 3.
+
+**A check names the concept it checks.** The remedy needs a row to move, and the shell had no way to
+say which. The pipeline stamps `check.concept_id` from the plan's target after the agent answers,
+which keeps it out of the model's hands: a concept the tutor named for itself would be a check about
+something nobody put the learner on. The shell hands it back when the answer is graded, and the eval
+leg reads the same field.
+
+**The sourcing order is structural, not a prompt.** Doc 17 section 4 asks for the lesson board's
+verified cards first, then verified cards anywhere on the map, then a request for a card before
+checking. The packet says which of the three it used, and "no item is ever generated from unverified
+text" holds because a packet carrying no unverified card cannot offer one. At `none` the tutor is
+told to open a card and write no question, and any item it wrote anyway names a card the packet does
+not carry, which the traceability rule already drops.
+
+**Two nulls found by running it.** The Tutor set `next_if_right` and `next_if_wrong` to null when
+the overlap rule dropped them, and the output schema types both as strings, so the whole turn was
+refused at the boundary. The path had never run: the dev fixture always overlapped. The fix is the
+one this agent already applies to its top level fields, which is absent rather than null. The same
+class as the packet level null in BN-136, found the same way, one day apart.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --grounded --learner`. Four
+learners, twenty four checks, twenty ladder steps.
+
+| Metric | Threshold | Result |
+|---|---|---|
+| `level_adaptation` | 1.00 | 1.000 |
+| `checks_from_verified_cards` | 1.00 | 1.000 |
+| `frontier_correctness` | 0.90 | 1.000, reported at n=4 |
+| `proposals_never_applied` | 1.00 | 1.000 |
+| `mastery_honesty` | 1.00 | 1.000 |
+
+The rungs each learner was asked at, which is the ladder as a sentence:
+
+| Learner | Rungs asked |
+|---|---|
+| always-right | 1 2 3 4 4 4 |
+| right-below-three | 1 2 3x 2 3x 2 |
+| random | 1x 1x 1x 1x 1x 1x |
+| overconfident | 1 2 3 4 4 4 |
+
+`x` marks a failure. The second learner is the shape the rule exists for: right up to level 2, and
+the ladder holds them between 2 and 3 rather than letting them climb.
+
+**What the mock still cannot say.** It writes the same item at every rung, so a learner who can
+answer a concept at level 1 answers it at level 4 too. The rungs above measure that the ladder moves
+correctly, never that a level 4 question is harder. That needs a model and sits on the spend list
+with doc 08 section 12's second opinion.
+
+**Verified** Full battery green: workspace tests including four new end to end ones, clippy at
+`-D warnings`, fmt, style lint, 89 generator guards with both gates broken on purpose, 65 Playwright
+tests, a 60 question grounded sweep with nothing below threshold, and the 20 board bundle round trip
+whole.
+
+---
+
 ---
 
 ## Measured findings

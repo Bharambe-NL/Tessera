@@ -13,6 +13,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde_json::Value;
+
 /// Doc 17 section 2.3's six states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum State {
@@ -82,6 +84,43 @@ impl Edge {
     fn gates(&self) -> bool {
         self.relation == "prerequisite_of"
     }
+}
+
+/// The map's concept rows as the rules see them.
+///
+/// The shape is `repo::read_map`'s, which is also the Planner packet's, so the
+/// core and the agent read one map the same way rather than each keeping a
+/// reader that drifts from the other.
+pub fn concepts_from(rows: &[Value]) -> Vec<Concept> {
+    rows.iter()
+        .map(|c| Concept {
+            id: c["concept_id"].as_str().unwrap_or_default().to_string(),
+            term: c["term"].as_str().unwrap_or_default().to_string(),
+            state: c["learning_state"].as_str().map(str::to_string),
+            self_rating: c["self_rating"].as_i64(),
+            mastery: c["mastery"].as_f64(),
+            difficulty_level: c["difficulty_level"].as_u64().map(|l| l as u8),
+            last_evidence_at: c["last_evidence_at"].as_str().map(str::to_string),
+            domain: c["domain"].as_str().map(str::to_string),
+        })
+        .collect()
+}
+
+/// The map's edge rows as the rules see them.
+///
+/// An edge with no relation is a prerequisite, because that is the only
+/// relation the map draws today, and one with no status is proposed: the
+/// learner has to say so for it to be theirs.
+pub fn edges_from(rows: &[Value]) -> Vec<Edge> {
+    rows.iter()
+        .map(|e| Edge {
+            from: e["from_concept_id"].as_str().unwrap_or_default().to_string(),
+            to: e["to_concept_id"].as_str().unwrap_or_default().to_string(),
+            relation: e["relation"].as_str().unwrap_or("prerequisite_of").to_string(),
+            status: e["status"].as_str().unwrap_or("proposed").to_string(),
+            weight: e["weight"].as_f64().unwrap_or(1.0),
+        })
+        .collect()
 }
 
 // ------------------------------------------------------------------ depth ---

@@ -1641,6 +1641,80 @@ def test_the_level_a_run_asked_at_is_the_level_its_items_carry(
     assert "asked at a level" in metric.note
 
 
+def test_the_ladder_and_the_sourcing_rule_are_re_checked_from_the_rungs_asked(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 17 section 10's "level adaptation follows the rule 1.00" and "no
+    check generated from unverified text 1.00", re-derived here.
+
+    The product runs the ladder and the ladder decides what it asks next, so
+    scoring its output with its own code would report 1.000 whatever the rule
+    did. This walks the recorded rungs with a second implementation.
+    """
+    placed = {
+        "learner_id": "always-right",
+        "frontier": ["LC-01"],
+        "expected_frontier": ["LC-01"],
+        "confirmed_edges_not_from_the_path": 0,
+        "rated_only": [],
+        "verified_cards": ["card-1"],
+        "checks": [
+            {"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 2, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 3, "correct": False, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 2, "correct": True, "card_id": "card-1"},
+        ],
+    }
+    report = _learner_report(tmp_path / "walked", corpus, [placed])
+    assert _named(report, "level_adaptation").value == 1.0
+    assert _named(report, "checks_from_verified_cards").value == 1.0
+
+    # A rung that did not follow the last check on that concept: a pass at 1
+    # opens 2, and this one opened 4.
+    jumped = dict(
+        placed,
+        checks=[
+            {"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 4, "correct": True, "card_id": "card-1"},
+        ],
+    )
+    assert (
+        _named(_learner_report(tmp_path / "jumped", corpus, [jumped]), "level_adaptation").value
+        == 0.0
+    )
+
+    # A check drawn from a card nobody verified.
+    unverified = dict(
+        placed,
+        checks=[{"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-9"}],
+    )
+    assert (
+        _named(
+            _learner_report(tmp_path / "unverified", corpus, [unverified]),
+            "checks_from_verified_cards",
+        ).value
+        == 0.0
+    )
+
+    # A ladder needs two checks on one concept to be a ladder. One check has no
+    # step to follow, so the rate has nothing to divide by and says so.
+    single = dict(
+        placed,
+        checks=[{"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"}],
+    )
+    metric = _named(_learner_report(tmp_path / "single", corpus, [single]), "level_adaptation")
+    assert metric.value is None
+    assert metric.note.strip()
+
+    # And a placement with no lesson at all waits rather than scoring zero.
+    waiting = _named(
+        _learner_report(tmp_path / "placed-only", corpus, [dict(placed, checks=[])]),
+        "level_adaptation",
+    )
+    assert waiting.value is None
+    assert "teaches" in waiting.note
+
+
 def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:
     """A run with no data must report n/a everywhere, never a score.
 
