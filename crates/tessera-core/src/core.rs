@@ -137,7 +137,7 @@ impl Core {
             .build()
             .map_err(|e| CoreError::Runtime(e.to_string()))?;
 
-        Ok(Self {
+        let mut core = Self {
             store,
             registry,
             packs,
@@ -150,7 +150,47 @@ impl Core {
             ledger: tessera_harness::Ledger::new(),
             retrievers: crate::retrieval::RetrieverSet::default(),
             runtime,
-        })
+        };
+        // Until M14 this was left at `default()` and every production card
+        // retrieved from nothing, while the dev server, the eval and the tests
+        // each built a set of their own. A profile that has watched a folder
+        // and never been told its documents are unreachable is the failure that
+        // hides longest, because an honest "no sources found" card is exactly
+        // what a working retriever over an empty index looks like.
+        core.rebuild_retrievers()?;
+        Ok(core)
+    }
+
+    /// Rebuild what this profile can retrieve from.
+    ///
+    /// Called wherever one of the two inputs changes: the active pack decides
+    /// which retrievers are enabled, the watched folders decide whether the
+    /// local one has anywhere to read. Cheap enough to redo whole rather than
+    /// patch, and a set patched in two places would disagree with the Profile
+    /// page about what is configured.
+    pub fn rebuild_retrievers(&mut self) -> Result<(), CoreError> {
+        let set = {
+            let pack = self.packs.get(&self.pack_code)?;
+            let folders = repo::watched_folders(&self.store, &self.profile_id)?;
+            crate::retrieval::assemble(pack, &folders, self.memory_enabled())
+        };
+        self.retrievers = set;
+        Ok(())
+    }
+
+    /// Doc 15 section 6's profile switch. Absent reads as on, which is what the
+    /// column's default says and what a profile written before memory existed
+    /// means.
+    fn memory_enabled(&self) -> bool {
+        self.store
+            .conn()
+            .query_row(
+                "SELECT memory_enabled FROM profile WHERE id = ?1",
+                [&self.profile_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|v| v != 0)
+            .unwrap_or(true)
     }
 
     /// An in memory core for tests, with a keystore holding one fake key.
@@ -201,6 +241,9 @@ impl Core {
         // a startup error and not a run that quietly used the wrong rules.
         self.packs.get(code)?;
         self.pack_code = code.to_string();
+        // The pack is what says which retrievers are enabled, so the set it
+        // enables changes with it.
+        self.rebuild_retrievers()?;
         Ok(())
     }
 
@@ -1381,6 +1424,35 @@ pub fn build_router() -> Router<Core> {
             )
             .map_err(|e| RpcError::core("store", e.to_string()))?;
 
+        // Doc 05 section 8.2: adding a folder is adding its documents, so the
+        // walk happens here rather than at the first card. A folder that is
+        // watched and not indexed answers nothing, and nothing is what an
+        // empty corpus and an unread one both look like from the card.
+        //
+        // No embedder: the local model is a download the app does not ship, so
+        // this indexes the lexical half. Doc 05 section 11 puts parse errors on
+        // the Retrievers page, which is why they are returned rather than
+        // logged.
+        let exclude = core
+            .packs
+            .get(&core.pack_code)
+            .map(|pack| pack.must_exclude())
+            .unwrap_or_default();
+        let report = tessera_retrievers::index_folder(
+            core.store.conn(),
+            &core.profile_id,
+            &id,
+            p.label.trim(),
+            std::path::Path::new(p.root.trim()),
+            &exclude,
+            None,
+        )
+        .map_err(|e| RpcError::core("store", e.to_string()))?;
+
+        // The set is what the fan-out reads, and the folder just added is in it
+        // now rather than after a restart.
+        core.rebuild_retrievers().map_err(core_error)?;
+
         Ok(json!({
             "folder_id": id,
             "label": p.label.trim(),
@@ -1389,6 +1461,18 @@ pub fn build_router() -> Router<Core> {
             // rather than a string it composes: two screens composing it would
             // one day disagree about which folders send text.
             "text_leaves_machine": p.provider_embeddings,
+            "indexed": report.indexed,
+            "chunks": report.chunks,
+            "excluded": report.excluded,
+            "errors": report
+                .errors
+                .iter()
+                .map(|(path, kind, detail)| json!({
+                    "path": path,
+                    "kind": kind,
+                    "detail": detail,
+                }))
+                .collect::<Vec<_>>(),
         }))
     });
 

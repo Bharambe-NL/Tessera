@@ -156,6 +156,13 @@ export const COPY = {
   setupFolderSensitive: 'Sensitive: keep this folder\u2019s text on this machine',
   setupFolderAdd: 'Watch this folder',
   setupFolderAdded: 'Watching',
+  /**
+   * Doc 05 section 11: adding a folder reads it, so the step says what the read
+   * found. A folder that indexed nothing looks exactly like one that indexed
+   * everything until the count is on the screen.
+   */
+  setupFolderIndexed: 'Documents indexed:',
+  setupFolderUnreadable: 'Files this reader could not open:',
 
   // ------------------------------------------------ Learn mode, doc 14 --
 

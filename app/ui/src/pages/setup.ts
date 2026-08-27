@@ -22,7 +22,8 @@ export interface SetupState {
   run: FirstRun | null;
   /** Set once the key lands, so the step can show as finished. */
   keySaved: boolean;
-  folderAdded: string | null;
+  /** What the folder step added, and what reading it found. */
+  folderAdded: { label: string; indexed: number; unreadable: number } | null;
   busy: boolean;
   error: string | null;
 }
@@ -62,7 +63,12 @@ export function setupHTML(state: SetupState): string {
       `</form>`;
 
   const folderBody = state.folderAdded
-    ? `<p class="note">${COPY.setupFolderAdded} ${esc(state.folderAdded)}</p>`
+    ? `<p class="note">${COPY.setupFolderAdded} ${esc(state.folderAdded.label)}. ` +
+      `${COPY.setupFolderIndexed} ${state.folderAdded.indexed}` +
+      (state.folderAdded.unreadable > 0
+        ? `. ${COPY.setupFolderUnreadable} ${state.folderAdded.unreadable}`
+        : '') +
+      `</p>`
     : `<form id="setup-folder" class="setup-folder">` +
       `<input id="setup-folder-root" placeholder="${COPY.setupFolderPath}" ` +
       `aria-label="${COPY.setupFolderPath}" autocomplete="off" />` +

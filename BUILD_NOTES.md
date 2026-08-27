@@ -2114,6 +2114,68 @@ doc 16's "Add note" begins by building the write path its sticky needs.
 
 ---
 
+### BN-107 The retrievers the product claimed to have
+
+**Spec** 05 sections 8.2, 8.5, 10 and 11; 10 section 16; 15 section 6.
+
+**Built** 2026-08-27, M14.2.
+
+**The defect** `Core::open` set `retrievers` to `RetrieverSet::default()` and nothing ever
+replaced it. The dev server, the eval runner and every end to end test built a set of their
+own, so retrieval was measured constantly and wired nowhere: on the shipped app a person could
+add a folder in setup, watch the step tick green, ask a deep question and get an honest "no
+sources found" card forever. Two things hid it. The set's own doc comment said it was "built
+once per run from the pack's enabled retrievers and the profile's watched folders", which was
+a description of the intention rather than of the code. And a working retriever over an empty
+index produces exactly the card an unwired one does, so nothing about the output said which
+it was.
+
+A second half of the same defect: `profile.watch_folder` wrote the row and never read the
+folder. `index_folder` existed and had three callers, none of them the product.
+
+**Built** `repo::watched_folders` reads the rows; `retrieval::assemble(pack, folders,
+memory_enabled)` turns them plus the pack's enabled retrievers into the set;
+`Core::rebuild_retrievers` runs it at `Core::open`, on `use_pack`, and after
+`profile.watch_folder` ingests. The RPC now walks the folder through `index_folder` with the
+pack's `must_exclude` and returns what it found, and the setup step says the count rather than
+just the label.
+
+**What assemble refuses to claim.** `local` appears only once a folder is watched, `boards`
+only while memory is on, and `regulatory`, `web` and `structured` do not appear at all: there
+is no subscription mechanism and no web retriever yet (13e builds one). Doc 05 section 10
+separates a retriever that is not configured from one configured and empty, and the first
+belongs on the Profile page rather than at the bottom of a card, so `profile.get` reports them
+unconfigured and the fan-out skips them. The pack still enables them, which is the honest
+state: the pack wants them and the profile has not got them.
+
+**No embedder in the product.** The set is assembled with `embedder: None`, so retrieval runs
+the lexical half. The local model is a download the app does not ship, and the eval passes one
+when the machine has it, which is why the recall number the eval reports is the better of the
+two. Shipping the model, or fetching it on first run, is its own decision and is not this
+step's.
+
+**The per run allowlist landed here rather than at 12d.** `retrieval::run` takes
+`allow: Option<&[&str]>` and narrows the set through `RetrieverSet::restricted` before
+anything reads it, because the plan-less fallback in `assignments` reads the set too: two
+places deciding what a notebook question may open is how one of them ends up opening the web.
+A narrowed run drops what it was not allowed silently, since a policy choice is not a missing
+connector and should not put a caveat on the card.
+
+**Verified** Full battery green, plus the 400 question grounded sweep and the 20 board bundle
+round trip, since the pipeline and the store both changed. The sweep record is no longer
+committed: 8.6 MB of run rows per step, reproducible from the seed by one free command, and
+already uploaded as a CI artifact. `.gitignore` said as much about mock output and never
+covered `--policy ci`, which is how a dozen of them reached the history.
+
+**The test that would have caught it** `a_watched_folder_is_cited_without_the_test_building_a_retriever_set`
+in `end_to_end.rs` gives the core the two things a person has, a pack and a folder, and asserts
+a citation of class `local_document`. Every test before it handed the core a set it built
+itself, which is precisely why the wiring could be missing without a single failure. The guard
+was broken once on purpose: with the rebuild removed from the RPC the citation count drops to
+zero. The Playwright half drives the same path through the setup screen.
+
+---
+
 ---
 
 ## Measured findings

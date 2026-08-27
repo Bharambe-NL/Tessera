@@ -7,6 +7,10 @@
  * and that finishing it leaves them somewhere they can ask a question.
  */
 
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { expect, test } from '@playwright/test';
 
 import { freshCore, keylessCore, useCore } from './shell.js';
@@ -104,6 +108,29 @@ test('a folder that does not exist is refused with a reason', async ({ page }) =
 
   await expect(page.locator('.setup-error')).toContainText('does not exist', { timeout: 30_000 });
   await expect(page.locator('[data-step="3"]')).not.toHaveClass(/done/);
+});
+
+test('watching a folder reads it and says what it found', async ({ page }) => {
+  // M14.2. Adding a folder is adding its documents: before this the row was
+  // written, nothing was read, and the screen said "Watching" over an index
+  // that was empty. The count is what tells those two apart.
+  const folder = mkdtempSync(join(tmpdir(), 'tessera-watched-'));
+  writeFileSync(
+    join(folder, 'buffer-policy.md'),
+    'The capital conservation buffer for a significant institution is 2.5 %.',
+  );
+
+  await keylessCore(page);
+  await useCore(page);
+  await page.goto('/');
+
+  await page.locator('#setup-folder-root').fill(folder);
+  await page.locator('#setup-folder-label').fill('Internal documents');
+  await page.locator('#setup-folder button[type="submit"]').click();
+
+  await expect(page.locator('[data-step="3"]')).toHaveClass(/done/, { timeout: 30_000 });
+  await expect(page.locator('[data-step="3"]')).toContainText('Internal documents');
+  await expect(page.locator('[data-step="3"]')).toContainText('Documents indexed: 1');
 });
 
 test('choosing a pack switches it', async ({ page }) => {
