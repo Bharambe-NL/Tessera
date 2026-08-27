@@ -2322,3 +2322,134 @@ fn the_board_seed_reaches_the_planner() {
     let packet = packet_for(&core, &board_id, "planner");
     assert_eq!(packet["context"]["board_seed"], "CAR3 transitional rules");
 }
+
+#[test]
+fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
+    // Doc 12's walkthrough rows 10, 11 and 15, through the RPC surface rather
+    // than the library, because rows 10 and 11 are things a person does and a
+    // verb the shell cannot reach is a verb that does not exist.
+    use tessera_retrievers::{IndexedConfig, chunking::Chunk, chunking::ChunkLocation, index};
+
+    let router = build_router();
+    // A mock that cites what it was given, so the card carries a real citation
+    // over a real passage. Without one the export would carry no sources and the
+    // test would pass by having nothing to lose.
+    let citing = Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "plan" => MockResponse::Json(plan_output()),
+                "synthesize" => MockResponse::Json(json!({
+                    "answer": "The capital conservation buffer for a significant institution \
+                               is 2.5 %. [1]",
+                    "findings": [],
+                    "citations": [{ "n": 1, "span": { "start": 0, "end": 62 } }],
+                    "structured_summary": { "entities": [], "relations": [] }
+                })),
+                "visualize" => MockResponse::Json(visual_output()),
+                "verify" => verify_scripted(),
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    );
+    let mut sender = core_with(citing);
+    sender.use_pack("finance-eu-synthetic").expect("pack");
+
+    // A real retrieval, because a fast card cites nothing and this test is
+    // about a citation surviving the journey.
+    sender
+        .store
+        .conn()
+        .execute(
+            "INSERT INTO watched_folder (id, profile_id, root, label, created_at)
+             VALUES ('reg', ?1, 'corpus/regulatory', 'Central Authority for Prudential Oversight', 'now')",
+            rusqlite::params![sender.profile_id],
+        )
+        .expect("folder");
+    index::write_document(
+        sender.store.conn(),
+        "reg",
+        "reg-car3-v1.md",
+        &[Chunk::new(
+            "The capital conservation buffer for a significant institution is 2.5 %.",
+            ChunkLocation::ArticleParagraph { article: "12".into(), paragraph: 1 },
+            0,
+        )],
+        None,
+        "now",
+    )
+    .expect("index");
+    sender.retrievers = tessera_core::retrieval::RetrieverSet {
+        indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+        embedder: None,
+    };
+
+    let board_id = sender.create_board("Capital rules", "deep").expect("board");
+    call(
+        &router,
+        &mut sender,
+        "card.ask",
+        json!({
+            "board_id": board_id,
+            "question": "what is the capital conservation buffer?",
+            "depth": "deep"
+        }),
+    );
+
+    let check = call(&router, &mut sender, "board.export_preflight", json!({ "board_id": board_id }));
+    assert_eq!(check["cards"], 1);
+    assert_eq!(check["sources"], 1);
+
+    let exported = call(
+        &router,
+        &mut sender,
+        "board.export",
+        json!({ "board_id": board_id, "exported_by": "A name" }),
+    );
+    let bytes = exported["bytes"].as_str().expect("bytes").to_string();
+    assert_eq!(exported["manifest"]["format_version"], "1.0");
+    assert!(!bytes.is_empty());
+
+    // A second profile, which is the whole of "on a second machine": a core
+    // that has never seen this board and shares nothing with the first.
+    let mut receiver = core_with(repeating_mock());
+    let outcome = call(&router, &mut receiver, "board.import", json!({ "data": bytes }));
+    assert_eq!(outcome["board_id"], board_id);
+
+    // The board is on the recipient's Home, which is the first thing they see.
+    // By id rather than by title: the board was created as "Capital rules" and
+    // the first ask retitled it from the question, so a title assertion here
+    // would be testing the auto-naming rule and calling it an import.
+    let boards = call(&router, &mut receiver, "board.list", json!({}));
+    let ids: Vec<&str> = boards["boards"]
+        .as_array()
+        .expect("boards")
+        .iter()
+        .filter_map(|b| b["id"].as_str())
+        .collect();
+    assert!(ids.contains(&board_id.as_str()), "the board did not arrive: {ids:?}");
+
+    // And the card's citation resolves against a passage that travelled with
+    // it, which is doc 01 section 7's reason for carrying passages at all.
+    let read = call(&router, &mut receiver, "board.get", json!({ "board_id": board_id }));
+    let cards = read["cards"].as_array().expect("cards");
+    assert_eq!(cards.len(), 1);
+    let citations = cards[0]["citations"].as_array().expect("citations");
+    assert!(!citations.is_empty(), "the card arrived with no sources");
+    assert!(
+        citations[0]["source_title"].as_str().is_some_and(|t| !t.is_empty()),
+        "a citation arrived pointing at nothing"
+    );
+
+    // Doc 01 section 7: the import is in the recipient's history, and the
+    // sender's own history arrived as a replay rather than as theirs.
+    let history = call(&router, &mut receiver, "board.history", json!({ "board_id": board_id }));
+    let types: Vec<&str> = history["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter_map(|e| e["type"].as_str())
+        .collect();
+    assert!(types.contains(&"board.imported.v1"), "{types:?}");
+    assert!(types.contains(&"card.answered.v1"), "the sender's history did not travel");
+}
