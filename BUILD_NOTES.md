@@ -1173,6 +1173,72 @@ KB. `font-display: swap`, so a cold start shows text in the fallback rather than
 stack fell through to the system sans, so the prototype's typography was approximated rather than
 shown.
 
+### BN-079 The Exercise agent, and the gate it should have had for four milestones
+
+**Spec** 08, 12 phase 9.
+
+**Decision** The Exercise agent is built, and `exercise_traceability` has the threshold doc 08
+section 12 and doc 12 phase 9 both give it.
+
+**The defect the plan named, in full.** The metric computed from the day it was written, gated on
+`manifest["exercise_enabled"]`, and had no entry in `THRESHOLDS`. The moment the flag flipped it
+would have produced a number, looked measured, and been gated by nothing. `visual_fidelity` had the
+same shape at M7 and went unreported for as long as nothing drew a visual.
+
+The fix is structural rather than one line. `READOUTS` now names the ten metrics that describe a run
+rather than judging it, each with a reason, so the classification is **total**: every metric is
+gated, deliberately ungated, or a readout, and a guard test fails on any metric in none of the three.
+Ten metrics were in none of them. A second guard fails on a metric in two.
+
+`reader_structure_recovery_mess_f1` sat in `NO_THRESHOLD` with nothing producing it, which reads as a
+degraded scan path that is covered and reported. It is removed until the Reader writes one, and a
+third guard now fails on any exemption or readout with no metric behind it.
+
+**The scorer re-checks rather than trusts.** The agent runs doc 08 section 5's two rules and drops
+what fails, so scoring its output against its own check would report 1.00 whatever the check did.
+`gen/src/tessera_gen/harness.py` carries a second implementation that reads the persisted exercise
+and the persisted cards, and a test proves that second implementation can fail: an answer the card
+does not state, a card outside the scope, a citation ordinal the card does not have, and a distractor
+that is true on another card.
+
+**A one word distractor is a word, not a statement.** Checking every short option against every other
+card would drop "yes" and "no" from any board containing either, so the leak check skips options
+under three words. Recorded because it is a deliberate hole and a small one.
+
+**Measured.** 30 of 37 metrics on the grounded sweep, up from 28 of 36, with nothing below threshold.
+`exercise_traceability` 1.000 and `exercise_distractor_leakage` 0.000 over 36 items across 12 boards,
+with 3 further boards correctly reporting doc 08 section 10's `no_eligible_cards`. The sweep samples
+five boards per worker and says so, because "traceability 1.00" over 15 boards and over 200 are
+different claims.
+
+**What still needs a live provider.** Doc 08 section 12's fourth line, "item answerable from the
+source card by a second model with only that card as context", needs two real models. The grounded
+mock quotes cards; it does not judge whether a question is worth answering.
+
+**Reason** Doc 12 phase 9's acceptance is "exercise traceability 1.00", and until now there was
+neither an agent to measure nor a gate to measure it against.
+
+---
+
+### BN-080 Two shapes the schema guard caught before a reader did
+
+**Spec** 12 principle 1, 06 section A7, 08 section 4.
+
+**Decision** Recorded because both were caught by the boundary rather than by review, which is what
+doc 12 principle 1 built the guard for.
+
+**Findings are objects, not strings.** Doc 08 section 4's packet example writes `"findings": []` and
+does not say the element type. The packet schema guessed `string`, and the guard rejected the first
+packet carrying a card with findings: the stored shape is doc 06 section A7's `{text, citations}`. The
+schema, the agent and the scorer all read the same shape now.
+
+**Every output carries its envelope.** The agent returned `title` and `items` and no
+`schema_version`, `agent_id` or `run_id`, and the output schema rejected it on both return paths
+including the empty one. An agent that answers nothing still has to say who it was.
+
+**Reason** Two boundaries, two catches, no reader involved. Worth writing down as evidence that the
+schema first principle pays rather than as two mistakes.
+
 ---
 
 ## Measured findings
