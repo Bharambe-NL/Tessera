@@ -10,6 +10,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# Doc 17 section 2.3 computes decay from a timestamp difference, and the two
+# sides of that comparison are RFC 3339 strings the store wrote.
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 png = "0.18.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
