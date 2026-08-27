@@ -440,7 +440,8 @@ pack, where a synthetic regulator is called "Central Authority for Prudential Ov
 that is its name. A lint with a six in six false positive rate gets switched off in a week. So
 the extractor is told what surface it is reading: HTML text nodes and label attributes, Rust
 double quoted literals, the doctrine pack fields that reach the screen, and TypeScript only in a
-file named `strings.ts`. That file does not exist yet; M9 writes the copy that goes in it.
+file named `strings.ts`. M9 step 1 moved the card's copy into it, so the lint reads the strings on
+the busiest screen; the copy the rail and the four pages write joins it in step 3.
 
 U+2212 MINUS SIGN is deliberately not in the dash set. The zoom control uses it as the
 counterpart to a plus, and it is a mathematical symbol rather than punctuation.
@@ -827,6 +828,77 @@ nothing to rerun on.
 **Reason** Each is a place where the honest measurement needs a real provider. Recording them here,
 with what is already in place for each, is worth more than a half implementation that a mock would
 score as working.
+
+---
+
+### BN-068 The board answers now, and the RPC learned to say where a card hangs from
+
+**Spec** 09 section 5, 01 sections 4.1 and 4.4, 12 phase 8.
+
+**Decision** `card.ask` takes `parent_card_id`, `anchor_text` and `anchor_block_ref`, and `Core::ask_on`
+takes them as one `Anchor` rather than as three parameters. `card.verify` and `board.rename` are
+registered. One delegated click listener in `main.ts` serves every verb on every card.
+
+**What was actually broken.** `render.ts` emitted `data-act="flags"`, `data-act="remove"` and
+`data-act="follow"` from M2, and no file in `app/ui/src` ever listened for any of them. The per card
+follow-up box, the remove verb and the flag chip were markup. Underneath that the RPC could not have
+served two of them anyway: `card.ask` called `Core::ask`, which passes `parent_card_id: None`, so a
+follow-up asked from a card would have landed on the board as another root. `applyNotification`
+handled two of the bridge's eight notification kinds and dropped the other six without a word.
+
+**The anchor is a struct** because the three fields are one decision. They select the card's kind
+between them (parent and anchor is a `branch`, parent alone is a `follow`, neither is a `root`), and
+passed separately they let a caller name a span on no card. The RPC refuses that combination rather
+than storing a root card carrying a pointer into a visual it has no parent to read.
+
+**Remove is not wired, and its markup is gone rather than left inert.** Doc 09 section 5 has "Remove
+card and subtree" and section 5 also says every verb emits a user event. There is no
+`card.removed.v1` in `EVENT_VOCABULARY` and no soft delete column on `card`, so the verb needs a
+vocabulary entry and a migration. Both belong with board trash, restore and purge in M9 step 3, which
+opens the same two files. The header slot it occupied now carries Rerun, which is a verb that works.
+
+**Six notification kinds now do something, and most of them re-read rather than guess.**
+`card_answered` and `card_failed` apply live, because that is what stops a card spinning the moment
+its answer lands. `card_updated`, `flag_raised`, `flag_resolved` and `board_updated` set a flag that
+re-reads the board. Pattern 25 is why: `flag_raised` carries a rule id and a severity and not the
+reason the card shows, and `flag_resolved` carries only a card id, so filling the rest in here would
+put a string on screen that no event said.
+
+**Reason** Doc 12 phase 8's acceptance is "every verb in 09 section 5 works and emits its event". A
+verb whose markup renders and whose listener does not exist meets none of that, and nothing in the
+build reported it for four milestones, because nothing drove the UI.
+
+---
+
+### BN-069 The UI is driven headlessly now, and the first thing it caught was a fixture
+
+**Spec** 12 phase 8 acceptance and phase 11 (nightly eval in CI).
+
+**Decision** `tessera-ui-server` serves `app/ui/dist` and one `POST /rpc` over the same router the
+Tauri shell registers, so Playwright can drive the real product against a real core. Six tests in
+`app/ui/tests/board.spec.ts` cover the verbs M9 step 1 wires.
+
+**Why a server rather than a fixture.** The shell reaches the core through
+`window.__TAURI__.core.invoke`, which exists only inside the Tauri webview, so a browser driver finds
+`rpc.connected === false` and measures the offline fixture. A test against the fixture would have
+passed on every day the click listeners did not exist.
+
+**What it caught immediately.** The first screenshot showed the follow-up card carrying "This card
+did not finish", with a toast reading `schema_violation: provider mock returned no usable content`.
+`MockProvider::on` queues one response per stage and then falls through to garbage, which is correct
+for a test asserting one card and wrong for a server answering many: the second card on the board
+found an exhausted script. The fixture now uses a scripted default, which is consulted rather than
+consumed.
+
+**The test had the same hole the UI did.** `the follow-up box on a card asks a follow-up` asserted
+that a second card appeared and that its title read "Follow-up". A card that renders and fails
+satisfies both. The assertion now reads the card's terminal status and its answer, and a seventh test
+reads every card's status, every `.failed` body and every error toast on the board, so a fixture that
+runs dry fails there first. This is the rule that governs this project applied to a screen: a metric
+with nothing to measure must not report a pass, and "a card exists" was measuring nothing.
+
+**Reason** A rendered screen and a working one are different claims, and only one of them was being
+made. The server is also the piece doc 12 phase 11 needs to put the UI into a nightly CI run.
 
 ---
 
