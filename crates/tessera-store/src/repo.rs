@@ -2360,7 +2360,12 @@ pub struct PageRow {
     pub file_path: String,
     pub source_card_id: Option<String>,
     pub citations_carried: Value,
-    pub content_hash: String,
+    /// The hash of the text this row and its file last agreed on.
+    ///
+    /// Not the hash of `body`, which is derivable from `body`. Deciding which
+    /// of the two copies moved needs a third value, and this is it: an edit in
+    /// the app leaves it alone, and the mirror writes it when it reconciles.
+    pub synced_hash: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -2380,14 +2385,14 @@ fn page_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<PageRow> {
         file_path: r.get(3)?,
         source_card_id: r.get(4)?,
         citations_carried: parse_json(&r.get::<_, String>(5)?),
-        content_hash: r.get(6)?,
+        synced_hash: r.get(6)?,
         created_at: r.get(7)?,
         updated_at: r.get(8)?,
     })
 }
 
 const PAGE_COLUMNS: &str = "id, title, body, file_path, source_card_id, citations_carried,
-     content_hash, created_at, updated_at";
+     synced_hash, created_at, updated_at";
 
 /// Write a page. Doc 16 section 3.1.
 ///
@@ -2399,6 +2404,10 @@ const PAGE_COLUMNS: &str = "id, title, body, file_path, source_card_id, citation
 pub fn create_page(store: &mut Store, p: NewPage<'_>) -> Result<String> {
     let id = new_id();
     let now = now_iso8601();
+    // The file does not exist yet and the mirror writes it from this body, so
+    // the two agree on it from the start. A sync that crashes before the write
+    // finds the file missing next time and writes it, which lands in the same
+    // place.
     let hash = crate::blob::BlobStore::hash(p.body.as_bytes());
     let event_type = if p.source_card_id.is_some() {
         "page.created_from_card.v1"
@@ -2438,7 +2447,7 @@ pub fn create_page(store: &mut Store, p: NewPage<'_>) -> Result<String> {
     store.append_with(event, move |tx| {
         tx.execute(
             "INSERT INTO page (id, profile_id, title, body, file_path, source_card_id,
-                 citations_carried, doctrine_pack_id, content_hash, created_at, updated_at)
+                 citations_carried, doctrine_pack_id, synced_hash, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
             params![
                 row_id,
@@ -2460,27 +2469,68 @@ pub fn create_page(store: &mut Store, p: NewPage<'_>) -> Result<String> {
 
 /// Replace a page's body. Doc 16 section 4's `page.edited.v1`.
 ///
-/// The hash goes with the body in the same write, because the mirror compares
-/// by content hash and never by mtime: a row whose hash lagged its body would
-/// make `sync` decide the file was the newer of the two.
+/// `synced_hash` is deliberately left where it is. It records what the row and
+/// the file last agreed on, so an edit here is exactly the event that makes
+/// them disagree, and moving it would erase the evidence the mirror reads.
 pub fn edit_page(store: &mut Store, page_id: &str, body: &str) -> Result<()> {
-    let (id, text, hash, now) = (
-        page_id.to_string(),
-        body.to_string(),
-        crate::blob::BlobStore::hash(body.as_bytes()),
-        now_iso8601(),
-    );
-    let hash_for_event = hash.clone();
+    let (id, text, now) = (page_id.to_string(), body.to_string(), now_iso8601());
+    let hash = crate::blob::BlobStore::hash(body.as_bytes());
     store.append_with(
         NewEvent::new(
             "page.edited.v1",
-            json!({ "page_id": page_id, "content_hash": hash_for_event, "length": body.len() }),
+            json!({ "page_id": page_id, "body_hash": hash, "length": body.len() }),
             Provenance::user(),
         ),
         move |tx| {
             tx.execute(
-                "UPDATE page SET body = ?1, content_hash = ?2, updated_at = ?3 WHERE id = ?4",
-                params![text, hash, now, id],
+                "UPDATE page SET body = ?1, updated_at = ?2 WHERE id = ?3",
+                params![text, now, id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+/// Record that the row and its file now hold the same text.
+///
+/// Written by the mirror after it reconciles them, and by nothing else. Doc 16
+/// section 7 point 2's conflict rule is decidable only while this is true of
+/// the last agreement rather than of the newest write.
+pub fn mark_page_synced(store: &Store, page_id: &str, body: &str) -> Result<()> {
+    store.conn().execute(
+        "UPDATE page SET synced_hash = ?1 WHERE id = ?2",
+        params![crate::blob::BlobStore::hash(body.as_bytes()), page_id],
+    )?;
+    Ok(())
+}
+
+/// Take the file's text as the page's, when the mirror finds the file moved and
+/// the row did not.
+///
+/// One statement, because the body and the agreement move together here: the
+/// row now says what the file says.
+pub fn adopt_page_body(store: &mut Store, page_id: &str, body: &str) -> Result<()> {
+    let (id, text, now) = (page_id.to_string(), body.to_string(), now_iso8601());
+    let hash = crate::blob::BlobStore::hash(body.as_bytes());
+    let hash_for_row = hash.clone();
+    store.append_with(
+        NewEvent::new(
+            "page.edited.v1",
+            json!({
+                "page_id": page_id,
+                "body_hash": hash,
+                "length": body.len(),
+                // The one edit nobody made in the app. Doc 16 section 3.1: the
+                // vault is the person's even without Tessera running.
+                "edited_in": "vault",
+            }),
+            Provenance::user(),
+        ),
+        move |tx| {
+            tx.execute(
+                "UPDATE page SET body = ?1, synced_hash = ?2, updated_at = ?3 WHERE id = ?4",
+                params![text, hash_for_row, now, id],
             )?;
             Ok(())
         },
