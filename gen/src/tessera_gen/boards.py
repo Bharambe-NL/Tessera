@@ -101,6 +101,11 @@ class Board:
     #: Doc 02 section 7: one bundle collides on a Concept term with the
     #: importing profile, so doc 01 section 7's merge rule gets exercised.
     concept_collision: str | None = None
+    #: The same case one layer up, planted by the vault generator: one bundle
+    #: carries a page whose title the importing profile already uses. Doc 16
+    #: section 3.1 makes a title unique per profile, so the importer has to keep
+    #: both without overwriting either.
+    page_collision: str | None = None
     snapshot: str = "T1"
 
     def to_json(self) -> dict:
@@ -499,6 +504,7 @@ def summarise(boards: list[Board]) -> dict:
         "with_reviews": sum(1 for b in boards if b.reviews),
         "bundles": sum(1 for b in boards if b.export_as_bundle),
         "concept_collisions": sum(1 for b in boards if b.concept_collision),
+        "page_collisions": sum(1 for b in boards if b.page_collision),
         "trashed": sum(1 for b in boards if b.trashed),
         "memory_eligible_cards": sum(1 for b in boards for c in b.cards if c.memory_eligible),
     }

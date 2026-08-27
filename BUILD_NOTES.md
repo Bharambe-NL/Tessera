@@ -2802,6 +2802,65 @@ the grounded sweep and the bundle round trip.
 
 ---
 
+### BN-120 Pages travel with the board, and the chip that pointed forwards
+
+**Spec** 01 section 7, 16 sections 2.2 and 3.1.
+
+**Built** 2026-08-27, M15 12-eval.
+
+**The rule, and why it is stricter than the one for documents.** A bundle carries a page only when
+the author ticked it. The checklist offers the pages saved from this board's cards, because doc 16
+section 3.2 sets `source_card_id` on Save as page and that is the only tie a page has to a board.
+A page written in the vault by hand belongs to the person and is offered by nothing. Where a
+withheld local document still appears in the manifest as a file name that did not travel, a
+withheld page leaves no trace at all: not a row, not a title, not a line. A vault is a person's
+own writing, and a list of the notes someone declined to send is itself a disclosure.
+
+**The defect the round trip found.** Doc 16 section 4 gives a card a `page_id` for the chip in its
+header. That is the only column in a bundle that points forwards, and pages arrive after the cards
+they were saved from, so the foreign key failed and **every board carrying a saved page failed to
+import**. Save as page shipped at 12b and nothing had exported a board since. The chip is held
+back and re-applied for the pages that actually travelled; a card whose page stayed home keeps no
+chip, which is what a chip pointing at a page the recipient does not have would have to mean
+anyway. Broken once on purpose: six of the fourteen round trip tests fail with `FOREIGN KEY
+constraint failed`.
+
+**Carried evidence is filtered, not remapped.** Doc 16 section 2.2 makes the passages a page
+carries the reason it can support a claim at all. Passage ids are ULIDs and survive the trip, so
+the map is the identity; what changes is that a passage whose source the author withheld never
+arrives, and an entry naming it would offer the recipient a citation they cannot open and the
+Verifier cannot bind. Those entries are dropped and counted, so the round trip says how much
+evidence stayed behind rather than leaving a page quietly weaker than it left.
+
+**A title collision keeps both, the way a term collision does.** Doc 01 section 7 keeps both
+concepts and marks the incoming one proposed. A page has no status to mark and its title is unique
+per profile, so the incoming page takes the vault's own conflict suffix and a free file path.
+Overwriting would delete something the recipient wrote; refusing would lose something the sender
+wrote.
+
+**A link whose target stayed behind arrives unresolved.** Doc 16 section 3.1 keeps an unresolved
+link and creates the page when it is clicked. A link arriving at a page that did not travel
+becomes exactly that, carrying its title, rather than a foreign key that cannot hold or a link
+silently dropped.
+
+**The corpus reaches the boards it exports.** The vault's saved pages are chosen by walking the
+card list, which never reached the last three boards, and those are the three doc 02 line 155
+ships as bundles. One card on each exported board is now picked first, so the round trip carries
+pages on the boards the corpus actually exports. The vault stays at forty pages, three of the
+twenty four saved ones changed which card they came from, and the planted page title collision
+sits on an exported board that carries no term collision, so a failure names one merge rule rather
+than two.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --bundles`. Twenty of twenty boards
+arrive whole, 24 pages carried, no carried citation dropped, one term collision and one title
+collision handled. The grounded sweep on the rebuilt corpus has no measured metric below its
+threshold, `fact_recall_deep` unchanged at 0.923 and `backlink_completeness` at 1.000.
+
+**Verified** Full battery green, 60 Playwright tests, 81 generator guards, the grounded sweep and
+the bundle round trip.
+
+---
+
 ---
 
 ## Measured findings

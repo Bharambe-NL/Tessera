@@ -665,6 +665,40 @@ def test_the_boards_carry_what_doc_02_section_7_asks_for(corpus: Path) -> None:
     assert sum(1 for b in loaded if b["reviews"]) >= 1
     assert sum(1 for b in loaded if b["export_as_bundle"]) == boards_mod.BUNDLE_BOARDS
     assert sum(1 for b in loaded if b["concept_collision"]) == 1
+    # Doc 16 section 3.1's unique title, planted the way the term collision is:
+    # one bundle carries a page whose title the importing profile already uses.
+    # On a different board from the term collision, so a failing round trip
+    # names one merge rule rather than two.
+    collisions = [b for b in loaded if b["page_collision"]]
+    assert len(collisions) == 1
+    assert collisions[0]["export_as_bundle"]
+    assert not collisions[0]["concept_collision"]
+
+
+def test_every_exported_board_carries_a_page(corpus: Path) -> None:
+    """Doc 16 pages travel with the board they were saved from, so the boards
+    doc 02 line 155 ships as bundles are the ones that have to carry one."""
+    rows = [
+        json.loads(line)
+        for line in (corpus / "vault.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    saved_on = {r["board_id"] for r in rows if r["kind"] == "saved"}
+    exported = {
+        json.loads((d / "board.json").read_text(encoding="utf-8"))["board_id"]
+        for d in sorted((corpus / "boards").iterdir())
+        if json.loads((d / "board.json").read_text(encoding="utf-8"))["export_as_bundle"]
+    }
+    assert exported <= saved_on, f"exported boards with no page: {sorted(exported - saved_on)}"
+
+    # And the planted title is a page on the board that names it, or the
+    # recipient would be seeded with a collision that cannot happen.
+    for board_dir in sorted((corpus / "boards").iterdir()):
+        board = json.loads((board_dir / "board.json").read_text(encoding="utf-8"))
+        if not board["page_collision"]:
+            continue
+        titles = {r["title"] for r in rows if r["board_id"] == board["board_id"]}
+        assert board["page_collision"] in titles
 
 
 def test_a_sketch_records_the_structure_it_draws(corpus: Path) -> None:
