@@ -1417,6 +1417,74 @@ build cannot correct later, only annotate.
 
 ---
 
+### BN-087 The bundle, and the one default where being wrong sends someone's documents to a stranger
+
+**Spec** 01 section 7, 12 phase 10.
+
+**Decision** A board exports as a zip: a manifest, one jsonl per entity kind, and the blobs the rows
+point at. Rows travel as objects keyed by column name rather than as thirteen hand written structs,
+so a column added to the store appears in the next bundle instead of being silently dropped.
+
+**The checklist defaults to sending nothing.** Doc 01 section 7 says the exporter shows a checklist
+of local document sources "so nothing leaves by accident", and a checklist whose default is to send
+everything is not a checklist. A local document travels only when its source id is named. There is a
+test whose whole content is that assertion, because this is the one setting where the wrong default
+puts a person's own files on a stranger's machine.
+
+**The redaction lives in one function.** `redact_source` reduces a local document's locator to its
+file name and rewrites its dedupe key to match, and every export path calls it. A rule applied in two
+places is a rule that will one day be applied in one.
+
+**A citation whose source was withheld still travels.** Dropping it would quietly change the card's
+answer: markers are rendered from citations, and a card that cited four things arriving citing three
+reads as a card that claimed less. The importer resolves it as a citation with no passage, which is
+visibly missing rather than invisibly absent.
+
+**The sender's history arrives as a replay.** Doc 01 section 6.3's `source` enum has `replay` for
+exactly this. Appending the events as `live` would have the recipient's own log claim they built a
+board they were given, which is the same class of defect as BN-086 and caught by the same question.
+
+**Every rule has a guard that bites**, checked by breaking each one in turn: redaction off, checklist
+ignored, existence check dropped, source merge skipped, concept collision merged silently, history
+appended as live. Six mutations, six named failures. The first run of the whole suite passed, which
+in this build is a reason to go looking rather than a reason to stop.
+
+**Reason** Doc 12's walkthrough rows 10 and 11 are a person exporting a bundle and importing it on a
+second machine, and every test here uses two profiles for that reason: one profile proves the writer
+and the reader agree with each other, which is true whatever either of them does.
+
+---
+
+### BN-088 The corpus ids are not ULIDs, and the bundle is where that first matters
+
+**Spec** 01 line 79, 02 section 6.
+
+**Found** on the first run of doc 12 phase 10's acceptance. All twenty boards failed export, and the
+manifest schema said why: `/board_id: "B-01" does not match "^[0-9A-HJKMNP-TV-Z]{26}$"`.
+
+**The schema is right and the corpus is the outlier.** Doc 01 line 79: "Identifiers are ULIDs (time
+sortable, safe to merge across machines when bundles are imported)." The parenthesis is the whole
+point, and the bundle is the first place in the build where that sentence has teeth. Everywhere else
+an id is just a key, so `B-01` worked and nothing noticed.
+
+**Decision** The round trip seeds its own profile, translating corpus ids to ULIDs as it goes. The
+sweep keeps the readable ids, because a failing question is easier to chase when the board is called
+`B-05` than when it is called `01M113PSRHMPE9P9HQGADJ630D`. The seeding step was already a
+translation from corpus form into store form: `retriever_locator` does the same thing for paths.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --bundles`. Twenty of twenty boards
+arrive whole, three of them the ones doc 02 line 155 marks for export, and the one concept term
+collision the corpus plants is handled as doc 01 section 7 specifies. No provider is called: a bundle
+carries what the board already holds and asks no model anything, so this acceptance is free.
+
+**The check can fail.** Dropping one citation per board on the import side is reported for every board
+that had one, with the counts on both sides.
+
+**Reason** Recorded because the schema guard found a spec violation nothing else could have: the ids
+were wrong in a way that only mattered at the boundary the ULIDs exist for.
+
+---
+
 ---
 
 ## Measured findings
