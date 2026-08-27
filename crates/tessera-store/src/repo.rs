@@ -798,7 +798,8 @@ pub fn ancestor_chain(store: &Store, card_id: &str, limit: usize) -> Result<Vec<
 fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
     let conn = store.conn();
     let mut stmt = conn.prepare(
-        "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale, p.text
+        "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale, p.text,
+                c.claim_span, c.binding
          FROM citation c JOIN passage p ON p.id = c.passage_id JOIN source s ON s.id = p.source_id
          WHERE c.card_id = ?1 ORDER BY c.ordinal ASC",
     )?;
@@ -817,6 +818,14 @@ fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
                 // the scorer could only ask a different one and call the gap
                 // disagreement.
                 "passage_text": r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                // And the other half of that question. The Verifier judges a
+                // passage against the claim span it was bound to; a ledger check
+                // over every citation instead asks whether each one states the
+                // answer to the question, which most correct citations on a deep
+                // card do not. BN-110: 0.365 was that difference, not the
+                // product's citation accuracy.
+                "claim_span": parse_json(&r.get::<_, String>(7)?),
+                "binding": r.get::<_, String>(8)?,
             }))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?)

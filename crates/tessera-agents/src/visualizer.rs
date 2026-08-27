@@ -69,6 +69,14 @@ impl Agent for Visualizer {
         let mut shape = Shape::default();
         shape.dropped += enforce_limits(&mut composed, visual_type, &packet["doctrine"]);
 
+        // Before indexing rather than only after pruning. A visual with nothing
+        // in it can arrive either way, and until BN-110 only the pruned one was
+        // caught: a tree the model returned as a bare root indexed cleanly,
+        // because the root label traced, and drew a single box.
+        if !has_content(&composed, visual_type) {
+            return Ok(declined(ctx, "The summary carries too little structure to draw."));
+        }
+
         step(ctx, "indexing_blocks")?;
         let mut second_pass = false;
         let indexed = loop {
@@ -468,7 +476,14 @@ fn has_content(composed: &Value, visual_type: &str) -> bool {
     match visual_type {
         "table" => payload["rows"].as_array().is_some_and(|r| !r.is_empty()),
         "steps" => payload["steps"].as_array().is_some_and(|s| !s.is_empty()),
-        "tree" => payload["root"].is_object(),
+        // A root with no children draws one box. Doc 06 section B10 would
+        // rather have no visual than one that says nothing, and BN-110 found
+        // every visual in the first paid run was exactly this: a single block,
+        // no citations, `no_claim` true, because the children the model wrote
+        // did not trace back to the summary and were pruned away under it.
+        "tree" => payload["root"]["children"]
+            .as_array()
+            .is_some_and(|c| !c.is_empty()),
         _ => payload["groups"].as_array().is_some_and(|g| {
             g.iter()
                 .any(|x| x["items"].as_array().is_some_and(|i| !i.is_empty()))
@@ -871,6 +886,30 @@ mod tests {
         });
         prune_untraceable(&mut all_bad, "table", &["invented".to_string()]);
         assert!(!has_content(&all_bad, "table"));
+    }
+
+    #[test]
+    fn a_tree_with_no_children_is_not_a_diagram() {
+        // BN-110. Every visual in the first paid run was exactly this: one
+        // block, no citations, `no_claim` true. A root on its own draws a box
+        // with a label in it, which doc 06 section B10 would rather not draw at
+        // all, and it reached the card by two routes: a model that returned a
+        // bare root, and a model whose children were pruned as untraceable.
+        let bare = json!({ "title": "T", "payload": { "root": { "label": "Buffer" } } });
+        assert!(!has_content(&bare, "tree"));
+
+        let mut pruned = json!({
+            "title": "T",
+            "payload": { "root": { "label": "Buffer", "children": [{ "label": "invented" }] } }
+        });
+        prune_untraceable(&mut pruned, "tree", &["invented".to_string()]);
+        assert!(!has_content(&pruned, "tree"));
+
+        let real = json!({
+            "title": "T",
+            "payload": { "root": { "label": "Buffer", "children": [{ "label": "Solo level" }] } }
+        });
+        assert!(has_content(&real, "tree"));
     }
 
     #[test]

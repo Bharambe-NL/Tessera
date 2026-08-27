@@ -107,6 +107,9 @@ LOWER_IS_BETTER = {
     "flag_false_positive_rate",
     "own_card_sole_support_rate",
     "exercise_distractor_leakage",
+    # A readout today, and listed so that the day it earns a threshold the
+    # comparison runs the right way round.
+    "verifier_missed_support",
 }
 
 #: Metrics whose subject is a model's judgment, and which therefore describe
@@ -177,6 +180,11 @@ READOUTS: dict[str, str] = {
     "audience_detection": "the corpus does not phrase an audience into a question yet",
     "no_source_honesty": "doc 06 section A10 is a behaviour the end to end tests assert directly",
     "source_hierarchy_compliance": "reported until the corpus plants enough disagreements to gate on",
+    # BN-110's two. Both exist to make the gate above them readable rather than
+    # to promise anything on their own: one says how much of the run the ledger
+    # could judge at all, the other says which way the disagreements went.
+    "citations_the_ledger_can_judge": "the denominator of a gate, not a promise",
+    "verifier_missed_support": "the direction of a disagreement the agreement gate already counts",
 }
 
 
@@ -303,6 +311,25 @@ class Report:
             "per_rule_false_positives": self.per_rule_false_positives,
             "failed": [m.name for m in self.failed],
         }
+
+
+def _claim_text(citation: dict, answer: str) -> str | None:
+    """The text a citation was bound to, from the offsets the store keeps.
+
+    Doc 01 open question 1 resolved as derived: the markers are rendered from
+    `claim_span`, not stored inline, so the span is a pair of offsets into the
+    answer and this is where it becomes text again. Returns None when the record
+    carries no span, which is every run before M14.5.
+    """
+    span = citation.get("claim_span")
+    if not isinstance(span, dict):
+        return None
+    start, end = span.get("start"), span.get("end")
+    if not isinstance(start, int) or not isinstance(end, int):
+        return None
+    if start < 0 or end > len(answer) or start >= end:
+        return None
+    return answer[start:end]
 
 
 def _ratio(name: str, hits: int, total: int, note: str = "") -> Metric:
@@ -786,8 +813,10 @@ def score(results: Path, corpus: Path) -> Report:
     # cannot fake. Agreement is then how often the Verifier reached the same
     # answer, which is what doc 02 section 10.3 gates full automation on.
     ledger_supported = ledger_total = agreed = judged = 0
+    spanned = missed_support = spans_seen = cited = 0
     for run in answered:
         wanted = [facts[f] for f in (run.get("required_facts") or []) if f in facts]
+        answer = run.get("answer") or ""
         for citation in run.get("citations") or []:
             if not isinstance(citation, dict):
                 continue
@@ -797,6 +826,24 @@ def score(results: Path, corpus: Path) -> Report:
                 # either way. Counting it as a disagreement would score the
                 # record's shape rather than the Verifier.
                 continue
+
+            # Doc 02 section 10.2 measures "citations whose passage supports the
+            # claim span", and the ledger can only judge a span that asserts a
+            # value it holds. Asked of every citation instead, it scores how
+            # many of a card's citations happen to restate the answer, which on
+            # a deep card that cites the rule, its version history and its scope
+            # is most of them by design. BN-110: that difference was the whole
+            # of 0.365, and the record carried no claim spans to narrow it with
+            # until now.
+            cited += 1
+            claim = _claim_text(citation, answer)
+            if claim is None:
+                continue
+            spans_seen += 1
+            if not any(matchers.matches(fact["kind"], fact["value"], claim) for fact in wanted):
+                continue
+            spanned += 1
+
             ledger_total += 1
             # The same question the Verifier answered: does this passage state
             # the claim. The ledger knows the values a question required and the
@@ -810,13 +857,31 @@ def score(results: Path, corpus: Path) -> Report:
             if verdict in ("supported", "weak", "unsupported"):
                 judged += 1
                 agreed += int((verdict == "supported") == by_ledger)
+                # The disagreement that matters: the passage does state the
+                # value and the Verifier would not call it support. The other
+                # direction is the Verifier accepting a passage the ledger has
+                # no opinion on, which the narrowing above already removes.
+                missed_support += int(by_ledger and verdict != "supported")
+
+    # The governing rule: a metric with nothing to measure names what it waits
+    # for. There are two ways to have nothing here and they wait for different
+    # things.
+    if spans_seen == 0:
+        waiting = (
+            "the citations in this record carry no claim span, so the ledger cannot ask "
+            "the question the Verifier answered; runs from M14.5 carry them"
+        )
+    else:
+        waiting = "no citation in this run is bound to a claim that states a value the ledger holds"
 
     report.metrics.append(
         _ratio(
             "citation_accuracy_ledger",
             ledger_supported,
             ledger_total,
-            "citations whose passage states a value the question required",
+            "citations on a claim that states a required value, whose passage states it too"
+            if ledger_total
+            else waiting,
         )
         if support_check
         else Metric(
@@ -827,18 +892,47 @@ def score(results: Path, corpus: Path) -> Report:
             "the support check runs from M8; every verdict in this run is `unchecked`",
         )
     )
+    # What the narrowing removed, so the two numbers can be read together: a run
+    # where the ledger can judge four citations out of ninety-six is telling you
+    # about the questions as much as about the citations.
+    report.metrics.append(
+        _ratio(
+            "citations_the_ledger_can_judge",
+            spanned,
+            cited,
+            "citations bound to a claim that states a value the ledger holds"
+            if spans_seen
+            else waiting,
+        )
+    )
     report.metrics.append(
         _ratio(
             "verifier_agreement",
             agreed,
             judged,
-            "citations where the Verifier and the fact ledger reached the same answer",
+            "citations where the Verifier and the fact ledger reached the same answer"
+            if judged
+            else waiting,
         )
         if support_check
         else Metric(
             "verifier_agreement",
             None,
             note="the support check runs from M8; every verdict in this run is `unchecked`",
+        )
+    )
+    # Agreement alone does not say which way a disagreement went, and the two
+    # directions mean opposite things. This one is the Verifier refusing a
+    # passage that does state the value, which is the direction that loses a
+    # citation the card had every right to keep.
+    report.metrics.append(
+        _ratio(
+            "verifier_missed_support",
+            missed_support,
+            judged,
+            "citations the ledger supports that the Verifier would not call supported"
+            if judged
+            else waiting,
         )
     )
 
