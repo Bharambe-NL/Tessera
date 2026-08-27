@@ -3086,6 +3086,41 @@ every one.
 
 ---
 
+### BN-126 The relevance floor is parked, and here is what would settle it
+
+**Spec** 16 section 3.4, 05 section 8.2.
+
+**Decided** 2026-08-27, following BN-125.
+
+**The obvious fix does not exist.** BN-125 asks for a relevance floor so a question the vault cannot
+answer returns nothing. The score a retriever returns is a reciprocal rank fusion, and
+`index.rs` says what that is in as many words: "the fused score, comparable within one query and
+meaningless across two". It is computed from rank alone, so the top hit of a query about marine
+biology scores exactly what the top hit of a perfectly answered question scores. A floor on that
+number is a floor on nothing.
+
+**The two signals that would work are both out of reach here.** Cosine similarity from the vector
+half is bounded and does mean the same thing across queries, and the embedding model cannot be
+fetched in this environment: the proxy refuses `huggingface.co`, which is reported rather than
+worked around. A floor that needs the embedder would also do nothing on a machine without it, which
+is worse than no floor, because the ungrounded state would work for some installs and not others
+with nothing saying which. The other signal is a model that answers honestly from its passages, and
+the grounded mock is not one.
+
+**The mock cannot judge this at all, and the numbers say why.** Across the sixteen notebook answers,
+the eight questions the vault cannot answer came back with *more* supported citations and higher
+confidence (0.42 to 1.00) than the eight it can (0.33 to 0.42). The mock quotes its passages
+verbatim into the answer, so the Verifier finds the sentence in the passage and calls it supported,
+whatever the passage was about. Support here means the answer was copied from the page, which is
+true by construction and says nothing about whether the page answered the question.
+
+**Parked, with the evidence it waits for.** No threshold is invented. The step needs either the
+embedding model present, so a cross-query similarity exists to put a floor on, or a live run where
+support means what it says. Until then the notebook names the pages it read, so a reader can see the
+answer came from unrelated notes, and the state it reports is partly grounded rather than grounded.
+
+---
+
 ---
 
 ## Measured findings
