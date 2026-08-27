@@ -1101,21 +1101,40 @@ impl Core {
         // optionally `local:*`, web off by default". The narrowing happens here
         // rather than inside the fan-out, because what a question may open is a
         // property of the run and the plan-less fallback reads the set too.
-        let restricted;
-        let retrievers = if board_mode == NOTEBOOK {
-            // Doc 16 section 3.4's one click way out. The learner asked for the
-            // web on this one question, so the same narrowing runs with `web`
-            // added rather than the narrowing being skipped: a rerun that
-            // dropped the restriction would reach every retriever the profile
-            // has, which is not what the button says.
-            let mut allow: Vec<&str> = NOTEBOOK_RETRIEVERS.to_vec();
-            if anchor.with_web {
-                allow.push("web");
+        // Both narrowings happen here, in one place, because everything
+        // downstream reads the set: the fan-out opens it, the plan-less
+        // fallback picks from it, and the Planner packet says which retrievers
+        // are enabled. The lesson narrowed inside the fan-out until 13g, so the
+        // Planner was told it could assign `local` on a lesson board and the
+        // run then skipped it, which is BN-140's failure one layer up: a card
+        // came back thin and nothing said why.
+        let allow: Vec<&str> = match board_mode.as_str() {
+            // Doc 16 section 3.4: a notebook question runs the normal pipeline
+            // at deep "with retrievers restricted to `local:vault`, `boards`,
+            // and optionally `local:*`, web off by default".
+            //
+            // Its one click way out adds `web` to the same narrowing rather
+            // than skipping it: a rerun that dropped the restriction would
+            // reach every retriever the profile has, which is not what the
+            // button says.
+            NOTEBOOK => {
+                let mut allow: Vec<&str> = NOTEBOOK_RETRIEVERS.to_vec();
+                if anchor.with_web {
+                    allow.push("web");
+                }
+                allow
             }
+            // Doc 17 section 5: a lesson reads the research retriever plus the
+            // vault and boards.
+            pipeline::LEARN => pipeline::LESSON_RETRIEVERS.to_vec(),
+            _ => Vec::new(),
+        };
+        let restricted;
+        let retrievers = if allow.is_empty() {
+            &self.retrievers
+        } else {
             restricted = self.retrievers.restricted(&allow);
             &restricted
-        } else {
-            &self.retrievers
         };
 
         let ctx = RunContext {

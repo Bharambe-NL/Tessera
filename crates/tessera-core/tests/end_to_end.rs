@@ -1915,6 +1915,74 @@ fn a_lesson_ends_as_a_page_in_the_vault_carrying_what_the_cards_cited() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// Doc 04 section 10 and doc 17 section 5, together: the Planner plans against
+/// the retrievers the run will actually open.
+///
+/// The set narrows once, in the core, and everything downstream reads that one
+/// answer. Until 13g the lesson narrowed inside the fan-out instead, so the
+/// Planner was told it could assign `local` on a lesson board and the run then
+/// skipped it: the card came back thin and nothing said why. That is BN-140's
+/// failure one layer up, and this is the assertion that keeps the two layers
+/// agreeing.
+#[test]
+fn a_lesson_plans_against_what_a_lesson_may_open() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    // A folder and nothing else, which is a profile a lesson cannot read from.
+    with_empty_folder(&mut core);
+
+    let board_id = core.create_board("Lesson", "deep").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "capital buffers" }),
+    );
+
+    let refused = match core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    ) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("a lesson with nothing to read ran anyway"),
+    };
+    assert!(
+        refused.contains("no_retriever_enabled"),
+        "a lesson with no source ran silently: {refused}"
+    );
+    // And the message names what would help. Adding a folder would not.
+    assert!(
+        refused.contains("Add a site to search"),
+        "the message sent the learner at the one retriever a lesson never reads: {refused}"
+    );
+
+    // The packet says the same thing: on a lesson board, `local` is not on
+    // offer, whatever the profile has configured.
+    let packet = packet_for(&core, &board_id, "planner");
+    let offered: Vec<(String, bool)> = packet["retrievers"]
+        .as_array()
+        .expect("retrievers")
+        .iter()
+        .filter_map(|r| Some((r["id"].as_str()?.to_string(), r["enabled"].as_bool()?)))
+        .collect();
+    assert!(
+        offered.iter().any(|(id, on)| id == "local" && !on),
+        "a lesson was offered the learner's documents: {offered:?}"
+    );
+
+    // The same profile answers an ordinary board, because that one may read the
+    // folder. The narrowing is a property of the board, not of the profile.
+    let ordinary = core.create_board("Board", "deep").expect("board");
+    core.ask(
+        &ordinary,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("an ordinary board reads the folder");
+}
+
 /// Doc 17 sections 5 and 8's research posture, on a card asked in a lesson.
 ///
 /// Three things change and one does not. The ranking comes from the pack's
@@ -1928,7 +1996,10 @@ fn a_lesson_reads_with_the_research_posture_and_the_paths_own_sources() {
     let router = build_router();
     let mut core = core_with(tutor_mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
-    with_empty_folder(&mut core);
+    // Every retriever the pack enables, the web among them. A lesson that
+    // narrows to web, vault and boards needs the first of those to have been
+    // pointed somewhere, which is what doc 04 section 10 refuses without.
+    with_every_retriever(&mut core);
 
     // A path that names where it was written from, and the mission it offers.
     let loaded = call(

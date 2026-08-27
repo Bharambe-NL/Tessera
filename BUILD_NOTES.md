@@ -4000,6 +4000,38 @@ round trip whole.
 
 ---
 
+### BN-147 One narrowing, read by everything
+
+**Spec** Doc 04 section 10, doc 16 section 3.4, doc 17 section 5. The defect BN-144 named.
+
+**What was wrong.** A notebook question narrowed its retriever set in `Core::ask`, so everything
+downstream read the narrowed set, the Planner packet included. A lesson narrowed inside the fan out
+instead. So on a lesson board the Planner was told `local` was enabled, could assign a sub question
+to it, and the run then skipped it: the card came back thin and nothing said why. Worse, doc 04
+section 10's `no_retriever_enabled` reads the same list, so a profile whose only retriever is a
+watched folder passed the guard and then retrieved nothing at all.
+
+**The fix.** Both narrowings happen in one place, matched to the board mode, and `Posture` keeps
+only what is genuinely a property of the run: the path's `must_include` locators and the lesson's
+wider fetch budget. The Planner's guard is unchanged in rule and honest in message: on a lesson it
+says "This lesson has nothing to read. Add a site to search in Profile", because doc 17 section 5
+leaves local out and telling a learner to add a folder would send them to set up the one retriever a
+lesson never reads.
+
+**What changes for a learner.** A lesson on a profile with no site to search is refused at the top
+with a sentence that names the fix, instead of producing a card with no sources under it. An
+ordinary board on that same profile still reads the folder, because the narrowing is a property of
+the board rather than of the profile, which is the assertion the new test ends on.
+
+**Verified** Full battery green: 77 workspace end to end tests including a new one that fails when
+the narrowing moves back, clippy at `-D warnings`, fmt, style lint, 93 generator guards, 76
+Playwright tests, a 40 question grounded sweep with nothing below threshold and 29 of 55 metrics
+measured, the learner leg unchanged with all seven learning gates at 1.000, and the 20 board bundle
+round trip whole.
+
+---
+
+
 ---
 
 ## Measured findings
