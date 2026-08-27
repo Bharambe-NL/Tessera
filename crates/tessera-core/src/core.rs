@@ -1263,6 +1263,135 @@ pub fn build_router() -> Router<Core> {
         }))
     });
 
+    // Doc 11 section 6's First run: choose a pack, add a model key, optionally
+    // a folder.
+    //
+    // One read that answers "is anything set up yet", rather than the shell
+    // inferring it from `profile.get`. Inferring would put the definition of a
+    // first run in the shell, where a second shell would define it differently
+    // and one of them would show the setup screen to someone who had already
+    // finished it.
+    r.register("profile.first_run", |core: &mut Core, _| {
+        let boards: i64 = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM board WHERE profile_id = ?1",
+                rusqlite::params![core.profile_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let folders: i64 = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM watched_folder WHERE profile_id = ?1",
+                rusqlite::params![core.profile_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // A key for the alias that answers a deep card, which is what doc 12
+        // phase 11's acceptance measures. Any key would let the app start; this
+        // one is what lets it do the thing a person installed it for.
+        let needed: Vec<&str> = core.policy.aliases.values().map(|a| a.key_ref.as_str()).collect();
+        let have = needed.iter().any(|r| core.keys.has(r));
+
+        Ok(json!({
+            // Setup is finished when a key is in place. A pack is always set
+            // (the profile has a default), and a folder is optional by doc 11
+            // section 6, so neither can be what the question turns on.
+            "needs_setup": !have,
+            "has_key": have,
+            "boards": boards,
+            "folders": folders,
+            "packs": core.packs.codes().collect::<Vec<_>>(),
+            "active_pack": core.pack_code,
+            "key_refs": needed,
+        }))
+    });
+
+    // Doc 12 principle 4: packs are data. Choosing one is choosing which file
+    // the profile reads, not editing a rule.
+    r.register("profile.set_pack", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct SetPack {
+            code: String,
+        }
+        let p: SetPack = params(p)?;
+        core.use_pack(&p.code).map_err(core_error)?;
+        Ok(json!({ "active_pack": core.pack_code }))
+    });
+
+    // Doc 11 section 6's optional folder, and doc 10 section 16's requirement
+    // that the Retrievers page say per folder whether chunk text leaves the
+    // machine. `sensitive` and `embeddings` are set here rather than after,
+    // because a folder indexed once with provider embeddings has already sent
+    // its text and a later toggle cannot take it back.
+    r.register("profile.watch_folder", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Watch {
+            root: String,
+            label: String,
+            #[serde(default)]
+            sensitive: bool,
+            #[serde(default)]
+            provider_embeddings: bool,
+        }
+        let p: Watch = params(p)?;
+        if p.root.trim().is_empty() {
+            return Err(RpcError::core("no_folder", "Choose a folder to watch."));
+        }
+        if !std::path::Path::new(p.root.trim()).is_dir() {
+            return Err(RpcError::core(
+                "no_folder",
+                "That folder does not exist on this machine.",
+            ));
+        }
+        // Doc 05 section 7 and doc 10 section 16: a sensitive folder keeps its
+        // text local, so asking for provider embeddings on one is a
+        // contradiction rather than a preference to honour quietly.
+        if p.sensitive && p.provider_embeddings {
+            return Err(RpcError::core(
+                "sensitive_folder",
+                "A sensitive folder keeps its text on this machine, so it cannot use provider embeddings.",
+            ));
+        }
+
+        let id = tessera_store::new_id();
+        core.store
+            .conn()
+            .execute(
+                "INSERT INTO watched_folder (id, profile_id, root, label, sensitive, embeddings,
+                     created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    id,
+                    core.profile_id,
+                    p.root.trim(),
+                    p.label.trim(),
+                    i64::from(p.sensitive),
+                    if p.provider_embeddings {
+                        "provider"
+                    } else {
+                        "local"
+                    },
+                    tessera_store::now_iso8601()
+                ],
+            )
+            .map_err(|e| RpcError::core("store", e.to_string()))?;
+
+        Ok(json!({
+            "folder_id": id,
+            "label": p.label.trim(),
+            "sensitive": p.sensitive,
+            // Doc 10 section 16's sentence, as data the Retrievers page renders
+            // rather than a string it composes: two screens composing it would
+            // one day disagree about which folders send text.
+            "text_leaves_machine": p.provider_embeddings,
+        }))
+    });
+
     // Doc 11 section 6's Models page, which is what retires the `tessera-keys`
     // CLI. The secret goes straight to the keychain: it is never written to the
     // store, never logged, and never echoed back, so the only answer this gives

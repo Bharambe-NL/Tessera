@@ -364,8 +364,21 @@ fn handle(stream: &mut TcpStream, root: &Path, core: &mut Core, router: &tessera
     // boards on it so each test starts from a first run rather than from
     // whatever the last one left behind, which is the difference between
     // asserting "a second card appeared" and asserting "six cards exist".
-    if method == "POST" && path == "/reset" {
-        *core = Core::in_memory(mock()).expect("core comes up");
+    // `/reset?keyless=1` gives back a profile with nothing in its keychain,
+    // which is what a fresh install actually looks like and what the first run
+    // screen exists for. The default reset seeds a key, because every other
+    // test needs a core that can answer.
+    if method == "POST" && path.starts_with("/reset") {
+        *core = if path.contains("keyless") {
+            Core::in_memory_with_keys(
+                mock(),
+                Box::new(tessera_providers::MemoryKeyStore::new()),
+                "test-key",
+            )
+            .expect("core comes up")
+        } else {
+            Core::in_memory(mock()).expect("core comes up")
+        };
         core.use_pack("general").expect("pack");
         respond(
             stream,
