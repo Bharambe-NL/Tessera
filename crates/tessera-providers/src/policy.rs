@@ -30,6 +30,10 @@ pub const STAGES: &[&str] = &[
     "verify",
     "exercise",
     "tutor",
+    // Doc 17 section 7's eleventh agent. Only decomposition of a new topic is a
+    // model call; the frontier and the level are rules, so this stage runs far
+    // less often than the others in this list.
+    "learning_plan",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +87,8 @@ impl ModelPolicy {
                 ("verify".into(), stage(Some("medium"), &["frontier"])),
                 ("exercise".into(), stage(Some("medium"), &[])),
                 ("tutor".into(), stage(Some("medium"), &[])),
+                // Doc 17 section 7: "one model call with the medium alias".
+                ("learning_plan".into(), stage(Some("medium"), &[])),
             ]),
             aliases: BTreeMap::from([
                 ("small".into(), alias("claude-haiku-4-5")),
@@ -248,7 +254,7 @@ pub fn effort_for(stage: &str, depth: &str) -> Effort {
         ("synthesize", "research") => Effort::Xhigh,
         ("synthesize", _) | ("verify", _) | ("visualize", _) => Effort::High,
         ("plan", "research") => Effort::High,
-        ("plan", _) | ("exercise", _) | ("tutor", _) => Effort::Medium,
+        ("plan", _) | ("exercise", _) | ("tutor", _) | ("learning_plan", _) => Effort::Medium,
         ("read", _) => Effort::High,
         _ => Effort::Medium,
     }
