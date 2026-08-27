@@ -2373,6 +2373,57 @@ have spent the effort on the 35 and the component that was mostly right.
 
 ---
 
+### BN-111 The vault's tables, and the last board rebuild
+
+**Spec** 16 sections 3.1, 3.2 and 4; 17 section 6.
+
+**Built** 2026-08-27, M15 12a-i. Schema version 5.
+
+**Migration 0005** adds `page` and `page_link`, adds `card.page_id`, and widens `board.mode`
+with `map`.
+
+**Why `map` rides along.** 0004 rebuilt `board` for `notebook` and stopped, because doc 17 had
+not arrived and nothing would write `map`. It has arrived and is adopted (BN-106), so the mode
+lands in this rebuild rather than earning a third one. A table rebuilt twice for two enum
+values is BN-028's mistake made in instalments, and `board` is the table whose rebuild takes
+every card with it if the foreign key handling is wrong.
+
+**Pages are source of truth, not projections.** `rebuild()` folds the log into card status,
+confidence and run cost. A page is a document the person wrote, and replaying the log must
+never be able to rewrite one, so nothing about `rebuild()` changes here.
+
+**The title rule is an index, not a writer's promise.** Doc 16 section 3.1 makes the title
+unique per profile and case insensitive; `page_title` is a unique index with `COLLATE NOCASE`,
+so the title keeps the capitals the person typed and only the comparison ignores them, and a
+second writer cannot forget the rule.
+
+**A rename keeps the id.** Doc 16 section 2.2 lists resolution by title string as one of the
+assessed package's mistakes, because renames silently break the links into it. The rename
+writes title and file path and leaves the id, which is what a wikilink will resolve to at
+12a-iii.
+
+**`file_path` is the caller's to compute.** The slug rule belongs with the mirror that writes
+the file, which is 12a-ii, so this layer takes the path it is given. `content_hash` is written
+with the body in the same statement, because the mirror compares by content hash and never by
+mtime: a hash that lagged its body would make `sync` decide the file was the newer of the two.
+
+**One writer, two events.** A page saved from a card emits `page.created_from_card.v1` and one
+written by hand emits `page.created.v1`, because the two are different claims about where the
+text came from and the log is what a person reads to find out.
+
+**Which of doc 16's nine events land here.** Five: `page.created`, `page.created_from_card`,
+`page.edited`, `page.renamed`, `page.deleted`, each with its writer in this step.
+`page.link_resolved` and `page.link_unresolved` wait for the parser at 12a-iii; `notebook.asked`
+and `notebook.grounding` wait for 12d. BN-107 and BN-109 both found events that had sat in the
+vocabulary for milestones with nothing writing them, so each of these arrives with the code
+that produces it.
+
+**Verified** Full battery green, 480 Rust tests, 50 Playwright tests, the grounded sweep and
+the bundle round trip. The sweep now measures 33 of 40 metrics rather than 31, because BN-110's
+claim spans made the two citation metrics computable.
+
+---
+
 ---
 
 ## Measured findings

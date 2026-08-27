@@ -387,6 +387,94 @@ fn the_widened_checks_still_refuse_what_they_always_refused() {
 }
 
 #[test]
+fn the_vault_tables_arrive_and_the_map_mode_with_them() {
+    // 0005. Doc 16 sections 3.1 and 4 add the tables; doc 17 section 6's `map`
+    // rides along in the board rebuild rather than earning a third one, since
+    // 0004 already rebuilt that table once for `notebook`.
+    let root = temp_root();
+    let ids = write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+    let now = now_iso8601();
+
+    let page = new_id();
+    conn.execute(
+        "INSERT INTO page (id, profile_id, title, body, file_path, created_at, updated_at)
+         VALUES (?1, ?2, 'Liquidity risk', 'A page.', 'vault/liquidity-risk.md', ?3, ?3)",
+        params![page, ids.profile, now],
+    )
+    .expect("a page is a row");
+
+    conn.execute(
+        "INSERT INTO page_link (id, from_page_id, target_kind, target_id, display_text,
+             position, created_at)
+         VALUES (?1, ?2, 'concept', ?3, 'Liquidity', 0, ?4)",
+        params![new_id(), page, ids.concept, now],
+    )
+    .expect("a link is a row");
+
+    // Doc 16 section 4: the card gains the page it was saved as.
+    conn.execute(
+        "UPDATE card SET page_id = ?1 WHERE id = ?2",
+        params![page, ids.card],
+    )
+    .expect("the card names its page");
+
+    // Doc 17 section 6: the Map is a board.
+    conn.execute("UPDATE board SET mode = 'map' WHERE id = ?1", params![ids.board])
+        .expect("map is accepted as a board mode");
+
+    // And the three modes 0004 landed still are.
+    for mode in ["explore", "learn", "notebook"] {
+        conn.execute(
+            "UPDATE board SET mode = ?1 WHERE id = ?2",
+            params![mode, ids.board],
+        )
+        .unwrap_or_else(|e| panic!("{mode} was rejected after the second rebuild: {e}"));
+    }
+    assert!(
+        conn.execute(
+            "UPDATE board SET mode = 'freestyle' WHERE id = ?1",
+            params![ids.board]
+        )
+        .is_err(),
+        "the board mode check did not survive the second rebuild"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_page_title_is_unique_per_profile_whatever_the_capitals() {
+    // Doc 16 section 3.1, enforced by the index rather than by the writer, so
+    // a second writer cannot forget it.
+    let root = temp_root();
+    let ids = write_v1_profile(&root);
+    let store = Store::open(&root).expect("migrate");
+    let conn = store.conn();
+    let now = now_iso8601();
+
+    conn.execute(
+        "INSERT INTO page (id, profile_id, title, body, file_path, created_at, updated_at)
+         VALUES (?1, ?2, 'Liquidity risk', '', 'vault/a.md', ?3, ?3)",
+        params![new_id(), ids.profile, now],
+    )
+    .expect("the first page");
+
+    assert!(
+        conn.execute(
+            "INSERT INTO page (id, profile_id, title, body, file_path, created_at, updated_at)
+             VALUES (?1, ?2, 'LIQUIDITY RISK', '', 'vault/b.md', ?3, ?3)",
+            params![new_id(), ids.profile, now],
+        )
+        .is_err(),
+        "two pages took the same title in different capitals"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn a_rebuilt_table_keeps_the_rows_that_pointed_into_it() {
     // Two rebuilds in one migration, and `passage.source_id` cascades. This is
     // the failure BN-028 caught the first time and the reason it is worth
