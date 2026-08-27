@@ -332,6 +332,170 @@ def test_a_silent_edit_changes_the_hash_and_keeps_the_path(corpus: Path) -> None
         assert f["content_hash"] != before["content_hash"]
 
 
+# ------------------------------------------------ materialised snapshots --
+
+
+@pytest.fixture(scope="module")
+def t3_corpus(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The corpus as it stands at T3, which is what a re-verification reads."""
+    out = tmp_path_factory.mktemp("t3")
+    build(SEED, out, "T3")
+    return out / f"{SEED}-T3"
+
+
+def test_a_snapshot_tree_holds_exactly_the_files_its_manifest_lists(t3_corpus: Path) -> None:
+    """The manifest says which files exist at T3. The tree has to agree, or a
+    retriever pointed at it reads a corpus no snapshot describes."""
+    manifest = json.loads((t3_corpus / "snapshots" / "T3.json").read_text(encoding="utf-8"))
+    listed = {f["path"] for f in manifest["files"]}
+
+    root = t3_corpus / "corpus"
+    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    on_disk.discard("documents.jsonl")
+
+    assert on_disk == listed
+
+
+def test_a_materialised_document_hashes_to_its_manifest_entry(t3_corpus: Path) -> None:
+    """The property the whole snapshot design rests on. `build` hashes what
+    `materialise` returns, so a file and its entry cannot drift apart."""
+    documents = _documents(SEED)
+    timeline = snapshots_mod.plan(SEED, documents)
+    manifest = json.loads((t3_corpus / "snapshots" / "T3.json").read_text(encoding="utf-8"))
+    by_id = {f["doc_id"]: f for f in manifest["files"]}
+
+    at_t3 = snapshots_mod.materialise("T3", documents, timeline)
+    assert len(at_t3) == len(manifest["files"])
+
+    for doc in at_t3:
+        assert snapshots_mod.content_hash(doc) == by_id[doc.doc_id]["content_hash"], doc.doc_id
+
+    # And for markdown, where the rendered file is the body plus one newline,
+    # the bytes on disk hash to the same value.
+    checked = 0
+    for doc in at_t3:
+        if doc.format != "md" or doc.transformations:
+            continue
+        raw = (t3_corpus / "corpus" / doc.path).read_bytes()
+        import hashlib
+
+        assert hashlib.sha256(raw.rstrip(b"\n")).hexdigest() == by_id[doc.doc_id]["content_hash"]
+        checked += 1
+    assert checked, "no clean markdown document to check the bytes of"
+
+
+def test_a_revision_reaches_the_file_a_retriever_reads(t3_corpus: Path) -> None:
+    """A revision that only moved a hash in a manifest would leave the document
+    a retriever parses unchanged, and staleness would be undetectable."""
+    manifest = json.loads((t3_corpus / "snapshots" / "T3.json").read_text(encoding="utf-8"))
+    revised = [f for f in manifest["files"] if f.get("change") == "revised"]
+    assert revised
+
+    markdown = [f for f in revised if f["path"].endswith(".md")]
+    assert markdown, "no revised markdown document, so nothing to read back"
+    for f in markdown:
+        body = (t3_corpus / "corpus" / f["path"]).read_text(encoding="utf-8")
+        assert body.rstrip("\n").endswith(snapshots_mod.REVISION_NOTE)
+
+    edited = [f for f in manifest["files"] if f.get("change") == "silent_edit"]
+    assert len(edited) == 2
+    for f in edited:
+        assert snapshots_mod.SILENT_EDIT_NOTE in (t3_corpus / "corpus" / f["path"]).read_text(
+            encoding="utf-8"
+        )
+
+
+def test_t3_drops_what_the_timeline_takes_away(t3_corpus: Path) -> None:
+    """Doc 02 section 5.4 and doc 15 section 5. The sole source memo is gone by
+    T3, which is what leaves its fact carried only by a prior card."""
+    root = t3_corpus / "corpus"
+    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+    assert not [p for p in on_disk if edge_cases.SOLE_SOURCE_DOC_ID in p]
+
+    documents = _documents(SEED)
+    timeline = snapshots_mod.plan(SEED, documents)
+    by_id = {d.doc_id: d for d in documents}
+    for doc_id in timeline.deleted_at_t3 | timeline.taken_down_at_t3:
+        assert by_id[doc_id].path not in on_disk, f"{doc_id} survived T3"
+
+    # Both regulations stand at T3: v1 is superseded, not deleted, which is why
+    # a card citing it is stale rather than unresolvable.
+    assert by_id[snapshots_mod.CAR3_V1].path in on_disk
+    assert by_id[snapshots_mod.CAR3_V2].path in on_disk
+
+
+def test_a_snapshot_build_is_byte_reproducible(tmp_path: Path) -> None:
+    """Doc 02 section 9, for the snapshot trees as much as the default one."""
+    import hashlib
+
+    def digest(root: Path) -> dict[str, str]:
+        return {
+            p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob("*"))
+            if p.is_file()
+        }
+
+    build(SEED, tmp_path / "a", "T3")
+    build(SEED, tmp_path / "b", "T3")
+
+    first = digest(tmp_path / "a" / f"{SEED}-T3")
+    second = digest(tmp_path / "b" / f"{SEED}-T3")
+
+    assert set(first) == set(second)
+    differing = [k for k in first if first[k] != second[k]]
+    assert not differing, f"these files drifted between builds: {differing}"
+
+
+def test_the_default_build_carries_no_snapshot_label(corpus: Path) -> None:
+    """The snapshot trees are additions. A build without the flag writes what it
+    always wrote, which is what the determinism gate compares against."""
+    ledger = [
+        json.loads(line)
+        for line in (corpus / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    row = next(r for r in ledger if r.get("type") == "build")
+    assert "snapshot" not in row
+    assert row["corpus_name"].endswith(str(SEED))
+    assert not [r for r in ledger if r.get("type") == "stranded_question"]
+
+
+def test_a_question_the_timeline_stranded_is_recorded(t3_corpus: Path) -> None:
+    """A question whose source was deleted by T3 cannot be answered from this
+    tree. Recording it keeps a sweep from reading the gap as poor retrieval,
+    which is the misreading BN-019 exists to prevent."""
+    ledger = [
+        json.loads(line)
+        for line in (t3_corpus / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    stranded = [r for r in ledger if r.get("type") == "stranded_question"]
+    assert stranded, "T3 deletes documents, so some question lost its source"
+
+    root = t3_corpus / "corpus"
+    on_disk = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    documents = {d.doc_id: d for d in _documents(SEED)}
+    for row in stranded:
+        assert row["missing_sources"]
+        assert row["snapshot"] == "T3"
+        for doc_id in row["missing_sources"]:
+            assert documents[doc_id].path not in on_disk
+
+    row = next(r for r in ledger if r.get("type") == "build")
+    assert row["snapshot"] == "T3"
+    assert row["stranded_questions"] == len(stranded)
+
+
+def _documents(seed: int):
+    """The corpus's documents, as `cli.build` assembles them before it writes."""
+    facts = generate_facts(seed)
+    documents = corpus_mod.build_layer_one(seed, facts)
+    documents.extend(edge_cases.build_layer_two(seed, facts))
+    mess.apply(seed, documents)
+    return documents
+
+
 # ----------------------------------------------------------------- boards --
 
 
