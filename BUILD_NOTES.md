@@ -1569,6 +1569,99 @@ two of three shipping meant the sentence was not true yet.
 
 ---
 
+### BN-092 The diagnostics export shipped everything it exists to withhold
+
+**Spec** 10 section 11.
+
+**Found** by the test written beside it, on its first run.
+
+**What happened.** `payload` is declared TEXT and holds serialised json, so a row
+read comes back as one long string. The redaction walked the value it was given,
+matched no keys because a string has none, and wrote the whole payload through
+untouched: every answer, every question, every reason a flag gave, every passage
+quoted in an evidence object. The export was airtight against exactly the shape
+it never saw.
+
+**Decision** A json column is parsed before it is redacted, and a nested string
+that looks like json is descended into rather than passed through. `Step` fields
+carry a document inside a document, and a pass that stopped at the quote mark
+would ship it.
+
+**The rule here is the opposite of the bundle's.** A bundle names what it
+includes, so a column added to the store tomorrow travels by design. This names
+what survives, and everything else goes. That is the right way round for the one
+file whose recipient is a stranger debugging a crash rather than someone the
+sender chose.
+
+**Evidence goes whole rather than field by field.** Doc 01 line 310 says evidence
+is "the passage, the number, the stale date", so descending into it to keep some
+of it would be looking for reasons to keep part of a field that exists to carry
+content.
+
+**Reason** Recorded because the defect and its test were written in the same
+hour, and only one of them was right. A redaction that has never been run
+against real rows is a claim, not a guard.
+
+---
+
+### BN-093 A test that searched for a string the export could not have contained
+
+**Spec** 10 section 11.
+
+**Found** by breaking the redaction on purpose after BN-092 was fixed, to check
+the guards bit. Two of three did. The third, the end to end one over the RPC
+surface, passed with the redaction switched off entirely.
+
+**Why.** It looked for the card's answer. `card.answered.v1` carries a card id, a
+mode and three counts, and never the prose, so the answer was not in the export
+either way and the assertion was true whatever the code did.
+`card.requested.v1` does carry the question a person typed, which makes it the
+one field in that fixture where a leak would show.
+
+**Reason** The same shape as BN-090 and BN-019 in a third place: a check with
+nothing to check reports success, and success is indistinguishable from working
+until somebody breaks the thing on purpose. Mutating each rule in turn is now
+what earns a guard the right to be called one.
+
+---
+
+### BN-094 A backup is a snapshot, not a copy of a file
+
+**Spec** 10 section 15.
+
+**Decision** `VACUUM INTO` rather than a byte copy. SQLite in WAL mode keeps
+recent commits in a side file, so copying `tessera.sqlite` while anything is
+writing produces a database mid transaction: it opens, it passes a shallow look,
+and it is missing whatever had not been checkpointed. The snapshot is deleted
+whether the zip succeeded or not, because until then the profile folder holds two
+copies of everything a person owns.
+
+**Corruption is detected before the migrations run**, not after. A migration
+against damaged pages rewrites tables on top of the damage and turns a database
+that could still have been partly read into one that cannot, at which point the
+backup is the only copy of anything. `PRAGMA integrity_check` reads every page,
+which is the point: an opened handle proves the header parsed and nothing else.
+
+**Nothing is moved on start.** Doc 10 section 15 says the damaged file is kept
+aside, and `quarantine` is a separate call the shell makes after telling the
+person what it found. A start that silently renamed someone's work and carried on
+is the behaviour they would least expect and could least undo. The `-wal` and
+`-shm` files go with it, because applied to a restored database they would be a
+second corruption on top of the first.
+
+**Restore refuses a folder that already holds a profile.** The offer is made to
+someone whose database is damaged, and the worst reading of that offer is one
+that overwrites the damaged file before anyone has looked at it.
+
+**Restore is not an RPC.** It replaces the database the running core is holding
+open, so a core cannot perform one on itself. A `profile.restore` that half
+worked would land on someone whose database is already damaged.
+
+**Reason** Doc 10 section 15 names three operations and the interesting part of
+all three is what they refuse to do.
+
+---
+
 ---
 
 ## Measured findings
