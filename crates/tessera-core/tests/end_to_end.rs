@@ -724,6 +724,246 @@ fn the_planner_packet_carries_the_concepts_the_profile_knows() {
     );
 }
 
+/// A mock that answers the exercise stage by quoting the cards in its prompt.
+///
+/// The same contract as the grounded mock in the eval: it invents nothing and it
+/// judges nothing. The correct option is lifted from the card, so doc 08 section
+/// 5's traceability rule passes for a reason rather than by luck.
+fn exercise_mock() -> Arc<MockProvider> {
+    Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            if request.stage != "exercise" {
+                return match request.stage.as_str() {
+                    "route" => MockResponse::Json(router_output(true)),
+                    "synthesize" => MockResponse::Json(synth_output()),
+                    "visualize" => MockResponse::Json(visual_output()),
+                    _ => MockResponse::Garbage,
+                };
+            }
+
+            let mut prompt = String::new();
+            for message in &request.messages {
+                for block in &message.content {
+                    if let tessera_providers::ContentBlock::Text { text } = block {
+                        prompt.push('\n');
+                        prompt.push_str(text);
+                    }
+                }
+            }
+
+            let mut items = Vec::new();
+            let mut card_id: Option<String> = None;
+            for line in prompt.lines() {
+                let line = line.trim();
+                if let Some(id) = line.strip_prefix("card_id: ") {
+                    card_id = Some(id.to_string());
+                } else if let Some(answer) = line.strip_prefix("answer: ")
+                    && let Some(id) = card_id.clone()
+                {
+                    let claim = answer
+                        .split_once(". ")
+                        .map(|(f, _)| f.to_string())
+                        .unwrap_or_else(|| answer.to_string());
+                    items.push(json!({
+                        "id": format!("i{}", items.len() + 1),
+                        "kind": "recall",
+                        "prompt": "What does the card say?",
+                        "options": [
+                            { "id": "a", "text": claim },
+                            { "id": "b", "text": "This card does not say." },
+                            // Deliberately not traceable and deliberately not
+                            // true elsewhere, so the two checks are exercised
+                            // rather than assumed.
+                            { "id": "c", "text": "The card defers to a later regulation." },
+                            { "id": "d", "text": "The card gives a range." },
+                        ],
+                        "answer_id": "a",
+                        "explanation": "The card opens with it.",
+                        "source_card_id": id,
+                    }));
+                }
+            }
+            MockResponse::Json(json!({ "items": items }))
+        }))),
+    )
+}
+
+#[test]
+fn an_exercise_traces_every_item_to_the_card_it_came_from() {
+    // Doc 08. The agent reads cards that exist, never retrieves, and drops any
+    // item that cannot be traced rather than shipping it.
+    let router = build_router();
+    let mut core = core_with(exercise_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let made = call(
+        &router,
+        &mut core,
+        "exercise.create",
+        json!({ "board_id": board_id }),
+    );
+    assert_eq!(made["items"].as_u64(), Some(1));
+    let exercise_id = made["exercise_id"].as_str().expect("an exercise").to_string();
+
+    let listed = call(&router, &mut core, "exercise.list", json!({ "board_id": board_id }));
+    let items = listed["exercises"][0]["items"].as_array().expect("items").clone();
+    assert_eq!(items.len(), 1);
+
+    // Doc 08 section 5: the correct option's text is stated in the card it
+    // names, and that card is the one the board holds.
+    let item = &items[0];
+    let card_id = item["source_card_id"].as_str().expect("source card");
+    let answer_id = item["answer_id"].as_str().expect("answer id");
+    let correct = item["options"]
+        .as_array()
+        .expect("options")
+        .iter()
+        .find(|o| o["id"].as_str() == Some(answer_id))
+        .and_then(|o| o["text"].as_str())
+        .expect("the correct option exists");
+
+    let card_answer: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT answer FROM card WHERE id = ?1",
+            rusqlite::params![card_id],
+            |r| r.get(0),
+        )
+        .expect("the card the item names is on this board");
+    assert!(
+        card_answer.contains(correct),
+        "the item's answer is not in its card: {correct:?}"
+    );
+
+    // Doc 08 section 7's event, with the counts a pack maintainer reads.
+    let generated = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .find(|e| e.event_type == "exercise.generated.v1")
+        .expect("exercise.generated.v1");
+    assert_eq!(generated.payload["item_count"], 1);
+    assert_eq!(generated.payload["kinds"][0], "recall");
+
+    // An attempt is graded in the store from the exercise's own items, so the
+    // score is a fact about the exercise rather than a number the shell sent.
+    let attempt = call(
+        &router,
+        &mut core,
+        "exercise.attempt",
+        json!({ "exercise_id": exercise_id, "answers": { "i1": "a" } }),
+    );
+    assert_eq!(attempt["correct"], 1);
+    assert_eq!(attempt["total"], 1);
+
+    let wrong = call(
+        &router,
+        &mut core,
+        "exercise.attempt",
+        json!({ "exercise_id": exercise_id, "answers": { "i1": "b" } }),
+    );
+    assert_eq!(wrong["correct"], 0, "a wrong answer is not scored as right");
+
+    // Doc 08 section 11: a wrong item is reported, and the report is an event
+    // for pack maintenance rather than a change to the exercise.
+    call(
+        &router,
+        &mut core,
+        "exercise.report_item",
+        json!({ "exercise_id": exercise_id, "item_id": "i1", "reason": "ambiguous" }),
+    );
+    let reported = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.event_type == "exercise.item_reported.v1")
+        .count();
+    assert_eq!(reported, 1);
+}
+
+#[test]
+fn an_item_that_cannot_be_traced_is_dropped_rather_than_shipped() {
+    // Doc 08 section 9: always admitted, with a caveat naming what was dropped.
+    // An item whose answer is nowhere in its card is a question with no right
+    // answer, and shipping it is worse than shipping fewer items.
+    let liar = Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "synthesize" => MockResponse::Json(synth_output()),
+                "visualize" => MockResponse::Json(visual_output()),
+                "exercise" => {
+                    let mut prompt = String::new();
+                    for message in &request.messages {
+                        for block in &message.content {
+                            if let tessera_providers::ContentBlock::Text { text } = block {
+                                prompt.push_str(text);
+                            }
+                        }
+                    }
+                    let card_id = prompt
+                        .lines()
+                        .find_map(|l| l.trim().strip_prefix("card_id: "))
+                        .unwrap_or("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+                        .to_string();
+                    MockResponse::Json(json!({
+                        "items": [{
+                            "id": "i1",
+                            "kind": "recall",
+                            "prompt": "What does the card say?",
+                            "options": [
+                                { "id": "a", "text": "a claim this card never makes anywhere" },
+                                { "id": "b", "text": "another one it does not make" }
+                            ],
+                            "answer_id": "a",
+                            "explanation": "invented",
+                            "source_card_id": card_id,
+                        }]
+                    }))
+                }
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    );
+
+    let router = build_router();
+    let mut core = core_with(liar);
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let made = call(
+        &router,
+        &mut core,
+        "exercise.create",
+        json!({ "board_id": board_id }),
+    );
+    assert_eq!(made["items"].as_u64(), Some(0), "the untraceable item shipped");
+    assert_eq!(made["dropped"].as_u64(), Some(1));
+}
+
+#[test]
+fn a_board_with_nothing_checked_says_so_rather_than_failing() {
+    // Doc 08 section 10's `no_eligible_cards`: an empty exercise with a reason.
+    // A board whose only card is still running has nothing to test.
+    let router = build_router();
+    let mut core = core_with(exercise_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let made = call(
+        &router,
+        &mut core,
+        "exercise.create",
+        json!({ "board_id": board_id }),
+    );
+    assert_eq!(made["items"].as_u64(), Some(0));
+    assert!(made["exercise_id"].is_null(), "an empty board wrote an exercise");
+    assert!(made["run_id"].as_str().is_some(), "the run is still in the log");
+}
+
 #[test]
 fn the_library_lists_what_the_profile_has_retrieved() {
     // Doc 09 section 9. A fresh profile has neither, and both say so with an

@@ -90,10 +90,57 @@ fn mock() -> Arc<MockProvider> {
                 // the card is held back. Fail closed is right; a fixture that
                 // wants an admitted card has to answer both.
                 "verify" => verify_reply(request),
+                // The same contract as the rest of this fixture: it quotes the
+                // cards in its prompt and invents nothing, so doc 08 section 5's
+                // traceability rule passes for a reason rather than by luck.
+                "exercise" => exercise_reply(request),
                 _ => MockResponse::Garbage,
             }
         }))),
     )
+}
+
+fn exercise_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
+    let mut prompt = String::new();
+    for message in &request.messages {
+        for block in &message.content {
+            if let tessera_providers::ContentBlock::Text { text } = block {
+                prompt.push('\n');
+                prompt.push_str(text);
+            }
+        }
+    }
+
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    let mut card_id: Option<String> = None;
+    for line in prompt.lines() {
+        let line = line.trim();
+        if let Some(id) = line.strip_prefix("card_id: ") {
+            card_id = Some(id.to_string());
+        } else if let Some(answer) = line.strip_prefix("answer: ")
+            && let Some(id) = card_id.clone()
+        {
+            let claim = answer
+                .split_once(". ")
+                .map(|(f, _)| f.to_string())
+                .unwrap_or_else(|| answer.to_string());
+            items.push(json!({
+                "id": format!("i{}", items.len() + 1),
+                "kind": "recall",
+                "prompt": "What does this card say a world model is?",
+                "options": [
+                    { "id": "a", "text": claim },
+                    { "id": "b", "text": "This card does not say." },
+                    { "id": "c", "text": "The card gives a range rather than a definition." },
+                    { "id": "d", "text": "The card defers to a later source." },
+                ],
+                "answer_id": "a",
+                "explanation": "The card states it in its opening sentence.",
+                "source_card_id": id,
+            }));
+        }
+    }
+    MockResponse::Json(json!({ "items": items }))
 }
 
 fn verify_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {

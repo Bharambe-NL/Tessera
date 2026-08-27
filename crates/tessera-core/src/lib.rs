@@ -17,5 +17,5 @@ pub mod rpc;
 
 pub use bridge::{Notification, ToastLevel, translate, translate_all};
 pub use core::{Anchor, Core, CoreError, build_router};
-pub use pipeline::{CardOutcome, RunContext, run_card};
+pub use pipeline::{CardOutcome, ExerciseOutcome, RunContext, run_card};
 pub use rpc::{Request, Response, Router, RpcError, codes, params};

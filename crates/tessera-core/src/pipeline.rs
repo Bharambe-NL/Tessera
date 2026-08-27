@@ -262,6 +262,149 @@ pub async fn run_verify_only(
     })
 }
 
+/// Generate an exercise from the cards a board already holds. Doc 08.
+///
+/// A run of its own, kind `exercise`, because it is not a card: nothing is
+/// retrieved, nothing is verified, and no claim is added to the board. Doc 08
+/// section 1 is explicit that this reads what exists and never asks for a new
+/// fact, and giving it its own run kind is what makes that visible in the log.
+pub async fn run_exercise(
+    store: &mut Store,
+    ctx: &RunContext<'_>,
+    board_id: &str,
+    audience_id: Option<&str>,
+) -> Result<ExerciseOutcome, Failure> {
+    let policy_snapshot = serde_json::to_value(&ctx.policy).unwrap_or(Value::Null);
+
+    // Doc 08 section 8 point 1: cap by budget. Eight items over at most eight
+    // cards, because the packet's own budget is eight.
+    let cards = repo::cards_for_exercise(store, board_id, 8)
+        .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?;
+    let scope: Vec<String> = cards
+        .iter()
+        .filter_map(|c| c["card_id"].as_str().map(str::to_string))
+        .collect();
+
+    let run_id = repo::start_run(
+        store,
+        repo::NewRun {
+            board_id,
+            card_id: None,
+            kind: "exercise",
+            depth: None,
+            policy_snapshot: &policy_snapshot,
+            pack_version: &ctx.pack.version,
+        },
+    )?;
+
+    // Doc 08 section 10's `no_eligible_cards`, decided before the packet rather
+    // than inside the agent, because the packet schema requires at least one
+    // card and a schema violation is the wrong way to report an empty board.
+    if cards.is_empty() {
+        repo::end_run(store, &run_id, "done")?;
+        return Ok(ExerciseOutcome {
+            exercise_id: None,
+            run_id,
+            items: 0,
+            dropped: 0,
+        });
+    }
+
+    let template = ctx.pack.exercise_templates.first();
+    let template_id = template.map(|t| t.id.as_str()).unwrap_or("default");
+    let packet = json!({
+        "schema_version": "1.0",
+        "run_id": run_id,
+        "board_id": board_id,
+        "scope": { "card_ids": scope },
+        "cards": cards,
+        "concepts": repo::concepts_for_packet(store, &ctx.profile_id, 20).unwrap_or_default(),
+        "template": {
+            "id": template_id,
+            "item_kinds": template
+                .map(|t| t.item_kinds.clone())
+                .unwrap_or_else(|| vec!["recall".into(), "apply".into()]),
+            "items_per_card_max": template.and_then(|t| t.items_per_card_max).unwrap_or(2),
+            "options": template.and_then(|t| t.options).unwrap_or(4),
+        },
+        "audience_id": audience_id,
+        "effort_budget": { "max_tokens": 2500, "max_items": 8 }
+    });
+
+    let drafted = run_agent(
+        &tessera_agents::Exercise,
+        store,
+        RunAgent {
+            registry: ctx.registry,
+            provider: ctx.provider,
+            run_id: run_id.clone(),
+            card_id: None,
+            board_id: Some(board_id.to_string()),
+            sequence: 1,
+            source: ctx.source,
+            policy: ctx.policy.clone(),
+        },
+        packet,
+    )
+    .await;
+
+    let output = match drafted {
+        Ok(o) => o.output,
+        Err(f) => {
+            repo::end_run(store, &run_id, "failed")?;
+            return Err(f);
+        }
+    };
+
+    let items = output["items"].clone();
+    let count = items.as_array().map(Vec::len).unwrap_or(0);
+    // Doc 08 section 9: the ratio of items that passed both checks. A caveat
+    // means some were dropped, and the count of dropped ones is what the caveat
+    // states, so the outcome carries it rather than the prose.
+    let dropped = output["caveats"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|c| c.split_whitespace().next())
+        .filter_map(|n| n.parse::<usize>().ok())
+        .sum();
+
+    let exercise_id = repo::write_exercise(
+        store,
+        repo::NewExercise {
+            board_id,
+            run_id: &run_id,
+            template_id,
+            audience_id,
+            scope: &scope,
+            items: &items,
+            produced_by: &json!({ "agent_id": "exercise", "run_id": run_id }),
+        },
+    )
+    .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?;
+
+    repo::end_run(store, &run_id, "done")?;
+    repo::touch_board(store, board_id)?;
+
+    Ok(ExerciseOutcome {
+        exercise_id: Some(exercise_id),
+        run_id,
+        items: count,
+        dropped,
+    })
+}
+
+/// What one exercise run produced. `exercise_id` is absent when the board had
+/// no card worth testing, which is an outcome rather than a failure.
+#[derive(Debug, Clone)]
+pub struct ExerciseOutcome {
+    pub exercise_id: Option<String>,
+    pub run_id: String,
+    pub items: usize,
+    pub dropped: usize,
+}
+
 /// Run one card from request to answer.
 ///
 /// Every stage writes its Step and its events as it completes, so a card that

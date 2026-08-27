@@ -248,6 +248,32 @@ impl Core {
         self.ask_on(board_id, question, depth_override, Anchor::default())
     }
 
+    /// Generate an exercise from the cards this board already holds. Doc 08.
+    pub fn make_exercise(
+        &mut self,
+        board_id: &str,
+        audience_id: Option<&str>,
+    ) -> Result<pipeline::ExerciseOutcome, CoreError> {
+        let policy = self.resolved()?;
+        let pack = self.packs.get(&self.pack_code)?.clone();
+        let ctx = RunContext {
+            registry: &self.registry,
+            provider: self.provider.as_ref(),
+            pack: &pack,
+            policy,
+            profile_id: self.profile_id.clone(),
+            source: self.source,
+            ledger: &self.ledger,
+            retrievers: &self.retrievers,
+        };
+
+        self.runtime
+            .handle()
+            .clone()
+            .block_on(pipeline::run_exercise(&mut self.store, &ctx, board_id, audience_id))
+            .map_err(|f| CoreError::Runtime(f.to_string()))
+    }
+
     /// Re-verify a card already on a board, against the corpus as it stands now.
     ///
     /// Doc 07 section B3 batches these when a source goes stale. Nothing is
@@ -593,6 +619,75 @@ pub fn build_router() -> Router<Core> {
         let sources = repo::list_sources(&core.store, &core.profile_id, p.limit.clamp(1, 1000))
             .map_err(store_error)?;
         Ok(json!({ "sources": sources }))
+    });
+
+    // Doc 08 section 3: "on demand from a board". The toolbar's Check
+    // understanding, which is the only trigger until Learn mode adds its own.
+    r.register("exercise.create", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Make {
+            board_id: String,
+            #[serde(default)]
+            audience_id: Option<String>,
+        }
+        let p: Make = params(p)?;
+        let outcome = core
+            .make_exercise(&p.board_id, p.audience_id.as_deref())
+            .map_err(core_error)?;
+        Ok(json!({
+            "exercise_id": outcome.exercise_id,
+            "run_id": outcome.run_id,
+            "items": outcome.items,
+            "dropped": outcome.dropped,
+        }))
+    });
+
+    r.register("exercise.list", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        let exercises = repo::list_exercises(&core.store, &p.board_id).map_err(store_error)?;
+        Ok(json!({ "exercises": exercises }))
+    });
+
+    // Doc 08 section 7: the attempt comes from the UI, because grading a
+    // multiple choice answer needs no agent. The score is computed in the store
+    // from the exercise's own items rather than trusted from the caller, so it
+    // is a fact about the exercise and not a number the shell sent.
+    r.register("exercise.attempt", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Attempt {
+            exercise_id: String,
+            /// Item id to chosen option id.
+            answers: Value,
+        }
+        let p: Attempt = params(p)?;
+        let (attempt_id, correct, total) =
+            repo::record_attempt(&mut core.store, &p.exercise_id, &p.answers).map_err(store_error)?;
+        Ok(json!({
+            "attempt_id": attempt_id,
+            "correct": correct,
+            "total": total,
+        }))
+    });
+
+    // Doc 08 section 11: a wrong item is reported from the card, and the report
+    // feeds pack maintenance rather than changing the exercise.
+    r.register("exercise.report_item", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Report {
+            exercise_id: String,
+            item_id: String,
+            #[serde(default)]
+            reason: Option<String>,
+        }
+        let p: Report = params(p)?;
+        repo::report_exercise_item(
+            &mut core.store,
+            &p.exercise_id,
+            &p.item_id,
+            p.reason.as_deref(),
+        )
+        .map_err(store_error)?;
+        Ok(json!({ "reported": p.item_id }))
     });
 
     // Doc 09 section 9's Concepts row actions. Doc 01 section 4.10: agents
