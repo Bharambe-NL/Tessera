@@ -7,6 +7,7 @@
  * fixture and the RPC path both land here and nowhere else.
  */
 
+import './styles/fonts.css';
 import './styles/tokens.css';
 import './styles/board.css';
 import './styles/chrome.css';
@@ -15,6 +16,7 @@ import './styles/pages.css';
 import { blockAnchor, selectionAnchor } from './canvas/anchor.js';
 import { trailFor, trailHTML } from './canvas/built.js';
 import { boundsOf, layout } from './canvas/layout.js';
+import { readingHTML } from './canvas/reading.js';
 import { drawEdges, measureHeights, renderCards, toggleFlags } from './canvas/render.js';
 import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
@@ -39,6 +41,8 @@ const modeLabel = el<HTMLElement>('mode-label');
 const modeChip = el<HTMLElement>('mode');
 const emptyState = el<HTMLElement>('empty');
 const toasts = el<HTMLElement>('toasts');
+const readingEl = el<HTMLElement>('reading');
+const readingToggle = el<HTMLButtonElement>('reading-toggle');
 
 const rpc = new Rpc();
 const viewport = new ViewportHost({ main, world, onSettled: () => void 0 });
@@ -116,7 +120,15 @@ let lastEventIndex = 0;
  * the corrected positions. Two passes because a card's height depends on its
  * content, and its neighbours' positions depend on its height.
  */
+/** Doc 11 section 10's list view alternative, when it is the one being read. */
+let reading = false;
+
+function renderReading(b: Board): void {
+  readingEl.innerHTML = readingHTML(b);
+}
+
 function renderBoard(b: Board): void {
+  if (reading) renderReading(b);
   layout(b.cards, heightOf);
   renderCards(b.cards, { cards: cardsEl, edges: edgesEl });
 
@@ -479,6 +491,28 @@ function wireTitle(): void {
 }
 
 /** Doc 11 section 5: the rail is 56px collapsed and 240px open. */
+/**
+ * Swap the canvas for the same cards as a document.
+ *
+ * The canvas is hidden from assistive technology while the document is open and
+ * the document is hidden while the canvas is, rather than both being present:
+ * two copies of every card in the accessibility tree is worse than either one.
+ */
+function wireReadingToggle(): void {
+  readingToggle.addEventListener('click', () => {
+    reading = !reading;
+    readingToggle.setAttribute('aria-pressed', String(reading));
+    readingToggle.textContent = reading ? COPY.readingClose : COPY.readingOpen;
+    readingEl.hidden = !reading;
+    world.setAttribute('aria-hidden', String(reading));
+    emptyState.hidden = reading || (board?.cards.length ?? 0) > 0;
+    if (reading && board) {
+      renderReading(board);
+      readingEl.focus();
+    }
+  });
+}
+
 function wireRailToggle(): void {
   const rail = el<HTMLElement>('rail');
   const toggle = el<HTMLButtonElement>('rail-toggle');
@@ -616,6 +650,7 @@ async function boot(): Promise<void> {
   }
 
   wireRailToggle();
+  wireReadingToggle();
   wireComposer();
   wireCardActions();
   wireBranching();

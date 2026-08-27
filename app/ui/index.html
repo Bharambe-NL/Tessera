@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- The webview loads no remote resource. Fonts are bundled from node_modules
-         at M9; until then the stack falls back to the system sans. -->
+    <!-- The webview loads no remote resource. IBM Plex is bundled from
+         node_modules and served from the app's own origin, so `default-src
+         'self'` covers the fonts and needs no `font-src` of its own. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
@@ -52,6 +53,10 @@
 
       <div id="titlebar" data-no-pan>
         <input id="title" aria-label="Board title" value="Untitled board" />
+        <!-- Doc 11 section 10: the canvas list view alternative, reachable from
+             the title. A canvas is a spatial arrangement and a screen reader
+             has no way to convey one, so the same cards render as a document. -->
+        <button id="reading-toggle" aria-pressed="false">Read as a document</button>
       </div>
 
       <div id="toolbar" data-no-pan>
@@ -94,6 +99,8 @@
           </div>
         </form>
       </div>
+
+      <article id="reading" aria-label="This board as a document" tabindex="-1" data-no-pan hidden></article>
 
       <div id="toasts" role="status" aria-live="polite"></div>
       <pre id="gate" hidden></pre>
