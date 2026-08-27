@@ -575,3 +575,173 @@ body.rail-open .rail-item .label {
 #exercise button:disabled {
   opacity: 0.4;
 }
+
+/* ---- the Tutor panel, doc 14 section 3.9 ---- */
+
+/* Right dock, 320px. The board keeps its own width and shifts, the way the rail
+   does on the other side: a panel that covered the board would hide the cards
+   the tutor is talking about. */
+body.learning {
+  --tutor-w: 320px;
+}
+
+#tutor {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: var(--z-sticky);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+
+#tutor[hidden] {
+  display: none;
+}
+
+body.learning #main {
+  padding-right: var(--tutor-w);
+}
+
+#tutor header {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s5) var(--s5) var(--s4);
+  border-bottom: 1px solid var(--line);
+}
+
+#tutor-stage {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+#tutor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s5);
+}
+
+.tutor-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s4);
+}
+
+.say {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.say.learner {
+  justify-self: end;
+  max-width: 85%;
+  padding: var(--s2) var(--s4);
+  border-radius: var(--r-button);
+  background: var(--user);
+  color: var(--surface);
+}
+
+.say.caveat {
+  font-size: 12px;
+  color: var(--ink-2);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--line);
+}
+
+.ask p,
+.plan .head {
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+}
+
+.tutor-log .opts {
+  display: grid;
+  gap: var(--s2);
+}
+
+.tutor-log .opts button {
+  text-align: left;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  font-size: 12.5px;
+}
+
+/* Doc 14 section 3.9: olive for right, amber for wrong, and only after the
+   learner has answered. */
+.tutor-log .opt.right {
+  background: var(--olive);
+  color: var(--olive-ink);
+  border-color: transparent;
+}
+
+.tutor-log .opt.spent {
+  opacity: 0.55;
+}
+
+.feedback {
+  margin: var(--s3) 0;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-node);
+  font-size: 12.5px;
+}
+
+.feedback.right {
+  background: var(--olive);
+  color: var(--olive-ink);
+}
+
+.feedback.wrong {
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+.plan ol {
+  margin: 0 0 var(--s4);
+  padding-left: var(--s5);
+  display: grid;
+  gap: var(--s2);
+}
+
+.plan li {
+  font-size: 12.5px;
+}
+
+.plan li span {
+  display: block;
+  color: var(--ink-2);
+}
+
+.tutor-say {
+  padding: var(--s4) var(--s5) var(--s5);
+  border-top: 1px solid var(--line);
+}
+
+.tutor-say input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  padding: var(--s2) var(--s3);
+}
+
+#tutor :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+#learn[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--surface);
+}

@@ -24,8 +24,16 @@ import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
 import { exerciseHTML, type ExerciseState } from './pages/exercise.js';
 import { Router } from './pages/router.js';
+import { stageLabel, tutorHTML, unanswered, type TutorState } from './pages/tutor.js';
 import { AnchorPopover } from './popover.js';
-import { Rpc, RpcError, type AskAnchor, type ExerciseRow, type Notification } from './rpc.js';
+import {
+  Rpc,
+  RpcError,
+  type AskAnchor,
+  type ExerciseRow,
+  type LearnSession,
+  type Notification,
+} from './rpc.js';
 import { COPY, PRODUCT_NAME } from './strings.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -46,6 +54,10 @@ const readingEl = el<HTMLElement>('reading');
 const readingToggle = el<HTMLButtonElement>('reading-toggle');
 const exerciseEl = el<HTMLElement>('exercise');
 const exerciseBody = el<HTMLElement>('ex-body');
+const tutorEl = el<HTMLElement>('tutor');
+const tutorBody = el<HTMLElement>('tutor-body');
+const tutorStage = el<HTMLElement>('tutor-stage');
+const learnToggle = el<HTMLButtonElement>('learn');
 
 const rpc = new Rpc();
 const viewport = new ViewportHost({ main, world, onSettled: () => void 0 });
@@ -338,6 +350,12 @@ function submitFromComposer(): void {
   const question = ask.value;
   ask.value = '';
   ask.style.height = 'auto';
+  // Doc 14 section 4: with Learn on, the composer names a topic rather than
+  // asking a question, and the tutor interviews before anything is asked.
+  if (learnToggle.getAttribute('aria-pressed') === 'true' && !learning) {
+    void startLearning(question);
+    return;
+  }
   void submit(question);
 }
 
@@ -580,6 +598,210 @@ async function openExercise(): Promise<void> {
  * today is paste a screenshot of a table and want it read, so that is what this
  * does in one step.
  */
+/**
+ * Learn mode. Doc 14.
+ *
+ * The session lives in the core; this holds only what is on screen right now.
+ * Doc 14 section 3.9 says closing the panel ends the session and the board keeps
+ * everything, which is what makes that split the right one: nothing here is lost
+ * that the board would miss.
+ */
+let learning = false;
+let session: LearnSession | null = null;
+let tutorState: TutorState = { turn: null, feedback: null, busy: false };
+
+function renderTutor(): void {
+  tutorStage.textContent = stageLabel(session);
+  tutorBody.innerHTML = tutorHTML(session, tutorState);
+}
+
+async function refreshSession(): Promise<void> {
+  if (!boardId) return;
+  try {
+    session = (await rpc.learnSession(boardId)).session;
+  } catch {
+    // The panel keeps what it had; the next turn re-reads.
+  }
+  renderTutor();
+}
+
+/** Run one tutor call with the panel showing that it is working. */
+async function tutorTurn(work: () => Promise<{ turn: import('./rpc.js').TutorTurn }>): Promise<void> {
+  tutorState.busy = true;
+  renderTutor();
+  try {
+    const { turn } = await work();
+    tutorState = { turn, feedback: null, busy: false };
+  } catch (e) {
+    // Doc 14 section 3.8: the panel says so and the session pauses. The board
+    // remains usable, which is why nothing here touches it.
+    toast(e instanceof RpcError ? e.message : COPY.learnFailed, 'error');
+    tutorState.busy = false;
+  }
+  await refreshSession();
+}
+
+async function startLearning(topic: string): Promise<void> {
+  if (!boardId || !topic.trim()) return;
+  const id = boardId;
+  learning = true;
+  tutorEl.hidden = false;
+  document.body.classList.add('learning');
+  tutorState = { turn: null, feedback: null, busy: true };
+  renderTutor();
+
+  try {
+    const { turn } = await rpc.startLearn(id, topic.trim());
+    tutorState = { turn, feedback: null, busy: false };
+  } catch (e) {
+    toast(e instanceof RpcError ? e.message : COPY.learnFailed, 'error');
+    tutorState.busy = false;
+  }
+  await refreshSession();
+}
+
+async function endLearning(): Promise<void> {
+  if (!boardId || !session) {
+    closeTutorPanel();
+    return;
+  }
+  try {
+    const summary = await rpc.endLearn(boardId);
+    toast(`${COPY.learnEnded} ${summary.correct} ${COPY.builtOf} ${summary.checks}.`);
+  } catch {
+    // Ending is a courtesy to the record, not a gate on closing the panel.
+  }
+  closeTutorPanel();
+}
+
+function closeTutorPanel(): void {
+  learning = false;
+  session = null;
+  tutorState = { turn: null, feedback: null, busy: false };
+  tutorEl.hidden = true;
+  document.body.classList.remove('learning');
+  learnToggle.setAttribute('aria-pressed', 'false');
+  ask.placeholder = COPY.askSomething;
+}
+
+/**
+ * Record one intake answer, and ask for the plan once the last one is in.
+ *
+ * The plan is its own call because doc 14 section 3.4 lets the learner skip
+ * intake, so building cannot be a side effect of finishing it. What that leaves
+ * is a screen that has to notice when the questions run out: the first version
+ * of this only refreshed the session, so a learner who answered every question
+ * sat looking at the options they had already answered and the session never
+ * left intake at all.
+ */
+async function answeredIntake(): Promise<void> {
+  if (!boardId) return;
+  const id = boardId;
+  await refreshSession();
+  if (unanswered(tutorState.turn, session).length > 0) return;
+  await tutorTurn(() => rpc.buildPlan(id));
+}
+
+function wireLearn(): void {
+  learnToggle.addEventListener('click', () => {
+    const on = learnToggle.getAttribute('aria-pressed') !== 'true';
+    learnToggle.setAttribute('aria-pressed', String(on));
+    // Doc 14 section 4: the placeholder changes, because the composer is now
+    // asking a different question.
+    ask.placeholder = on ? COPY.learnPlaceholder : COPY.askSomething;
+    if (!on) void endLearning();
+  });
+
+  el<HTMLButtonElement>('tutor-close').addEventListener('click', () => void endLearning());
+
+  tutorEl.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    if (!target || !boardId) return;
+    const id = boardId;
+
+    const picked = target.closest<HTMLElement>('[data-intake]');
+    if (picked) {
+      const question = picked.closest<HTMLElement>('.ask')?.dataset.q ?? '';
+      void rpc
+        .answerIntake(id, question, picked.dataset.intake ?? '')
+        .then(answeredIntake)
+        .catch(() => toast(COPY.learnFailed, 'error'));
+      return;
+    }
+
+    if (target.closest('#learn-open-plan')) {
+      void buildPlannedCards();
+      return;
+    }
+
+    const pick = target.closest<HTMLElement>('[data-check-pick]');
+    if (pick && tutorState.turn?.check?.item) {
+      const item = tutorState.turn.check.item;
+      void rpc
+        .answerCheck(id, item, pick.dataset.checkPick ?? '')
+        .then((result) => {
+          tutorState.feedback = { correct: result.correct, explanation: item.explanation };
+          renderTutor();
+          void refreshSession();
+        })
+        .catch(() => toast(COPY.learnFailed, 'error'));
+      return;
+    }
+
+    const verb = target.closest<HTMLElement>('[data-learn-act]')?.dataset.learnAct;
+    if (verb === 'build') {
+      void tutorTurn(() => rpc.buildPlan(id));
+      return;
+    }
+    if (verb === 'stop') {
+      void endLearning();
+      return;
+    }
+    if (verb === 'another') {
+      void tutorTurn(() => rpc.askCheck(id));
+      return;
+    }
+    if (verb === 'next') {
+      // Doc 14 section 3.4's opening: a follow-up on the target card, with the
+      // reason recorded by whether the check went right.
+      const check = tutorState.turn?.check;
+      const question = tutorState.feedback?.correct ? check?.next_if_right : check?.next_if_wrong;
+      if (question && check?.item) {
+        void submit(question, { parentCardId: check.item.source_card_id });
+      }
+      tutorState.feedback = null;
+      renderTutor();
+    }
+  });
+
+  tutorEl.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = el<HTMLInputElement>('learn-message');
+    const message = input.value.trim();
+    if (!message || !boardId) return;
+    const id = boardId;
+    input.value = '';
+    void tutorTurn(() => rpc.sayToTutor(id, message));
+  });
+}
+
+/**
+ * Ask the questions the plan named. Doc 14 section 3.4: cards are requested in
+ * parallel, and they are ordinary cards through the ordinary pipeline.
+ *
+ * Sequential here rather than parallel, because the core answers an ask
+ * synchronously and firing five at once would queue them behind each other
+ * anyway while the board showed five placeholders and no progress.
+ */
+async function buildPlannedCards(): Promise<void> {
+  const planned = tutorState.turn?.plan?.cards ?? [];
+  if (planned.length === 0 || !boardId) return;
+  for (const card of planned) {
+    await submit(card.question);
+  }
+  if (boardId) await tutorTurn(() => rpc.askCheck(boardId as string));
+}
+
 function wirePaste(): void {
   document.addEventListener('paste', (e) => {
     if (!boardId || !rpc.connected) return;
@@ -821,6 +1043,7 @@ async function boot(): Promise<void> {
   wireReadingToggle();
   wireExercise();
   wirePaste();
+  wireLearn();
   wireComposer();
   wireCardActions();
   wireBranching();

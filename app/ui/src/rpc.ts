@@ -157,6 +157,52 @@ export class Rpc {
     });
   }
 
+  // Doc 14 section 3.3's triggers, one method each, because doc 14 section
+  // 3.4's machine moves on what the learner did.
+
+  startLearn(boardId: string, topic: string) {
+    return this.call<{ session_id: string; turn: TutorTurn }>('learn.start', {
+      board_id: boardId,
+      topic,
+    });
+  }
+
+  learnSession(boardId: string) {
+    return this.call<{ session: LearnSession | null }>('learn.get', { board_id: boardId });
+  }
+
+  answerIntake(boardId: string, q: string, a: string) {
+    return this.call<{ recorded: boolean }>('learn.answer_intake', { board_id: boardId, q, a });
+  }
+
+  buildPlan(boardId: string) {
+    return this.call<{ turn: TutorTurn }>('learn.build', { board_id: boardId });
+  }
+
+  askCheck(boardId: string, cardId?: string) {
+    return this.call<{ turn: TutorTurn }>('learn.check', { board_id: boardId, card_id: cardId });
+  }
+
+  answerCheck(boardId: string, item: ExerciseItem, picked: string, conceptIds: string[] = []) {
+    return this.call<{ correct: boolean }>('learn.answer_check', {
+      board_id: boardId,
+      item,
+      picked,
+      concept_ids: conceptIds,
+    });
+  }
+
+  sayToTutor(boardId: string, message: string) {
+    return this.call<{ turn: TutorTurn }>('learn.say', { board_id: boardId, message });
+  }
+
+  endLearn(boardId: string) {
+    return this.call<{ checks: number; correct: number; mastery: Record<string, number> }>(
+      'learn.end',
+      { board_id: boardId },
+    );
+  }
+
   sources(limit?: number) {
     return this.call<{ sources: SourceRow[] }>('library.sources', limit === undefined ? {} : { limit });
   }
@@ -332,6 +378,34 @@ export interface ExerciseRow {
   audience_id: string | null;
   created_at: string;
   last_score: { correct: number; total: number } | null;
+}
+
+/** Doc 14 section 2's LearnSession, as the panel reads it. */
+export interface LearnSession {
+  session_id: string;
+  board_id: string;
+  topic: string;
+  status: 'intake' | 'building' | 'reading' | 'checking' | 'ended';
+  intake: { q: string; a: string }[];
+  plan: { question: string; why: string; visual_hint?: string }[];
+  checks: { item_id: string; card_id: string; picked: string; correct: boolean }[];
+  opened: { question?: string; card_id?: string; reason: string }[];
+  mastery: Record<string, number>;
+}
+
+/** What one Tutor turn decided. Doc 14 section 3.5. */
+export interface TutorTurn {
+  stage: string;
+  questions?: { q: string; options: string[] }[];
+  plan?: { title: string; cards: { question: string; why: string }[] };
+  check?: {
+    item: ExerciseItem;
+    next_if_right: string | null;
+    next_if_wrong: string | null;
+  };
+  reply?: string;
+  open?: string | null;
+  caveats?: string[];
 }
 
 export interface AskResult {

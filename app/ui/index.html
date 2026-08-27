@@ -72,6 +72,8 @@
 
       <form id="composer" data-no-pan>
         <textarea id="ask" rows="1" placeholder="Ask something" aria-label="Ask a question"></textarea>
+        <!-- Doc 14 section 4: a Learn toggle left of the depth selector. -->
+        <button id="learn" type="button" aria-pressed="false">Learn</button>
         <div id="modes" role="group" aria-label="Depth">
           <button type="button" data-depth="fast" class="on">fast</button>
           <button type="button" data-depth="deep">deep</button>
@@ -103,6 +105,16 @@
       </div>
 
       <article id="reading" aria-label="This board as a document" tabindex="-1" data-no-pan hidden></article>
+
+      <!-- Doc 14 section 3.9: the Tutor panel, right dock, 320px. Closing it
+           ends the session and the board keeps everything. -->
+      <aside id="tutor" aria-label="Tutor" data-no-pan hidden>
+        <header>
+          <span id="tutor-stage"></span>
+          <button id="tutor-close" aria-label="End the session">✕</button>
+        </header>
+        <div id="tutor-body"></div>
+      </aside>
 
       <!-- Doc 11 section 6: the exercise is a modal over the board, because it
            is a thing you do to a board rather than a place you go. -->

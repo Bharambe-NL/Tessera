@@ -20,6 +20,9 @@ export const PRODUCT_NAME = 'Tessera';
 
 export const COPY = {
   /** Shown in the composer when no core is behind the page. */
+  /** The composer, before Learn is on. index.html carries it statically too. */
+  askSomething: 'Ask something',
+
   askOffline: `Open ${PRODUCT_NAME} to ask a question`,
 
   /** The error a call gets when the page is open outside the desktop app. */
@@ -123,6 +126,34 @@ export const COPY = {
   readFromImage: 'Read from an image',
   readFailed: 'That image could not be read.',
   readIllegible: 'Could not read this image.',
+
+  // ------------------------------------------------ Learn mode, doc 14 --
+
+  /** Doc 14 section 4: a Learn toggle left of the depth selector. */
+  learnToggle: 'Learn',
+  learnPlaceholder: 'What do you want to learn?',
+  learnTopic: 'Learning about',
+  learnAsk: 'Ask the tutor',
+  learnBuild: 'Build these cards',
+  learnSkipIntake: 'Just build it',
+  learnNext: 'Open the next card',
+  learnAnother: 'Another question',
+  learnStop: 'End the session',
+  learnRight: 'Right.',
+  learnWrong: 'Not quite.',
+  learnGotItRight: 'Got it right',
+  learnGotItWrong: 'Got it wrong',
+  learnThinking: 'Thinking',
+  learnNone: 'No session on this board.',
+  learnFailed: 'The tutor could not answer.',
+  /** Doc 14 section 3.9's header stage label, in words. */
+  learnStageIdle: 'Ready',
+  learnStageIntake: 'Getting to know you',
+  learnStageBuilding: 'Planning the board',
+  learnStageReading: 'Reading',
+  learnStageChecking: 'Checking understanding',
+  learnStageEnded: 'Finished',
+  learnEnded: 'Session over.',
 
   // ------------------------------------------------- the exercise, doc 08 --
 
