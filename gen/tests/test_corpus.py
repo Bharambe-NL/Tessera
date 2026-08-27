@@ -1715,6 +1715,63 @@ def test_the_ladder_and_the_sourcing_rule_are_re_checked_from_the_rungs_asked(
     assert "teaches" in waiting.note
 
 
+def _web_report(tmp_path: Path, corpus: Path, rows: list[dict] | None) -> object:
+    results = tmp_path / "web"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text("", encoding="utf-8")
+    (results / "manifest.json").write_text(
+        json.dumps({"provider": "mock", "snapshot": "T1", "web_enabled": rows is not None}),
+        encoding="utf-8",
+    )
+    if rows is not None:
+        (results / "web_retrieval.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows), encoding="utf-8"
+        )
+    return harness.score(results, corpus)
+
+
+def test_web_recall_and_rank_are_two_questions_with_two_answers(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 05 section 12 gates recall at k. Whether the right page ranked first
+    is what that gate cannot ask, and the two move for different reasons: a
+    crawl that missed a site fails the first, a ranking that preferred a page
+    sharing a word fails only the second."""
+    waiting = _web_report(tmp_path / "waiting", corpus, None)
+    for name in ("web_recall_at_k", "web_top_source_is_the_right_one"):
+        metric = _named(waiting, name)
+        assert metric.value is None
+        assert "--web" in metric.note
+
+    # Reached in both, first in one. Recall says 1.000 and rank says 0.500,
+    # which is the whole reason both are reported.
+    rows = [
+        {
+            "fact_id": "F-1",
+            "fidelity": "exact",
+            "expected_docs": ["web-a"],
+            "returned_docs": ["web-a", "web-b"],
+        },
+        {
+            "fact_id": "F-2",
+            "fidelity": "partial",
+            "expected_docs": ["web-a"],
+            "returned_docs": ["web-b", "web-a"],
+        },
+    ]
+    report = _web_report(tmp_path / "both", corpus, rows)
+    assert _named(report, "web_recall_at_k").value == 1.0
+    assert _named(report, "web_top_source_is_the_right_one").value == 0.5
+    # The split by plant fidelity, because a fact a site only alludes to is a
+    # different retrieval problem from one it states.
+    assert "partial" in _named(report, "web_recall_at_k").note
+
+    # A page the crawl never reached fails the gate, which is the case the gate
+    # exists for.
+    missed = [dict(rows[0], returned_docs=["web-b", "web-c"]), rows[1]]
+    assert _named(_web_report(tmp_path / "missed", corpus, missed), "web_recall_at_k").value == 0.5
+
+
 def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:
     """A run with no data must report n/a everywhere, never a score.
 

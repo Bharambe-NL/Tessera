@@ -634,11 +634,24 @@ impl Core {
         // against a reason nobody has.
         let mission = path["mission_template"].as_str().map(str::to_string);
 
+        // Doc 17 sections 2.1 and 5: the path names the sources it was written
+        // around, and a lesson planned from it reads them first. Offered with
+        // the mission rather than stored on the path, because a mission is what
+        // a lesson is planned against and a path can be loaded without one.
+        let sources_hint: Vec<String> = path["sources_hint"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["locator"].as_str().or_else(|| s.as_str()))
+            .map(str::to_string)
+            .collect();
+
         Ok(json!({
             "path_id": path_id,
             "concepts": concept_ids.len(),
             "edges": edges,
             "mission_offered": mission,
+            "sources_hint": sources_hint,
         }))
     }
 
@@ -1499,6 +1512,10 @@ pub fn build_router() -> Router<Core> {
             statement: String,
             #[serde(default)]
             target_concept_ids: Vec<String>,
+            /// Doc 17 section 5: the locators the path this mission came from
+            /// named. Absent for a mission the learner wrote themselves.
+            #[serde(default)]
+            sources_hint: Vec<String>,
         }
         let p: Create = params(p)?;
         if p.statement.trim().is_empty() {
@@ -1508,9 +1525,14 @@ pub fn build_router() -> Router<Core> {
             ));
         }
         let profile_id = core.profile_id.clone();
-        let mission_id =
-            repo::create_mission(&mut core.store, &profile_id, &p.statement, &p.target_concept_ids)
-                .map_err(store_error)?;
+        let mission_id = repo::create_mission(
+            &mut core.store,
+            &profile_id,
+            &p.statement,
+            &p.target_concept_ids,
+            &p.sources_hint,
+        )
+        .map_err(store_error)?;
         Ok(json!({ "mission_id": mission_id }))
     });
 

@@ -32,6 +32,12 @@ pub struct Packet {
     pub max_passages: usize,
     #[serde(default)]
     pub must_exclude: Vec<String>,
+    /// Doc 17 section 5: locators a lesson was told to read first. Not the twin
+    /// of `must_exclude`: an exclusion is a rule a retriever may not break, and
+    /// this is a place it is told to look. A locator that answers nothing still
+    /// contributes nothing.
+    #[serde(default)]
+    pub must_include: Vec<String>,
     #[serde(default)]
     pub doctrine: Doctrine,
 }

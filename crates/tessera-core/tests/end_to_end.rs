@@ -1721,6 +1721,103 @@ fn a_failed_check_walks_the_ladder_down_and_then_reaches_for_a_prerequisite() {
     assert_eq!(moved, 0, "the core restated a move the projection already made");
 }
 
+/// Doc 17 sections 5 and 8's research posture, on a card asked in a lesson.
+///
+/// Three things change and one does not. The ranking comes from the pack's
+/// learning quality ranking rather than its source hierarchy, because a lesson
+/// prefers a source that explains and an answer prefers the source with
+/// authority. The set narrows to web, vault and boards. The path's own sources
+/// reach the Planner as `must_include`. What does not change is the Verifier,
+/// which is why reaching more widely is safe to do at all.
+#[test]
+fn a_lesson_reads_with_the_research_posture_and_the_paths_own_sources() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    with_empty_folder(&mut core);
+
+    // A path that names where it was written from, and the mission it offers.
+    let loaded = call(
+        &router,
+        &mut core,
+        "path.load",
+        json!({
+            "path": {
+                "code": "synthetic",
+                "title": "The synthetic path",
+                "mission_template": "understand the capital rules",
+                "concepts": [{ "concept_term": "capital buffer" }],
+                "sources_hint": [
+                    { "title": "Ledgerline", "locator": "http://127.0.0.1:9/a.html", "class": "web" }
+                ],
+            }
+        }),
+    );
+    assert_eq!(loaded["sources_hint"][0], "http://127.0.0.1:9/a.html");
+
+    let hints: Vec<String> = loaded["sources_hint"]
+        .as_array()
+        .expect("hints")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    call(
+        &router,
+        &mut core,
+        "mission.create",
+        json!({
+            "statement": loaded["mission_offered"],
+            "sources_hint": hints,
+        }),
+    );
+
+    // A lesson board, and a card asked on it.
+    let board_id = core.create_board("Lesson", "deep").expect("board");
+    call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "capital buffers" }),
+    );
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("the card runs");
+
+    // Doc 17 section 5: the path's locators reached the Planner.
+    let packet = packet_for(&core, &board_id, "planner");
+    assert_eq!(
+        packet["doctrine"]["must_include"][0], "http://127.0.0.1:9/a.html",
+        "the path's sources did not reach the Planner: {:?}",
+        packet["doctrine"]["must_include"]
+    );
+
+    // Doc 17 section 8's ranking is a rule over the pack, unit tested where it
+    // lives: a retriever packet is not persisted as a step, so the only thing
+    // this level could assert about it is a rank on a source, and the vault is
+    // empty here on purpose.
+
+    // The set narrowed: a lesson does not read the learner's documents.
+    let ids: Vec<String> = core
+        .store
+        .conn()
+        .prepare(
+            "SELECT DISTINCT s.agent_id FROM step s JOIN run r ON r.id = s.run_id
+             WHERE r.board_id = ?1 AND s.agent_id LIKE 'retriever.%'",
+        )
+        .expect("query")
+        .query_map(rusqlite::params![board_id], |r| r.get(0))
+        .expect("rows")
+        .filter_map(std::result::Result::ok)
+        .collect();
+    assert!(
+        !ids.iter().any(|id| id == "retriever.local"),
+        "a lesson read the learner's documents: {ids:?}"
+    );
+}
+
 /// Doc 05 section 8.1 and doc 16 section 3.4, end to end over a real socket.
 ///
 /// A notebook question that found nothing in the vault is ungrounded. The

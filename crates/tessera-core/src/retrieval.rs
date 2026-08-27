@@ -272,10 +272,7 @@ pub fn run(
     question: &str,
     doctrine: &Value,
     must_exclude: &[String],
-    // The retrievers this run may use, or every configured one. A narrowed run
-    // is a policy choice rather than a missing connector, so what it leaves out
-    // is left out silently and no caveat names it.
-    allow: Option<&[&str]>,
+    posture: Posture<'_>,
 ) -> FanOut {
     let mut out = FanOut {
         passages: Vec::new(),
@@ -284,9 +281,22 @@ pub fn run(
         assignments_run: 0,
         assignments_failed: 0,
     };
-    let set: Cow<'_, RetrieverSet> = match allow {
+    let set: Cow<'_, RetrieverSet> = match posture.allow {
         Some(allow) => Cow::Owned(set.restricted(allow)),
         None => Cow::Borrowed(set),
+    };
+    // Doc 17 section 5's larger fetch budget, applied to the connector that has
+    // one. A lesson reads more widely than a card because it is building
+    // somebody's understanding of a topic rather than answering one question.
+    let set: Cow<'_, RetrieverSet> = match (posture.fetch_budget, &set.web) {
+        (Some(budget), Some(_)) => {
+            let mut widened = set.into_owned();
+            if let Some(web) = widened.web.as_mut() {
+                web.max_fetch = budget;
+            }
+            Cow::Owned(widened)
+        }
+        _ => set,
     };
     let set = set.as_ref();
     if set.is_empty() {
@@ -345,7 +355,7 @@ pub fn run(
         }
 
         let started = std::time::Instant::now();
-        let packet = build_packet(&assignment, doctrine, must_exclude, at);
+        let packet = build_packet(&assignment, doctrine, must_exclude, posture.must_include, at);
         let _ = repo::start_retrieval(store, here, &assignment.query);
 
         // Doc 05 section 8.1's web leg and sections 8.2 to 8.5's index legs
@@ -467,10 +477,27 @@ pub fn run(
     out
 }
 
+/// How one run reads, beyond what it is asking. Doc 16 section 3.4 and doc 17
+/// section 5 are the two that narrow or widen it; every other run takes the
+/// default, which is every configured retriever at the ordinary budget.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Posture<'a> {
+    /// The retrievers this run may use, or every configured one. A narrowed run
+    /// is a policy choice rather than a missing connector, so what it leaves
+    /// out is left out silently and no caveat names it.
+    pub allow: Option<&'a [&'a str]>,
+    /// Doc 17 section 5: a path's `sources_hint` locators, read first.
+    pub must_include: &'a [String],
+    /// Doc 17 section 5: how many pages a lesson may fetch, when more than the
+    /// connector's own default.
+    pub fetch_budget: Option<usize>,
+}
+
 fn build_packet(
     assignment: &Assignment,
     doctrine: &Value,
     must_exclude: &[String],
+    must_include: &[String],
     at: RetrievalRef<'_>,
 ) -> Packet {
     serde_json::from_value(json!({
@@ -486,6 +513,7 @@ fn build_packet(
         },
         "max_passages": assignment.max_passages,
         "must_exclude": must_exclude,
+        "must_include": must_include,
         "doctrine": doctrine,
     }))
     .unwrap_or_else(|_| Packet {
@@ -497,6 +525,7 @@ fn build_packet(
         filters: Default::default(),
         max_passages: assignment.max_passages,
         must_exclude: Vec::new(),
+        must_include: Vec::new(),
         doctrine: Default::default(),
     })
 }

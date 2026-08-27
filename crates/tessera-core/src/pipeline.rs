@@ -530,6 +530,82 @@ fn ladder_level(session: &Value, targets: &[String]) -> Option<u8> {
     ))
 }
 
+/// The active mission's `sources_hint`, for a board that is running a lesson.
+///
+/// Read here rather than carried down from the caller: the Planner packet is
+/// built for every card, and a lookup that returns nothing outside a lesson is
+/// cheaper to read than a parameter threaded through every path that does not
+/// use it.
+fn mission_sources(store: &Store, ctx: &RunContext<'_>, board_mode: &str) -> Vec<String> {
+    if board_mode != LEARN {
+        return Vec::new();
+    }
+    tessera_store::repo::active_mission(store, &ctx.profile_id).unwrap_or(Value::Null)["sources_hint"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect()
+}
+
+/// Doc 17 section 5: "the research retriever enabled ... plus the vault and
+/// boards retrievers". Local is left out on purpose: a lesson is about a topic
+/// rather than about the learner's documents, and doc 17 names three.
+pub const LESSON_RETRIEVERS: &[&str] = &["web", "vault", "boards"];
+
+/// Doc 17 section 5's larger fetch budget. Doc 05 section 8.1's eight is what a
+/// card gets; a lesson reads more widely because it is building somebody's
+/// understanding of a topic rather than answering one question.
+pub const LESSON_FETCH_BUDGET: usize = 16;
+
+/// The board mode a lesson runs in. Doc 14 section 2.
+pub const LEARN: &str = "learn";
+
+/// Doc 17 section 8: a pack ranks sources for learning differently from how it
+/// ranks them for answering.
+///
+/// `source_hierarchy` answers "who has authority over this claim"; the learning
+/// quality ranking answers "who explains it best". They are different questions
+/// and a pack gives different answers, so a lesson reads the second. A pack
+/// that declares no quality ranking falls back to the first, which is the
+/// honest degrade: one ranking is better than none.
+fn research_ranks(ctx: &RunContext<'_>, learning: bool) -> Vec<Value> {
+    let quality = &ctx.pack.learning_templates.quality_ranking;
+    if learning && !quality.classes.is_empty() {
+        return quality
+            .classes
+            .iter()
+            .enumerate()
+            .map(|(i, class)| {
+                json!({
+                    "class": class,
+                    "issuer_pattern": Value::Null,
+                    // Best first, and rank 1 is the best doc 01 section 4.8
+                    // has, so the position in the list is the rank.
+                    "rank": i + 1,
+                })
+            })
+            .chain(quality.issuer_patterns.iter().map(|pattern| {
+                // Doc 17 section 8's "issuers a lesson reaches for first". An
+                // issuer rule outranks a bare class by being more specific,
+                // which `Doctrine::rank_for` already knows.
+                json!({ "class": Value::Null, "issuer_pattern": pattern, "rank": 1 })
+            }))
+            .collect();
+    }
+    ctx.pack
+        .source_hierarchy
+        .iter()
+        .map(|r| {
+            json!({
+                "class": r.class,
+                "issuer_pattern": r.issuer_pattern,
+                "rank": r.trust_rank,
+            })
+        })
+        .collect()
+}
+
 /// Doc 14 section 3.5's per session card budget.
 const TUTOR_CARDS_PER_SESSION: usize = 8;
 
@@ -1468,15 +1544,34 @@ pub async fn run_card(
     let passages: Vec<Value> = if mode == "fast" {
         Vec::new()
     } else {
+        // Doc 17 section 5's research posture, for a card asked on a lesson
+        // board. Three things change and one does not.
+        //
+        // The ranking changes: doc 17 section 8 gives a pack a separate quality
+        // ranking for learning, because a lesson prefers a primary source that
+        // explains while an answer prefers the source with authority over the
+        // claim. The budget changes, because a lesson is building somebody's
+        // understanding of a topic rather than answering one question. The set
+        // narrows to what doc 17 section 5 names.
+        //
+        // What does not change is the Verifier. A research card is checked like
+        // any other, which is why reaching more widely is safe to do at all.
+        let learning = board["mode"].as_str() == Some(LEARN);
         let doctrine = json!({
-            "trust_ranks": ctx.pack.source_hierarchy.iter().map(|r| json!({
-                "class": r.class,
-                "issuer_pattern": r.issuer_pattern,
-                "rank": r.trust_rank,
-            })).collect::<Vec<_>>(),
+            "trust_ranks": research_ranks(ctx, learning),
             "denied_domains": [],
         });
         let must_exclude = ctx.pack.must_exclude();
+        let must_include: Vec<String> = if learning {
+            tessera_store::repo::active_mission(store, &ctx.profile_id).unwrap_or(Value::Null)["sources_hint"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let profile_id = ctx.profile_id.clone();
         let fan = crate::retrieval::run(
             store,
@@ -1494,9 +1589,18 @@ pub async fn run_card(
             question,
             &doctrine,
             &must_exclude,
-            // Every configured retriever. Doc 16 section 4's notebook and doc
-            // 17 section 5's lesson are the two runs that narrow it.
-            None,
+            if learning {
+                crate::retrieval::Posture {
+                    allow: Some(LESSON_RETRIEVERS),
+                    must_include: &must_include,
+                    fetch_budget: Some(LESSON_FETCH_BUDGET),
+                }
+            } else {
+                // Every configured retriever at the ordinary budget. Doc 16
+                // section 4's notebook narrows earlier, in the core, because
+                // what a notebook question may open is a property of the board.
+                crate::retrieval::Posture::default()
+            },
         );
         for caveat in &fan.caveats {
             // Doc 05 section 10: the card says a category was excluded and
@@ -2111,6 +2215,11 @@ fn build_planner_packet(
         "retrievers": retrievers,
         "doctrine": {
             "must_exclude": must_exclude,
+            // Doc 17 section 5: "the learner's sources hint from a path is
+            // passed to the Planner as `must_include` locators". Empty outside
+            // a lesson, because a mission is what carries them and a board in
+            // any other mode is not planned against one.
+            "must_include": mission_sources(store, ctx, &board_mode),
             "domain_vocabulary": vocabulary,
             "freshness_classes": {}
         },
@@ -2184,4 +2293,79 @@ fn build_synth_packet(
             "findings_max": 5
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Doc 17 section 8: a pack ranks sources for learning differently from how
+    /// it ranks them for answering, and the two answer different questions.
+    ///
+    /// The ranking is a rule over the pack rather than something a run can be
+    /// asked about afterwards: a retriever packet is not persisted, so this is
+    /// where the rule is readable.
+    #[test]
+    fn a_lesson_ranks_by_what_explains_and_a_card_by_what_has_authority() {
+        let registry = tessera_schema::Registry::load().expect("schemas");
+        let packs = tessera_doctrine::PackLibrary::load_built_in(&registry).expect("packs");
+        let pack = packs.get("finance-eu-synthetic").expect("pack");
+
+        let ranks = |learning: bool| -> Vec<(Option<String>, Option<String>, i64)> {
+            let ctx = RunContext {
+                registry: &registry,
+                provider: &tessera_providers::MockProvider::new(),
+                pack,
+                policy: Default::default(),
+                profile_id: "p".into(),
+                source: tessera_store::event::Source::Test,
+                ledger: &tessera_harness::Ledger::new(),
+                retrievers: &crate::retrieval::RetrieverSet::default(),
+            };
+            research_ranks(&ctx, learning)
+                .into_iter()
+                .map(|r| {
+                    (
+                        r["class"].as_str().map(str::to_string),
+                        r["issuer_pattern"].as_str().map(str::to_string),
+                        r["rank"].as_i64().unwrap_or(0),
+                    )
+                })
+                .collect()
+        };
+
+        // The learning ranking is the pack's quality ranking, best first, so a
+        // class's position in that list is its rank.
+        let learning = ranks(true);
+        for (i, class) in pack.learning_templates.quality_ranking.classes.iter().enumerate() {
+            assert!(
+                learning.contains(&(Some(class.clone()), None, i as i64 + 1)),
+                "{class} is not ranked {} for learning: {learning:?}",
+                i + 1
+            );
+        }
+        // Doc 17 section 8's "issuers a lesson reaches for first", which outrank
+        // a bare class by being more specific.
+        for pattern in &pack.learning_templates.quality_ranking.issuer_patterns {
+            assert!(
+                learning.contains(&(None, Some(pattern.clone()), 1)),
+                "{pattern} is not reached for first: {learning:?}"
+            );
+        }
+
+        // A card outside a lesson reads the source hierarchy, unchanged.
+        let answering = ranks(false);
+        for rule in &pack.source_hierarchy {
+            assert!(
+                answering.contains(&(
+                    Some(rule.class.clone()),
+                    rule.issuer_pattern.clone(),
+                    rule.trust_rank
+                )),
+                "{} lost its answering rank: {answering:?}",
+                rule.class
+            );
+        }
+        assert_ne!(learning, answering, "one ranking is doing both jobs");
+    }
 }
