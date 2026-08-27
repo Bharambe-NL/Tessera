@@ -161,6 +161,19 @@ export interface Card {
   page_id?: string | null;
 }
 
+/**
+ * Doc 01 section 4.5's Note, which doc 16 section 7 point 1 calls a sticky in
+ * every word a person reads, to keep it apart from a vault page.
+ */
+export interface Sticky {
+  id: string;
+  text: string;
+  colour: string;
+  position: { x: number; y: number; w: number; h: number };
+  /** The card it was written beside, which the dashed edge is drawn from. */
+  card_id: string | null;
+}
+
 export interface Viewport {
   x: number;
   y: number;
@@ -190,4 +203,5 @@ export interface Board {
   seed_label: string | null;
   viewport: Viewport;
   cards: Card[];
+  notes: Sticky[];
 }

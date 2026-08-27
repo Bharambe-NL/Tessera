@@ -235,6 +235,39 @@ test('two quantities are drawn as tiles', async ({ page }) => {
   await expect(tiles.nth(0)).toHaveAttribute('data-ref', '/tiles/0');
 });
 
+test('a quote is kept as a sticky, attached to its card, and taken off again', async ({ page }) => {
+  // Doc 16 section 3.6: "Add note" from the highlight menu, with the quote
+  // prefilled, attached by a dashed edge.
+  await askFirst(page);
+  const card = page.locator('#cards .card').first();
+
+  await card.locator('.answer').evaluate((el) => {
+    const text = el.firstChild as Text;
+    const at = text.data.indexOf('internal representation');
+    const range = document.createRange();
+    range.setStart(text, at);
+    range.setEnd(text, at + 'internal representation'.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+
+  const pop = page.locator('#anchor-pop');
+  await expect(pop).toBeVisible();
+  await pop.locator('#anchor-note').click();
+
+  const sticky = page.locator('#stickies .sticky');
+  await expect(sticky).toHaveCount(1);
+  await expect(sticky).toContainText('internal representation');
+  // The dashed edge is drawn from the card it quotes.
+  await expect(page.locator('#edges .edge.quoted')).toHaveAttribute('d', /^M/);
+
+  // Doc 09 section 5: every verb has an undo, and this is Add note's.
+  await sticky.locator('[data-act="unstick"]').click();
+  await expect(page.locator('#stickies .sticky')).toHaveCount(0);
+});
+
 test('escape puts the popover away without asking anything', async ({ page }) => {
   await askFirst(page);
   const parent = page.locator('#cards .card').first();

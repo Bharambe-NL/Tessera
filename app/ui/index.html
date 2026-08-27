@@ -53,6 +53,10 @@
         <svg id="edges" aria-hidden="true"></svg>
         <svg id="ink" aria-hidden="true"></svg>
         <div id="cards"></div>
+        <!-- Doc 01 section 4.5's stickies. Above the cards, as the prototype's
+             own z order has them, because a sticky is something a person put on
+             top of the board. -->
+        <div id="stickies"></div>
       </div>
 
       <!-- Doc 11 section 5: mode indicator top left, board title centred at top,
@@ -105,6 +109,9 @@
         <div class="offer">
           <span class="anchor-label"></span>
           <button id="anchor-ask" type="button"></button>
+          <!-- Doc 16 section 3.6: "Add note" from the highlight menu, with the
+               quote prefilled. -->
+          <button id="anchor-note" type="button" hidden></button>
         </div>
         <form class="compose" hidden>
           <input id="anchor-question" aria-label="Ask about this" autocomplete="off" />

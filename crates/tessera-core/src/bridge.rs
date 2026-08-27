@@ -180,7 +180,7 @@ pub fn translate(ev: &Event) -> Option<Notification> {
         // ---------------------------------------------------------- board ----
         "board.created.v1" | "board.renamed.v1" | "board.trashed.v1" | "board.restored.v1"
         | "board.imported.v1" | "ink.added.v1" | "ink.erased.v1" | "note.added.v1" | "note.edited.v1"
-        | "image.pasted.v1" | "image.generated.v1" => Some(Notification::BoardUpdated {
+        | "note.removed.v1" | "image.pasted.v1" | "image.generated.v1" => Some(Notification::BoardUpdated {
             board_id: ev.board_id.clone()?,
         }),
 

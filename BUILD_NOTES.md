@@ -2959,6 +2959,47 @@ show the two shapes the day the corpus grows material for them.
 
 ---
 
+### BN-123 The sticky nobody could write, and the event that had never fired
+
+**Spec** 01 section 4.5, 16 sections 3.6 and 7 point 1, 09 section 5.
+
+**Built** 2026-08-27, M15 12f, first half.
+
+**A table with no writer.** `note` has existed since migration 0001. Nothing has ever inserted a
+row into it: not the shell, not an agent, not a test. `note.added.v1` sat in the event vocabulary
+from the same day and had never once been emitted, and the bundle exported `notes.jsonl` empty on
+every board it has ever written. The canvas had a sticky in its data model and no way for a person
+to put one on the board.
+
+**The column that had to be added to draw the line.** Doc 16 section 3.6 attaches the sticky to its
+card by a dashed edge, and doc 01 section 4.5 gives Note a board and a position and nothing else.
+Migration 0008 adds `note.card_id` as a nullable ADD COLUMN, so nothing is rebuilt. Null is the
+ordinary sticky about nothing in particular, which is what a sticky mostly is, and `ON DELETE SET
+NULL` keeps it when the card it quoted is removed: the words were the person's own and they outlive
+the card they were written beside. There is a test for exactly that.
+
+**The event a removal writes.** `note.removed.v1` joins the vocabulary, the way doc 11 section 13
+added the names its own pass needed. Doc 09 section 5 gives every verb an undo and taking the
+sticky off is Add note's, and in an append only log the removal has to be a fact rather than the
+absence of one. It carries the board, read before the row is deleted, because an event with no
+board never appears in that board's own history, which for the undo of a board verb is the one
+place it has to be.
+
+**Where the sticky lands is the canvas's business.** The core has a default place for a caller that
+names none, and the board sends its own: beside the card, computed from the layout the reader is
+looking at. The core has never seen that layout and a position it invented would put stickies on
+top of each other on any board that had been tidied.
+
+**The words are the person's.** A sticky carries no citation, no verdict and no flag, and no agent
+reads it. The event records that one exists and how long it is, never what it says: the row is
+where a person's own writing is kept, and copying it into the log would put it somewhere the log's
+own append only rule would never let them take it back from.
+
+**Verified** Full battery green, 65 end to end tests, 64 Playwright tests, the grounded sweep
+unchanged and the bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings
