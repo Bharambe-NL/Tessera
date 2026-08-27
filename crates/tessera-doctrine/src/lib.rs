@@ -618,6 +618,50 @@ mod tests {
             rules(twin),
             "a score on the corpus no longer transfers to the shipped pack"
         );
+
+        // The hierarchy may name different issuers, and the twin does: it ranks
+        // one synthetic web publisher above the rest, which pushes the generic
+        // web rank down by one and `user_supplied` with it. What may not differ
+        // is the order the classes come in, because that is what decides which
+        // source wins a contradiction, and a score on the corpus has to
+        // transfer.
+        let order = |p: &DoctrinePack| {
+            let mut out: Vec<(i64, String)> = p
+                .source_hierarchy
+                .iter()
+                .filter(|r| r.issuer_pattern.is_none())
+                .map(|r| (r.trust_rank, r.class.clone()))
+                .collect();
+            out.sort();
+            out.into_iter().map(|(_, class)| class).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            order(real),
+            order(twin),
+            "the twin ranks the source classes in a different order from the pack it stands for"
+        );
+
+        // Doc 16 section 3.3: a page ranks 4 in the finance pack, below
+        // external sources and above own_card.
+        for pack in [real, twin] {
+            let page = pack
+                .source_hierarchy
+                .iter()
+                .find(|r| r.class == "page")
+                .expect("the finance pack ranks a page");
+            assert_eq!(page.trust_rank, 4);
+        }
+
+        // And every pack that ships can rank a page at all. An unranked class
+        // is the least trusted, which would put a person's own notes below a
+        // blog.
+        for code in ["general", "finance-eu", "finance-eu-synthetic"] {
+            let pack = lib.get(code).expect(code);
+            assert!(
+                pack.source_hierarchy.iter().any(|r| r.class == "page"),
+                "{code} leaves a page unranked, which ranks it last"
+            );
+        }
     }
 
     #[test]

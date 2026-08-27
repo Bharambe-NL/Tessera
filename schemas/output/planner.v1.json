@@ -69,6 +69,7 @@
                     "local",
                     "regulatory",
                     "structured",
+                    "vault",
                     "boards"
                   ],
                   "description": "boards joined in doc 05 v0.2 section 8.5: the Planner adds it to every sub-question when the profile has memory enabled."

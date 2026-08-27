@@ -114,6 +114,17 @@ pub fn assemble(pack: &DoctrinePack, folders: &[WatchedFolder], memory_enabled: 
                     indexed.push(("local".to_string(), IndexedConfig::local(folder_ids)));
                 }
             }
+            // Doc 16 section 3.3: the vault is indexed like any folder, under
+            // its own class. Always configured when the pack enables it, unlike
+            // `local`, because the profile's own pages need nothing pointed at
+            // them: an empty vault is a retriever with nothing to find rather
+            // than one nobody has set up.
+            "vault" => {
+                indexed.push((
+                    "vault".to_string(),
+                    IndexedConfig::pages(vec![tessera_retrievers::VAULT_FOLDER.to_string()]),
+                ));
+            }
             // Doc 15 section 6: memory is a profile switch, and a set built
             // while it is off must not carry the index a plan-less card would
             // fall back to.
@@ -525,6 +536,23 @@ mod tests {
         let pack = pack(&[("boards", true)]);
         assert!(assemble(&pack, &[], true).configured("boards"));
         assert!(!assemble(&pack, &[], false).configured("boards"));
+    }
+
+    #[test]
+    fn the_vault_is_configured_without_anybody_pointing_at_it() {
+        // Unlike `local`, which waits for a folder. The profile's own pages are
+        // already where the app can read them, so an empty vault is a retriever
+        // with nothing to find rather than one nobody has set up.
+        let set = assemble(&pack(&[("vault", true)]), &[], true);
+        assert!(set.configured("vault"));
+        assert_eq!(
+            set.config("vault").expect("vault").source_class,
+            "page",
+            "a page must not enter as a local document: doc 16 section 3.3"
+        );
+
+        // And a pack that turns it off gets no vault.
+        assert!(!assemble(&pack(&[("vault", false)]), &[], true).configured("vault"));
     }
 
     #[test]
