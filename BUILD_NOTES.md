@@ -1326,6 +1326,97 @@ rather than remembered, and the comment says why.
 **Reason** Recorded because the first defect is the interesting one: a guard can be correct about the
 case it names and wrong about every case that occurs.
 
+### BN-084 The Tutor decides and never answers, and four rules stand between the two
+
+**Spec** 14 sections 1, 3.5 and 5.
+
+**Decision** The Tutor writes no card content and retrieves nothing. It chooses what to ask and what
+to open next, and doc 14 section 3.5's four rules are deterministic checks over what it decided,
+each one dropping the part that broke it rather than failing the turn.
+
+**Why dropping rather than failing.** A turn is a conversation, and a learner who asked a question
+and got an error learned nothing. A turn that loses its `open` because the tutor asked for two cards
+at once still carries its reply, and the caveat says what went. The Verifier fails closed because a
+card is a claim; a tutor turn is not a claim, so it does not.
+
+**Two of the four rules are the Exercise agent's, reused rather than rewritten.** A check item is an
+Exercise item with a single card scope, which doc 14 section 1 says in as many words, so
+`exercise::traceable` and `exercise::leaks_truth` are called on it directly. A second implementation
+of traceability would be a second definition of it, and the two would drift.
+
+**The load bearing rule is the fourth.** A tutor reply carrying `[1]` claims a source for a sentence
+nobody verified, inside a product whose entire argument is that a marker means the Verifier stood
+behind it. That rule has both a unit test and a Playwright test, at the two ends: one over the turn,
+one over what the learner reads on screen.
+
+**Reason** Doc 14 section 1: "Learn mode adds no new answer path." Everything the tutor could have
+been given to do that a card already does was given to the card.
+
+---
+
+### BN-085 A session that renders intake and cannot leave it
+
+**Spec** 14 section 3.4.
+
+**Found** while writing the Playwright pass over Learn mode. The intake questions rendered, the
+options were tappable, each answer recorded and the session's `intake` list grew. And the plan never
+came, because `learn.build` is its own RPC and nothing on screen called it: answering an intake
+question refreshed the session and stopped. Doc 14 section 3.4 lets the learner skip intake, which is
+why building cannot be a side effect of finishing it, and that is exactly why something had to notice
+when the questions ran out.
+
+**Decision** The panel drops a question the session already holds an answer to, and asks for the plan
+when the last one goes. A `Just build it` button offers the skip doc 14 section 3.4 names.
+
+**The same shape as the click delegation gap at M9**, and worth naming twice for that reason: markup
+that renders correctly, a handler that fires correctly, and no path from the end of one step to the
+start of the next. Neither a unit test nor a screenshot catches it. A test that drives the whole
+sequence does, and only that.
+
+**A second bug in the test, not the product.** The first helper clicked the first intake option and
+waited for it to become hidden. A `.first()` locator re-resolves on every poll, so once that question
+was gone the locator resolved to the next question's first option and reported it visible until the
+timeout. The loop waits on the count of unanswered questions now.
+
+**Reason** Recorded because the plan's rule about metrics has a UI twin: a screen that renders is not
+a screen that works, and only a driver that walks the whole path can tell them apart.
+
+---
+
+### BN-086 Two events the log claimed and one actor it got wrong
+
+**Spec** 14 sections 2 and 3.3, 12's acceptance walkthrough line 12.
+
+**Found** while checking the Learn session against walkthrough line 12, "every act appears in board
+history with the right actor". Two defects, both in the same twenty lines.
+
+**The log claimed checks nobody asked.** Doc 01's vocabulary declares seven `learn.*` events, and the
+turn recorder needed an event for two stages that have none: the tutor asking its intake questions,
+and the tutor replying with no card to open. It reached for the nearest declared name and wrote
+`learn.check_asked.v1` for both. Anything counting checks would have believed it, and the log is
+append-only, so nothing could take it back.
+
+The fix is that neither stage records anything. Asking the intake questions changes no session state:
+the answer is what changes it, and `learn.intake_answered.v1` already carries that. A reply with no
+card to open changes none either. Both write columns that were already what they are, so the write
+existed only to carry the event.
+
+**Every act was attributed to the learner.** `Provenance::user` on all six, including the plan and the
+check question, which are the tutor's decisions. On a screen that reads back as the learner having
+written their own exam. Session writes now name their actor at the call site, and the three the tutor
+makes carry `Provenance::agent("tutor", run_id)` with the run it decided in.
+
+**Not adding two events to the vocabulary** was the choice underneath both. The seven declared events
+are the session's state changes, and the two stages that wanted a name are not state changes. An
+eighth event for "the tutor said something" would put the conversation in the event log beside the
+decisions, and doc 14 section 2 keeps the conversation in the session row where a reopened panel can
+still read it.
+
+**Reason** Recorded because a wrong event in an append-only log is the one class of defect this
+build cannot correct later, only annotate.
+
+---
+
 ---
 
 ## Measured findings
