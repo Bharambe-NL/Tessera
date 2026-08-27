@@ -219,6 +219,7 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     "board.trashed.v1",
     "board.restored.v1",
     "board.purged.v1",
+    "board.pack_updated.v1",
     "board.exported.v1",
     "board.imported.v1",
     // card lifecycle

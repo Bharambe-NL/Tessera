@@ -594,12 +594,12 @@ fn deciding_a_flag_that_is_already_decided_says_so() {
 /// A pack file a person could plausibly have: the general pack under a code of
 /// their own. Built from the shipped file so it validates for the same reasons
 /// the shipped one does, with only what an author would change changed.
-fn imported_pack_file(dir: &std::path::Path, code: &str) -> std::path::PathBuf {
+fn imported_pack_file(dir: &std::path::Path, code: &str, version: &str) -> std::path::PathBuf {
     let mut pack: Value =
         serde_json::from_str(include_str!("../../../packs/general.json")).expect("the shipped pack parses");
     pack["code"] = json!(code);
     pack["name"] = json!("A pack of my own");
-    pack["version"] = json!("0.2.0");
+    pack["version"] = json!(version);
     std::fs::create_dir_all(dir).expect("dir");
     let path = dir.join(format!("{code}.json"));
     std::fs::write(&path, serde_json::to_string_pretty(&pack).expect("json")).expect("pack file");
@@ -607,14 +607,34 @@ fn imported_pack_file(dir: &std::path::Path, code: &str) -> std::path::PathBuf {
 }
 
 fn core_at(root: &std::path::Path) -> Core {
+    core_at_with(root, mock())
+}
+
+fn core_at_with(root: &std::path::Path, provider: Arc<MockProvider>) -> Core {
     use tessera_providers::MemoryKeyStore;
     Core::open(
         root,
         Box::new(MemoryKeyStore::with("anthropic-default", "sk-test")),
-        mock(),
+        provider,
         "anthropic-default",
     )
     .expect("core")
+}
+
+/// Every stage answered, including the two shapes the verify stage takes, so a
+/// card reaches a verdict rather than failing closed on a missing fixture.
+fn answering_mock() -> Arc<MockProvider> {
+    Arc::new(
+        MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+            match request.stage.as_str() {
+                "route" => MockResponse::Json(router_output(true)),
+                "synthesize" => MockResponse::Json(synth_output()),
+                "visualize" => MockResponse::Json(visual_output()),
+                "verify" => verify_scripted_response(request),
+                _ => MockResponse::Garbage,
+            }
+        }))),
+    )
 }
 
 #[test]
@@ -626,7 +646,7 @@ fn an_imported_pack_outlives_the_process_that_imported_it() {
     // judged by rules they had switched away from.
     let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
     let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
-    let file = imported_pack_file(&source, "house-rules");
+    let file = imported_pack_file(&source, "house-rules", "0.2.0");
 
     let router = build_router();
     {
@@ -689,6 +709,204 @@ fn an_imported_pack_outlives_the_process_that_imported_it() {
 }
 
 #[test]
+fn updating_a_boards_pack_rejudges_its_cards_and_says_why() {
+    // Doc 10 section 9: "a pack update never rewrites a board's pinned version;
+    // the board offers update pack, which reruns verify_only". So the update is
+    // a verb on the board, not a consequence of importing, and what it produces
+    // is a trail: the board moved from one version to another, and each card
+    // was judged again because of it.
+    let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
+    let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
+    let router = build_router();
+    let mut core = core_at_with(&root, answering_mock());
+
+    let first = imported_pack_file(&source, "house-rules", "0.1.0");
+    call(
+        &router,
+        &mut core,
+        "pack.import",
+        json!({ "path": first.display().to_string() }),
+    );
+    call(
+        &router,
+        &mut core,
+        "profile.set_pack",
+        json!({ "code": "house-rules" }),
+    );
+
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", Some("fast"))
+        .expect("a card under 0.1.0");
+
+    // Nothing to update to yet, which is the state almost every board is in.
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert_eq!(board["pack_update"]["available"], false, "{board}");
+    assert_eq!(board["doctrine_pack"]["version"], "0.1.0");
+
+    // The author ships a new version of their own pack.
+    let second = imported_pack_file(&source, "house-rules", "0.2.0");
+    call(
+        &router,
+        &mut core,
+        "pack.import",
+        json!({ "path": second.display().to_string() }),
+    );
+
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert_eq!(board["pack_update"]["available"], true, "{board}");
+    assert_eq!(board["pack_update"]["pinned_version"], "0.1.0");
+    assert_eq!(board["pack_update"]["current_version"], "0.2.0");
+    // And importing on its own changed nothing about the board.
+    assert_eq!(
+        board["doctrine_pack"]["version"], "0.1.0",
+        "an import moved a board's pin without being asked"
+    );
+
+    let report = call(
+        &router,
+        &mut core,
+        "board.update_pack",
+        json!({ "board_id": board_id }),
+    );
+    assert_eq!(report["updated"], true, "{report}");
+    assert_eq!(report["from_version"], "0.1.0");
+    assert_eq!(report["to_version"], "0.2.0");
+    let judged = report["cards"].as_array().expect("cards");
+    assert_eq!(
+        judged.len(),
+        1,
+        "the board's one answered card was re-judged: {report}"
+    );
+    assert!(
+        judged[0]["status"] == "done" || judged[0]["status"] == "flagged",
+        "the card reached a verdict rather than failing to be judged: {report}"
+    );
+
+    let events: Vec<Value> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| json!({ "type": e.event_type, "payload": e.payload, "card_id": e.card_id }))
+        .collect();
+    let updated = events
+        .iter()
+        .find(|e| e["type"] == "board.pack_updated.v1")
+        .expect("the board says its pack moved");
+    assert_eq!(updated["payload"]["from_version"], "0.1.0");
+    assert_eq!(updated["payload"]["to_version"], "0.2.0");
+    assert_eq!(updated["payload"]["cards_to_reverify"], 1);
+
+    let rerun = events
+        .iter()
+        .find(|e| e["type"] == "card.rerun.v1")
+        .expect("each card says why it was judged again");
+    assert_eq!(rerun["payload"]["reason"], "pack_updated");
+    assert_eq!(rerun["payload"]["kind"], "verify_only");
+    assert!(
+        rerun["card_id"].is_string(),
+        "the reason is on the card it belongs to"
+    );
+
+    // The run that did the judging says which version judged it.
+    let version: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT doctrine_pack_version FROM run WHERE kind = 'verify_only'
+              ORDER BY started_at DESC, id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("a verify_only run");
+    assert_eq!(
+        version, "0.2.0",
+        "the re-judgement used the version the board moved to"
+    );
+
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert_eq!(board["doctrine_pack"]["version"], "0.2.0");
+    assert_eq!(board["pack_update"]["available"], false);
+
+    // Asking again with nothing to update is not an error, it is a no.
+    let again = call(
+        &router,
+        &mut core,
+        "board.update_pack",
+        json!({ "board_id": board_id }),
+    );
+    assert_eq!(again["updated"], false, "{again}");
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&source).ok();
+}
+
+#[test]
+fn a_reverification_judges_a_card_by_the_pack_its_board_pinned() {
+    // Doc 10 section 9's pinning rule, from the other side. Until M14.4
+    // `verify_card` read the profile's active pack, so switching packs and
+    // reopening an old board re-judged it under rules it was never written
+    // under, while the board went on naming the pack it pinned.
+    let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
+    let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
+    let router = build_router();
+    let mut core = core_at_with(&root, answering_mock());
+
+    let file = imported_pack_file(&source, "house-rules", "0.1.0");
+    call(
+        &router,
+        &mut core,
+        "pack.import",
+        json!({ "path": file.display().to_string() }),
+    );
+    call(
+        &router,
+        &mut core,
+        "profile.set_pack",
+        json!({ "code": "house-rules" }),
+    );
+
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", Some("fast"))
+        .expect("card");
+    let card_id: String = core
+        .store
+        .conn()
+        .query_row("SELECT id FROM card WHERE board_id = ?1", [&board_id], |r| {
+            r.get(0)
+        })
+        .expect("card id");
+
+    // The person moves the profile to another pack, which says nothing about
+    // the boards already answered.
+    call(
+        &router,
+        &mut core,
+        "profile.set_pack",
+        json!({ "code": "general" }),
+    );
+    core.verify_card(&board_id, &card_id).expect("re-verified");
+
+    let version: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT doctrine_pack_version FROM run WHERE kind = 'verify_only'
+              ORDER BY started_at DESC, id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("a verify_only run");
+    assert_eq!(
+        version, "0.1.0",
+        "the card was re-judged by the profile's pack rather than the board's"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&source).ok();
+}
+
+#[test]
 fn a_pack_file_cannot_take_the_code_of_one_that_ships() {
     // Boards pin the pack they were judged under by code and version. A file
     // that renamed `general` would change what every board that pinned it
@@ -696,7 +914,7 @@ fn a_pack_file_cannot_take_the_code_of_one_that_ships() {
     // be able to do.
     let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
     let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
-    let file = imported_pack_file(&source, "general");
+    let file = imported_pack_file(&source, "general", "0.2.0");
 
     let mut core = core_at(&root);
     let response = build_router()

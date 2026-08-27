@@ -335,6 +335,138 @@ impl Core {
         Ok(summary)
     }
 
+    /// The pack a board is judged by: the one it pinned, not the one the
+    /// profile happens to be using now.
+    ///
+    /// Doc 10 section 9: "a pack update never rewrites a board's pinned
+    /// version". Re-verification read `self.pack_code` until M14.4, so a person
+    /// who switched packs and reopened an old board had it re-judged by rules
+    /// it was never written under, while the board went on naming the pack it
+    /// pinned. The version can still move under the code (that is what the
+    /// board's update pack verb is for); the code cannot.
+    ///
+    /// A pinned code the library no longer has, an imported pack whose file was
+    /// deleted, falls back to the profile's pack rather than refusing to
+    /// re-verify: judging by today's rules and saying so beats not judging.
+    fn pack_for_board(&self, board_id: &str) -> Result<tessera_doctrine::DoctrinePack, CoreError> {
+        let pinned = repo::board_pack(&self.store, board_id)?;
+        let code = pinned
+            .as_ref()
+            .map(|p| p.code.clone())
+            .filter(|code| self.packs.get(code).is_ok())
+            .unwrap_or_else(|| self.pack_code.clone());
+        Ok(self.packs.get(&code)?.clone())
+    }
+
+    /// Whether a newer version of the pack this board pinned is loaded.
+    ///
+    /// The library holds one version per code, the one that ships or the one
+    /// that was imported, so "newer" here means "not the version the board
+    /// names". Ordering two version strings would claim more than the pack file
+    /// says.
+    pub fn board_pack_update(&self, board_id: &str) -> Result<Value, CoreError> {
+        let Some(pinned) = repo::board_pack(&self.store, board_id)? else {
+            return Ok(json!({ "available": false }));
+        };
+        let Ok(current) = self.packs.get(&pinned.code) else {
+            // The pack the board names is not loaded at all. Nothing to update
+            // to, and the Doctrine page is where a missing file is explained.
+            return Ok(json!({
+                "available": false,
+                "pack_code": pinned.code,
+                "pinned_version": pinned.version,
+                "pack_loaded": false,
+            }));
+        };
+        Ok(json!({
+            "available": current.version != pinned.version,
+            "pack_code": pinned.code,
+            "pinned_version": pinned.version,
+            "current_version": current.version,
+            "pack_loaded": true,
+        }))
+    }
+
+    /// Doc 10 section 9's "update pack", which reruns `verify_only`.
+    ///
+    /// The board moves to the loaded version of the pack it already pinned, and
+    /// every card that has an answer is re-judged under the new rules. Each one
+    /// records why it was re-run, so a card that flips to flagged months later
+    /// can be traced to the pack version that flipped it rather than looking
+    /// like the Verifier changed its mind.
+    pub fn update_board_pack(&mut self, board_id: &str) -> Result<Value, CoreError> {
+        let Some(pinned) = repo::board_pack(&self.store, board_id)? else {
+            return Err(CoreError::Runtime("no such board".to_string()));
+        };
+        let pack = self.packs.get(&pinned.code)?.clone();
+        if pack.version == pinned.version {
+            return Ok(json!({
+                "board_id": board_id,
+                "pack_code": pinned.code,
+                "from_version": pinned.version,
+                "to_version": pack.version,
+                "updated": false,
+                "cards": [],
+            }));
+        }
+
+        let to = repo::PinnedPack {
+            pack_id: repo::ensure_pack(&self.store, &serde_json::to_value(&pack).unwrap_or(Value::Null))?,
+            code: pack.code.clone(),
+            version: pack.version.clone(),
+        };
+        let cards = repo::cards_to_reverify(&self.store, board_id)?;
+        repo::repin_board(&mut self.store, board_id, &to, &pinned.version, cards.len())?;
+
+        let mut outcomes = Vec::new();
+        for card_id in cards {
+            // `card.rerun.v1` has been in the vocabulary since M2 with no
+            // writer. This is what it is for: the card was not asked again, it
+            // was judged again, and the payload says by what.
+            self.store.append(
+                tessera_store::event::NewEvent::new(
+                    "card.rerun.v1",
+                    json!({
+                        "card_id": card_id,
+                        "kind": "verify_only",
+                        "reason": "pack_updated",
+                        "pack_code": to.code,
+                        "from_version": pinned.version,
+                        "to_version": to.version,
+                    }),
+                    tessera_store::event::Provenance::user(),
+                )
+                .on_board(board_id)
+                .on_card(&card_id),
+            )?;
+
+            match self.verify_card(board_id, &card_id) {
+                Ok(outcome) => outcomes.push(json!({
+                    "card_id": outcome.card_id,
+                    "status": outcome.status,
+                    "flags": outcome.flags,
+                })),
+                // Doc 07 fails closed, and one card that could not be re-judged
+                // does not stop the rest of the board being re-judged. What
+                // happened is in the log either way.
+                Err(e) => outcomes.push(json!({
+                    "card_id": card_id,
+                    "status": "not_reverified",
+                    "detail": e.to_string(),
+                })),
+            }
+        }
+
+        Ok(json!({
+            "board_id": board_id,
+            "pack_code": to.code,
+            "from_version": pinned.version,
+            "to_version": to.version,
+            "updated": true,
+            "cards": outcomes,
+        }))
+    }
+
     /// The stored id of the active doctrine pack, writing it if it is not there.
     ///
     /// A caller building rows that reference a pack needs the id the store
@@ -524,7 +656,7 @@ impl Core {
     /// months later runs before the user reads it.
     pub fn verify_card(&mut self, board_id: &str, card_id: &str) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
-        let pack = self.packs.get(&self.pack_code)?.clone();
+        let pack = self.pack_for_board(board_id)?;
         let ctx = RunContext {
             registry: &self.registry,
             provider: self.provider.as_ref(),
@@ -771,12 +903,27 @@ pub fn build_router() -> Router<Core> {
     r.register("board.get", |core: &mut Core, p| {
         let p: BoardRef = params(p)?;
         match repo::read_board(&core.store, &p.board_id).map_err(store_error)? {
-            Some(board) => Ok(serde_json::to_value(board).unwrap_or(Value::Null)),
+            Some(board) => {
+                let mut value = serde_json::to_value(board).unwrap_or(Value::Null);
+                // Doc 10 section 9: the board is where an update to the pack it
+                // pinned is offered, so the read that draws the board is what
+                // says one is waiting.
+                value["pack_update"] = core.board_pack_update(&p.board_id).map_err(core_error)?;
+                Ok(value)
+            }
             None => Err(RpcError::core(
                 "board_missing",
                 "That board is not on this profile.",
             )),
         }
+    });
+
+    // Doc 10 section 9: "the board offers update pack, which reruns
+    // verify_only". Nothing is retrieved and no answer is rewritten; the cards
+    // are judged again under the version the board now names.
+    r.register("board.update_pack", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        core.update_board_pack(&p.board_id).map_err(core_error)
     });
 
     // Doc 09 section 5's Edit verb on a board. Renaming is what turns off the

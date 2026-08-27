@@ -2222,6 +2222,50 @@ over the same profile folder, which is what tomorrow is.
 
 ---
 
+### BN-109 The board offers the pack update, and the pin finally means something
+
+**Spec** 10 section 9: "A pack update never rewrites a board's pinned version; the board offers
+update pack, which reruns `verify_only`."
+
+**Built** 2026-08-27, M14.4.
+
+**Read of the plan.** The step was written as "switching or importing a pack triggers
+`verify_only` over affected cards". Doc 10 section 9 is narrower and better: the update is a
+verb on the board, not a consequence of importing. A profile-wide sweep on a pack switch would
+re-judge boards under rules they never pinned, which is the thing the pinning rule exists to
+prevent. So importing changes nothing on its own; a board whose pinned pack has a newer version
+loaded offers the update, and taking it repins that board and re-judges its cards.
+
+**The defect the step depended on.** `verify_card` resolved the pack from `self.pack_code`, the
+profile's active pack, rather than from the board. A person who switched packs and reopened an
+old board had it re-judged by rules it was never written under, while the board went on naming
+the pack it pinned. Without fixing that, updating a pin would change nothing about how cards
+are judged and the whole verb would be theatre. `pack_for_board` resolves by the board's pinned
+code now; the version can move under it, which is what the update verb is for, and a pinned
+code the library no longer has falls back to the profile's pack rather than refusing to
+re-verify.
+
+The test that catches it needed two packs with different version strings: the first version
+compared `finance-eu-synthetic` against `general`, both at 1.0.0, and passed with the defect in
+place. An imported pack at 0.1.0 against general at 1.0.0 discriminates, and the guard was
+broken once on purpose to prove it.
+
+**The trail.** `board.pack_updated.v1` (new) records the board moving from one version to
+another and how many cards it will re-judge. `card.rerun.v1` has been in the vocabulary since
+M2 with no writer, and this is what it is for: the card was not asked again, it was judged
+again, and the payload says by what. The `verify_only` run row then carries the version that
+did the judging, so a card that flips to flagged months later traces to the pack version that
+flipped it rather than looking like the Verifier changed its mind.
+
+**Failing one card does not stop the board.** Doc 07 fails closed per card; a card that cannot
+be re-judged is reported as `not_reverified` in the report and the rest of the board carries
+on.
+
+**Verified** Full battery green, 50 Playwright tests, the 400 question grounded sweep and the
+bundle round trip.
+
+---
+
 ---
 
 ## Measured findings

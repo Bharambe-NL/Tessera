@@ -139,6 +139,18 @@ export interface Board {
   title: string;
   named_by_user: boolean;
   doctrine_pack: { code: string; version: string };
+  /**
+   * Whether a newer version of the pack this board pinned is loaded. Doc 10
+   * section 9: the board offers the update, and nothing takes it on the board's
+   * behalf.
+   */
+  pack_update?: {
+    available: boolean;
+    pack_code?: string;
+    pinned_version?: string;
+    current_version?: string;
+    pack_loaded?: boolean;
+  };
   default_depth: Depth;
   mode: 'explore' | 'learn';
   parent_board_id: string | null;

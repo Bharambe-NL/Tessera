@@ -21,6 +21,31 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const QUESTION = 'what are world models?';
 
+/**
+ * A pack file a person could plausibly have: the general pack under a code and
+ * version of their own, so it validates for the reasons the shipped one does.
+ */
+function packFile(code: string, version: string): string {
+  const pack = JSON.parse(readFileSync(join(REPO, 'packs', 'general.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  pack.code = code;
+  pack.name = 'A pack of my own';
+  pack.version = version;
+  const dir = mkdtempSync(join(tmpdir(), 'tessera-pack-'));
+  const file = join(dir, `${code}-${version}.json`);
+  writeFileSync(file, JSON.stringify(pack, null, 2));
+  return file;
+}
+
+async function importPack(page: import('@playwright/test').Page, file: string): Promise<void> {
+  await page.locator('#rail [data-view="profile"]').click();
+  await page.locator('[data-profile-tab="doctrine"]').click();
+  await page.locator('#pack-path').fill(file);
+  await page.locator('#pack-import button[type="submit"]').click();
+}
+
 test.beforeEach(async ({ page }) => {
   await freshCore(page);
   await useCore(page);
@@ -185,6 +210,38 @@ test('library shows both tabs, and a concept is proposed then confirmed', async 
   await expect(page.locator('[data-library-tab="sources"]')).toHaveClass(/on/);
 });
 
+test('a board offers the pack update that judges its cards again', async ({ page }) => {
+  // Doc 10 section 9: "a pack update never rewrites a board's pinned version;
+  // the board offers update pack, which reruns verify_only". So importing a
+  // newer version changes nothing until the board is asked, and then it says
+  // what it did.
+  await importPack(page, packFile('house-rules', '0.1.0'));
+  await page.locator('.lib-row[data-pack="house-rules"] [data-pack-act="use"]').click();
+  await expect(page.locator('.lib-row[data-pack="house-rules"]')).toContainText('Active', {
+    timeout: 30_000,
+  });
+
+  // A board created after the switch pins the pack that was active then.
+  await page.locator('#rail [data-view="home"]').click();
+  await page.locator('#home-create').click();
+  await askOne(page);
+  await expect(page.locator('#pack-update')).toBeHidden();
+
+  // The pack's author ships a new version.
+  await importPack(page, packFile('house-rules', '0.2.0'));
+  await page.reload();
+
+  const update = page.locator('#pack-update');
+  await expect(update).toBeVisible({ timeout: 30_000 });
+  await expect(update).toContainText('0.1.0');
+  await expect(update).toContainText('0.2.0');
+
+  await update.click();
+  await expect(page.locator('#toasts')).toContainText('Judged again under', { timeout: 30_000 });
+  // The board is on the new version now, so there is nothing left to offer.
+  await expect(update).toBeHidden({ timeout: 30_000 });
+});
+
 test('the profile models page reports key presence and never a key', async ({ page }) => {
   await page.locator('#rail [data-view="profile"]').click();
   await expect(page.locator('.facts')).toBeVisible();
@@ -210,23 +267,7 @@ test('a doctrine pack is imported from a file and then chosen', async ({ page })
   // Doc 10 section 9 and doc 12 principle 4: a pack is data. Importing adds it
   // to the profile; switching to it is a separate act, so an import can never
   // re-judge the next card on its own.
-  const pack = JSON.parse(readFileSync(join(REPO, 'packs', 'general.json'), 'utf8')) as {
-    code: string;
-    name: string;
-    version: string;
-  };
-  pack.code = 'house-rules';
-  pack.name = 'A pack of my own';
-  pack.version = '0.2.0';
-  const dir = mkdtempSync(join(tmpdir(), 'tessera-pack-'));
-  const file = join(dir, 'house-rules.json');
-  writeFileSync(file, JSON.stringify(pack, null, 2));
-
-  await page.locator('#rail [data-view="profile"]').click();
-  await page.locator('[data-profile-tab="doctrine"]').click();
-
-  await page.locator('#pack-path').fill(file);
-  await page.locator('#pack-import button[type="submit"]').click();
+  await importPack(page, packFile('house-rules', '0.2.0'));
 
   const row = page.locator('.lib-row[data-pack="house-rules"]');
   await expect(row).toBeVisible({ timeout: 30_000 });

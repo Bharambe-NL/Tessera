@@ -52,6 +52,7 @@ const emptyState = el<HTMLElement>('empty');
 const toasts = el<HTMLElement>('toasts');
 const readingEl = el<HTMLElement>('reading');
 const readingToggle = el<HTMLButtonElement>('reading-toggle');
+const packUpdate = el<HTMLButtonElement>('pack-update');
 const exerciseEl = el<HTMLElement>('exercise');
 const exerciseBody = el<HTMLElement>('ex-body');
 const tutorEl = el<HTMLElement>('tutor');
@@ -318,6 +319,7 @@ async function reload(): Promise<void> {
   popover.close();
   board = await rpc.getBoard(boardId);
   titleInput.value = board.title;
+  showPackUpdate(board);
   renderBoard(board);
   viewport.fit(boundsOf(board.cards, heightOf));
 }
@@ -490,6 +492,51 @@ function wireCardActions(): void {
     const question = input.value;
     input.value = '';
     void submit(question, { parentCardId: cardId });
+  });
+}
+
+/**
+ * Doc 10 section 9: the board offers the update, and nothing takes it on the
+ * board's behalf.
+ *
+ * The version the board pinned is on the button, because "update pack" without
+ * it asks a person to accept a change they cannot see the size of.
+ */
+function showPackUpdate(board: Board): void {
+  const update = board.pack_update;
+  if (!update?.available) {
+    packUpdate.hidden = true;
+    return;
+  }
+  packUpdate.hidden = false;
+  packUpdate.textContent =
+    `${COPY.boardPackUpdate} (${update.pack_code} ${update.pinned_version} ` +
+    `to ${update.current_version})`;
+}
+
+function wirePackUpdate(): void {
+  packUpdate.addEventListener('click', () => {
+    if (!boardId) return;
+    const id = boardId;
+    packUpdate.disabled = true;
+    void rpc
+      .updateBoardPack(id)
+      .then(async (report) => {
+        if (report.updated) {
+          const flagged = report.cards.filter((c) => c.status === 'flagged').length;
+          toast(
+            `${COPY.boardPackUpdated} ${report.pack_code} ${report.to_version}: ` +
+              `${report.cards.length} cards, ${flagged} flagged`,
+          );
+        }
+        await reload();
+      })
+      .catch((e: unknown) => {
+        toast(e instanceof RpcError ? e.message : COPY.boardPackUpdateFailed, 'error');
+      })
+      .finally(() => {
+        packUpdate.disabled = false;
+      });
   });
 }
 
@@ -1062,6 +1109,7 @@ async function boot(): Promise<void> {
   wireBranching();
   wireBuildTrail();
   wireTitle();
+  wirePackUpdate();
 
   // No core behind the page: a plain browser can still see the canvas render,
   // which is what the fixture is for, but it cannot ask anything.

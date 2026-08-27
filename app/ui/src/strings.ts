@@ -285,6 +285,15 @@ export const COPY = {
   profileContext: 'Context',
   profileModels: 'Models',
   profileRetrievers: 'Retrievers',
+  /**
+   * Doc 10 section 9. The verb says what it does to the board rather than to
+   * the pack, because what a person is deciding is whether to have these cards
+   * judged again.
+   */
+  boardPackUpdate: 'Update pack and check these cards again',
+  boardPackUpdated: 'Judged again under',
+  boardPackUpdateFailed: 'The pack update did not finish. The board still names the version it had.',
+
   profileDoctrine: 'Doctrine',
   /** Doc 10 section 9: a pack is data, and importing one is reading a file. */
   profilePackImport: 'Import a doctrine pack',
