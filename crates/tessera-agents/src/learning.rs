@@ -176,7 +176,7 @@ pub fn frontier(concepts: &[Concept], edges: &[Edge], mastered_at: f64) -> Vec<S
     let mut by_depth: BTreeMap<usize, Vec<String>> = BTreeMap::new();
 
     for concept in concepts {
-        if !claims_to_know(concept) || verified(concept, mastered_at) {
+        if !unverified_claim(concept, mastered_at) {
             continue;
         }
         let d = depth.get(&concept.id).copied().unwrap_or(0);
@@ -188,6 +188,17 @@ pub fn frontier(concepts: &[Concept], edges: &[Edge], mastered_at: f64) -> Vec<S
         .next()
         .map(|(_, ids)| ids)
         .unwrap_or_default()
+}
+
+/// Doc 17 section 3: a concept the learner claimed and nobody has checked.
+///
+/// The frontier's own filter, named and public, because doc 17 section 3 asks
+/// two things of it. The frontier is where the lowest of these sit, and a
+/// lesson on any one of them opens with a check rather than with teaching:
+/// placement recorded a claim, and a check is the only thing that turns a
+/// claim into evidence.
+pub fn unverified_claim(concept: &Concept, mastered_at: f64) -> bool {
+    claims_to_know(concept) && !verified(concept, mastered_at)
 }
 
 /// A rating of 2 or more: "can explain it" or "can apply it".

@@ -846,6 +846,33 @@ impl Core {
         Ok(Some(page_id))
     }
 
+    /// Doc 17 section 3: whether this topic is a concept the learner claimed
+    /// and nobody has checked.
+    ///
+    /// A lesson on one of those opens with a check, because placement recorded
+    /// a claim and only a check turns a claim into evidence. Resolved by term,
+    /// which is what a lesson's topic is and what the Map's Start lesson hands
+    /// over; a topic that names no concept is somebody learning something new,
+    /// and there is no claim to test.
+    ///
+    /// Never an error: a lesson that could not read the map still starts, with
+    /// doc 14's intake, which is what every lesson did before this rule.
+    fn claimed_but_unchecked(&self, topic: &str) -> bool {
+        let Ok((rows, _)) = repo::read_map(&self.store, &self.profile_id) else {
+            return false;
+        };
+        let mastered_at = self
+            .packs
+            .get(&self.pack_code)
+            .map(|p| p.learning_templates.mastered_at)
+            .unwrap_or(0.8);
+        let wanted = topic.trim().to_lowercase();
+        tessera_agents::learning::concepts_from(&rows)
+            .iter()
+            .filter(|c| c.term.trim().to_lowercase() == wanted)
+            .any(|c| tessera_agents::learning::unverified_claim(c, mastered_at))
+    }
+
     /// Grade one check and let doc 17 section 4's ladder decide what follows.
     ///
     /// The rule lives in `tessera-agents`; what this adds is the two things it
@@ -1748,10 +1775,34 @@ pub fn build_router() -> Router<Core> {
         }
         let session_id =
             repo::start_learn_session(&mut core.store, &p.board_id, p.topic.trim()).map_err(store_error)?;
-        let turn = core
-            .tutor_turn(&p.board_id, "intake", None, None)
-            .map_err(core_error)?;
-        Ok(json!({ "session_id": session_id, "turn": turn }))
+
+        // Doc 17 section 3: "the first lesson checks the frontier before
+        // teaching anything, so an overconfident rating is caught within the
+        // first two questions". Placement already asked how much the learner
+        // knows and wrote down the answer, so intake would be asking it twice
+        // and teaching first would be teaching on the strength of a claim.
+        //
+        // A check that produced no item falls back to intake rather than
+        // opening a panel with nothing in it: doc 17 section 4's sourcing order
+        // ends at "request a card first", and a profile with no verified card
+        // anywhere has nothing to ask about yet.
+        let claimed = core.claimed_but_unchecked(p.topic.trim());
+        let checked_first = claimed
+            .then(|| core.tutor_turn(&p.board_id, "checking", None, None).ok())
+            .flatten()
+            .filter(|turn| turn["check"]["item"]["id"].is_string());
+        let opened_with_a_check = checked_first.is_some();
+        let turn = match checked_first {
+            Some(turn) => turn,
+            None => core
+                .tutor_turn(&p.board_id, "intake", None, None)
+                .map_err(core_error)?,
+        };
+        Ok(json!({
+            "session_id": session_id,
+            "turn": turn,
+            "opened_with_a_check": opened_with_a_check,
+        }))
     });
 
     r.register("learn.get", |core: &mut Core, p| {

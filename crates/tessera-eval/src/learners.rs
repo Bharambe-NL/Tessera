@@ -260,6 +260,11 @@ pub fn place(
             continue;
         }
         record.rated_only.push(json!({
+            // The product's own id, so the scorer can join a claim to the
+            // checks that tested it. Doc 17 section 3's whole point is that one
+            // is a claim and the other is evidence, and a metric about the
+            // first catching up with the second needs both named the same way.
+            "concept_id": concept["concept_id"],
             "term": concept["term"],
             "self_rating": concept["self_rating"],
             "mastery": concept["mastery"],

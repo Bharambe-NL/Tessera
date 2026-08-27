@@ -779,12 +779,16 @@ def test_every_scripted_learner_says_what_it_claims_and_what_it_can_answer(corpu
         )
         assert learner["expected_frontier"] == expected
 
-    # The overconfident rater claims everything and can answer only the bottom,
-    # which is the case doc 17 section 3 is written against.
+    # The overconfident rater claims to be able to apply everything and can
+    # only recite it, which is the case doc 17 section 3 is written against: a
+    # claim of 3 puts a concept on the frontier, the check at level 1 passes,
+    # and the one at level 2 is where the claim ends. A policy that answered
+    # everything at the frontier and nothing above it would be right where it
+    # is measured and so catchable nowhere.
     over = learners["overconfident"]
     assert all(r == 3 for r in over["ratings"].values())
-    for concept_id, levels in over["answers"].items():
-        assert bool(levels) == (by_id[concept_id]["depth"] == 0)
+    assert all(sorted(levels) == [1] for levels in over["answers"].values())
+    assert all(concept_id in by_id for concept_id in over["answers"])
 
     # And the one who is right below level 3 is exactly that.
     below = learners["right_below_three"]
@@ -1787,6 +1791,73 @@ def test_a_learning_record_is_traced_line_by_line_to_the_rows_behind_it(
     )
     assert waiting.value is None
     assert "learn.end" in waiting.note
+
+
+def test_an_overclaim_is_caught_at_the_level_it_was_claimed_at(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 17 section 3: "an overconfident rating is caught within the first two
+    questions", doc 17 section 10's 0.95.
+
+    What counts as an overclaim is the whole of this: a check failed at or
+    below the level the rating claimed. A rating of 2 says "can explain it",
+    which is level 2, so failing at level 3 is the ladder finding the ceiling
+    of an honest claim rather than catching a false one.
+    """
+    session = {
+        "learner_id": "overconfident",
+        "frontier": ["LC-01"],
+        "expected_frontier": ["LC-01"],
+        "confirmed_edges_not_from_the_path": 0,
+        "verified_cards": ["card-1"],
+        "rated_only": [{"concept_id": "k1", "term": "one", "self_rating": 3, "mastery": 0.35}],
+        "checks": [
+            {"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 2, "correct": False, "card_id": "card-1"},
+        ],
+    }
+    caught = _named(
+        _learner_report(tmp_path / "caught", corpus, [session]),
+        "overconfident_rating_caught",
+    )
+    assert caught.value == 1.0
+
+    # The same claim, tested three checks in. The lesson taught on the strength
+    # of it before asking, which is the failure the flow exists to stop.
+    late = dict(
+        session,
+        checks=[
+            {"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 2, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 3, "correct": False, "card_id": "card-1"},
+        ],
+    )
+    assert (
+        _named(
+            _learner_report(tmp_path / "late", corpus, [late]),
+            "overconfident_rating_caught",
+        ).value
+        == 0.0
+    )
+
+    # An honest claim of 2 whose ladder ran past it is not an overclaim at all,
+    # so it is not a row. This is the case the first version of the metric
+    # scored as a late catch, which is what made it read 0.667.
+    honest = dict(
+        session,
+        rated_only=[{"concept_id": "k1", "term": "one", "self_rating": 2, "mastery": 0.35}],
+        checks=[
+            {"concept_id": "k1", "level": 1, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 2, "correct": True, "card_id": "card-1"},
+            {"concept_id": "k1", "level": 3, "correct": False, "card_id": "card-1"},
+        ],
+    )
+    nothing = _named(
+        _learner_report(tmp_path / "honest", corpus, [honest]),
+        "overconfident_rating_caught",
+    )
+    assert nothing.value is None
+    assert "claimed" in nothing.note
 
 
 def _web_report(tmp_path: Path, corpus: Path, rows: list[dict] | None) -> object:

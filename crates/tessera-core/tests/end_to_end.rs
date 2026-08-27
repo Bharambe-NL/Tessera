@@ -2303,6 +2303,92 @@ fn the_second_check_in_a_lesson_opens_one_rung_above_the_first() {
     assert_eq!(levels, vec![1, 2, 3], "the ladder did not move: {levels:?}");
 }
 
+/// Doc 17 section 3: "the first lesson checks the frontier before teaching
+/// anything, so an overconfident rating is caught within the first two
+/// questions".
+///
+/// Placement already asked the learner how much they know and wrote the answer
+/// down as a claim. Opening with doc 14's intake would ask the same question a
+/// second time, and opening with a plan would teach on the strength of a claim
+/// nobody has tested. So a lesson on a concept the learner rated and nobody has
+/// checked opens with the check.
+#[test]
+fn a_lesson_on_a_concept_the_learner_only_claimed_opens_with_a_check() {
+    let router = build_router();
+    let mut core = core_with(tutor_mock());
+
+    // A card first, on an ordinary board, so the lesson has something verified
+    // to draw an item from. Doc 17 section 4's sourcing order reaches for
+    // verified cards anywhere on the map before it asks for one.
+    let seed = core.create_board("Reading", "fast").expect("board");
+    let card = core.ask(&seed, "what are world models?", None).expect("card");
+
+    let (profile_id, pack_id): (String, String) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT profile_id, doctrine_pack_id FROM board WHERE id = ?1",
+            rusqlite::params![seed],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("board");
+    let now = tessera_store::now_iso8601();
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status, self_rating,
+                 learning_state, created_at, updated_at)
+             VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', ?1, 'world model', ?2, 'confirmed', 3,
+                     'rated', ?3, ?3)",
+            rusqlite::params![profile_id, pack_id, now],
+        )
+        .expect("a concept the learner claimed");
+    core.store
+        .conn()
+        .execute(
+            "INSERT INTO concept_link (id, concept_id, target_type, target_ref, relation,
+                 proposed_by, status, created_at)
+             VALUES ('01BX5ZZKBKACTAV9WEVGEMMVRZ', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'card', ?1,
+                     'explains', 'librarian', 'confirmed', ?2)",
+            rusqlite::params![card.card_id, now],
+        )
+        .expect("the card that covers it");
+
+    let board_id = core.create_board("Lesson", "fast").expect("board");
+    let started = call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": board_id, "topic": "world model" }),
+    );
+    assert_eq!(
+        started["opened_with_a_check"], true,
+        "a lesson on a claim taught before it checked: {started}"
+    );
+    assert!(
+        started["turn"]["check"]["item"]["id"].is_string(),
+        "the first turn carried no check: {started}"
+    );
+
+    // And a topic nobody has claimed opens the way doc 14 says it does. There
+    // is nothing to catch, so asking would be a question out of nowhere.
+    let other = core.create_board("Lesson", "fast").expect("board");
+    let fresh = call(
+        &router,
+        &mut core,
+        "learn.start",
+        json!({ "board_id": other, "topic": "reinforcement learning" }),
+    );
+    assert_eq!(
+        fresh["opened_with_a_check"], false,
+        "a lesson on something new opened with a check: {fresh}"
+    );
+    assert!(
+        fresh["turn"]["questions"].is_array(),
+        "the first turn was not intake: {fresh}"
+    );
+}
+
 /// Doc 17 section 4's item sourcing order, and the rule underneath it: "no item
 /// is ever generated from unverified text".
 ///
