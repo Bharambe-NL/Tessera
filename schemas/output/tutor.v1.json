@@ -106,6 +106,10 @@
         },
         "next_if_wrong": {
           "type": "string"
+        },
+        "concept_id": {
+          "$ref": "tessera:entity/common.v1#/$defs/ulid",
+          "description": "Doc 17 section 6: which concept this check is about. Written by the pipeline from the plan's target rather than asked of the model, so a check names the concept the learner was put on and the ladder has a row to move when the answer is graded."
         }
       }
     },

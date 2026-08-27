@@ -199,6 +199,23 @@ fn with_vault(core: &mut Core) {
     ));
 }
 
+/// A rated concept, so a lesson has something on the frontier to work on.
+///
+/// Doc 17 section 3 puts a learner on the frontier from their own ratings, and
+/// doc 17 section 4's ladder moves a concept. A profile with an empty map has
+/// no frontier, so a check names no concept and nothing adapts, which is what a
+/// learner who has rated nothing would actually get.
+fn with_learning(core: &mut Core) {
+    let profile_id = core.profile_id.clone();
+    let pack_id = core.active_pack_id().expect("pack id");
+    let concept_id =
+        tessera_store::repo::ensure_concept(&mut core.store, &profile_id, &pack_id, "world model")
+            .expect("a concept on the map");
+    // Doc 17 section 2.1: a rating is a claim, and a claim of 2 or more is what
+    // puts a concept on the frontier.
+    tessera_store::repo::rate_concept(&mut core.store, &concept_id, 2).expect("a rating");
+}
+
 fn tutor_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
     // Doc 14's turns, from the one fixture the eval's grounded mock also reads.
     // Two scripts would score two products.
@@ -567,6 +584,14 @@ fn handle(stream: &mut TcpStream, root: &Path, core: &mut Core, router: &tessera
         // see `with_vault`.
         if path.contains("vault") {
             with_vault(core);
+        }
+        // `/reset?learning=1` puts one rated concept on the map, which is what
+        // doc 17 section 4's ladder needs to have something to move. Its own
+        // flag: a concept on the map is a Library row, and the Library test
+        // asserts what a proposed concept looks like on a profile that had
+        // none.
+        if path.contains("learning") {
+            with_learning(core);
         }
         respond(
             stream,

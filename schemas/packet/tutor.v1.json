@@ -72,6 +72,19 @@
       ],
       "description": "Which card a check or an opening is about. Doc 14 section 3.5's next_* questions must reference this card's entities."
     },
+    "plan": {
+      "type": ["object", "null"],
+      "description": "Doc 17 sections 4 and 6: the Planner's targets and the rung to open at, so the Tutor's check selection is not a free choice. Null when the learner has rated nothing, because a frontier nobody has spoken about is a guess dressed as a plan.",
+      "properties": {
+        "targets": { "type": "array", "items": { "$ref": "tessera:entity/common.v1#/$defs/ulid" } },
+        "include_prerequisites": { "type": "array", "items": { "$ref": "tessera:entity/common.v1#/$defs/ulid" } },
+        "level": { "type": "integer", "minimum": 1, "maximum": 4 }
+      }
+    },
+    "sourcing": {
+      "enum": ["board", "map", "none"],
+      "description": "Doc 17 section 4's item sourcing order, said out loud: `board` when the lesson board's own verified cards filled the packet, `map` when they came from verified cards elsewhere, `none` when there are none and the tutor requests a card before checking."
+    },
     "learner_message": {
       "type": ["string", "null"],
       "description": "Doc 14 section 3.4: at any time the learner can type in the panel."

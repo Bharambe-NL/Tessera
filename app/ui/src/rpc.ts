@@ -184,7 +184,7 @@ export class Rpc {
   }
 
   answerCheck(boardId: string, item: ExerciseItem, picked: string, conceptIds: string[] = []) {
-    return this.call<{ correct: boolean }>('learn.answer_check', {
+    return this.call<CheckResult>('learn.answer_check', {
       board_id: boardId,
       item,
       picked,
@@ -511,6 +511,23 @@ export interface ConceptRow {
   links: number;
 }
 
+/**
+ * What a graded check decided. Doc 17 section 4.
+ *
+ * `next_level` is the rung the next check on this concept opens at, and
+ * `remedy` is what a failure calls for. Doc 14 section 3.7: a remedy is offered
+ * and never taken, so nothing here happens on its own.
+ */
+export interface CheckResult {
+  correct: boolean;
+  level: number;
+  next_level: number;
+  remedy:
+    | { kind: 'none' }
+    | { kind: 'card'; level: number }
+    | { kind: 'prerequisite'; concept_id: string; level: number };
+}
+
 /** One item of an exercise. Doc 08 section 5, with doc 17 section 4's ladder. */
 export interface ExerciseItem {
   id: string;
@@ -555,8 +572,10 @@ export interface TutorTurn {
   plan?: { title: string; cards: { question: string; why: string }[] };
   check?: {
     item: ExerciseItem;
-    next_if_right: string | null;
-    next_if_wrong: string | null;
+    next_if_right?: string | null;
+    next_if_wrong?: string | null;
+    /** Doc 17 section 6: which concept this check is about, so grading can move it. */
+    concept_id?: string;
   };
   reply?: string;
   open?: string | null;

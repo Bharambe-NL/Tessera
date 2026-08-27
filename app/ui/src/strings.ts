@@ -176,6 +176,11 @@ export const COPY = {
   learnNext: 'Open the next card',
   learnAnother: 'Another question',
   learnStop: 'End the session',
+  // Doc 17 section 4's remedy, offered rather than taken. The level is left out
+  // of the sentence: a learner reads what happens next, not which rung a rule
+  // moved them to.
+  learnRemedyCard: 'The next question on this goes back a step.',
+  learnRemedyPrerequisite: 'This rests on something earlier. The next card covers that first.',
   learnRight: 'Right.',
   learnWrong: 'Not quite.',
   learnGotItRight: 'Got it right',

@@ -19,7 +19,7 @@ import { COPY } from '../strings.js';
 export interface TutorState {
   turn: TutorTurn | null;
   /** Set once a check has been answered, so the feedback chip can say which. */
-  feedback: { correct: boolean; explanation: string } | null;
+  feedback: { correct: boolean; explanation: string; remedy?: string } | null;
   busy: boolean;
 }
 
@@ -102,9 +102,14 @@ function checkHTML(turn: TutorTurn, state: TutorState): string {
     })
     .join('');
 
+  // Doc 17 section 4's remedy, said as a sentence and offered as a choice. The
+  // learner reads what a wrong answer suggests next and decides, which is doc
+  // 14 section 3.7's rule that nothing happens on its own.
+  const remedy = state.feedback?.remedy ? `<p class="remedy">${esc(state.feedback.remedy)}</p>` : '';
   const feedback = state.feedback
     ? `<p class="feedback ${state.feedback.correct ? 'right' : 'wrong'}">` +
       `${state.feedback.correct ? COPY.learnRight : COPY.learnWrong} ${esc(state.feedback.explanation)}</p>` +
+      remedy +
       // Doc 14 section 3.4: then a choice. Never an automatic next step.
       `<div class="opts">` +
       `<button data-learn-act="next">${COPY.learnNext}</button>` +

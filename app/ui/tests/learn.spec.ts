@@ -13,7 +13,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
-import { freshCore, useCore } from './shell.js';
+import { freshCore, learningCore, useCore } from './shell.js';
 
 test.beforeEach(async ({ page }) => {
   await freshCore(page);
@@ -88,6 +88,12 @@ test('a session runs from a topic to a plan to a checked card', async ({ page })
 });
 
 test('a wrong answer is told it is wrong and still explained', async ({ page }) => {
+  // Doc 17 section 4's remedy needs a concept on the map to move, so this one
+  // learner has rated something. The reset replaces the core the page booted
+  // against, so the shell is reloaded onto the new one.
+  await learningCore(page);
+  await page.reload();
+  await expect(page.locator('#mode-label')).toHaveText('Live');
   await startLearning(page, 'world models');
   await answerIntake(page);
   await page.locator('#learn-open-plan').click();
@@ -103,6 +109,10 @@ test('a wrong answer is told it is wrong and still explained', async ({ page }) 
   await expect(feedback).toContainText('The card opens with it.');
   // And the right option is shown once it can no longer be the answer.
   await expect(page.locator('#tutor-body .opt.right')).toHaveCount(1);
+
+  // Doc 17 section 4: a failure calls for a remedy, and doc 14 section 3.7 has
+  // the learner read it as a choice rather than watch it happen.
+  await expect(page.locator('#tutor-body .remedy')).toContainText('goes back a step');
 });
 
 test('the next card opens as a follow-up on the card that was checked', async ({ page }) => {

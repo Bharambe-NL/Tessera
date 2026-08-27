@@ -704,6 +704,15 @@ body.learning #main {
   color: var(--amber-ink);
 }
 
+/* Doc 17 section 4's remedy. Quieter than the verdict above it: the learner
+   reads whether they were right first, and what happens next second. */
+.remedy {
+  margin: calc(var(--s3) * -1 + var(--s1)) 0 var(--s3);
+  padding: 0 var(--s3);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
 .plan ol {
   margin: 0 0 var(--s4);
   padding-left: var(--s5);

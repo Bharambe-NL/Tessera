@@ -91,6 +91,14 @@ THRESHOLDS: dict[str, float] = {
     # and an item stamped with a level nobody asked for is a check the tutor
     # would then adapt from: pass at n moves to n+1, and n has to be true.
     "exercise_level_agreement": 1.00,
+    # Doc 17 section 10: "level adaptation follows the rule 1.00". A rung that
+    # does not follow the last check is a learner moved up a ladder they are not
+    # standing on, and the whole ladder exists to stop exactly that.
+    "level_adaptation": 1.00,
+    # Doc 17 section 10: "no check generated from unverified text 1.00". The
+    # rule that makes it structural is the packet carrying only verified cards;
+    # this is the measurement that says the structure held.
+    "checks_from_verified_cards": 1.00,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
     # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
     # taxonomy that fed it. stakes_accuracy replaces it as the classification
@@ -464,7 +472,13 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
     proposals it saw and the score every rated concept ended at, and the
     arithmetic happens here.
     """
-    names = ("frontier_correctness", "proposals_never_applied", "mastery_honesty")
+    names = (
+        "frontier_correctness",
+        "proposals_never_applied",
+        "mastery_honesty",
+        "level_adaptation",
+        "checks_from_verified_cards",
+    )
     if not manifest.get("learning_enabled"):
         waiting = "no learner walked the path; run the eval with --learner"
         return [Metric(name, None, 0, 0, waiting) for name in names]
@@ -518,7 +532,66 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
             "rated concepts whose score stayed at or below a half",
         )
     )
+
+    # Doc 17 section 4's ladder, re-derived from the rungs the lesson asked at.
+    # Deliberately a second implementation of `next_level`: the product runs the
+    # rule and the rule decides what it asks next, so measuring its output with
+    # its own code would report 1.000 whatever the rule did.
+    checks = [(s, c) for s in sessions for c in (s.get("checks") or [])]
+    steps = 0
+    followed = 0
+    for session in sessions:
+        previous: dict[str, dict] = {}
+        for check in session.get("checks") or []:
+            concept = check.get("concept_id") or ""
+            before = previous.get(concept)
+            if before is not None:
+                steps += 1
+                if check.get("level") == _next_level(before.get("level"), before.get("correct")):
+                    followed += 1
+            previous[concept] = check
+    if not checks:
+        waiting = "no lesson asked a check; the learner leg places and then teaches"
+        out.append(Metric("level_adaptation", None, 0, 0, waiting))
+        out.append(Metric("checks_from_verified_cards", None, 0, 0, waiting))
+        return out
+
+    out.append(
+        _ratio(
+            "level_adaptation",
+            followed,
+            steps,
+            "checks whose rung is the one the last check on that concept moved to",
+        )
+    )
+
+    # Doc 17 section 4: "no item is ever generated from unverified text". A
+    # check names the card it came from, and the leg recorded which cards on the
+    # lesson board the Verifier stood behind.
+    out.append(
+        _ratio(
+            "checks_from_verified_cards",
+            sum(
+                1
+                for s, c in checks
+                if c.get("card_id") and c["card_id"] in set(s.get("verified_cards") or [])
+            ),
+            len(checks),
+            "checks drawn from a card the Verifier stood behind",
+        )
+    )
     return out
+
+
+def _next_level(level: int | None, passed: bool | None) -> int:
+    """Doc 17 section 4's ladder: pass at n moves to n+1, fail to n-1.
+
+    Clamped at both ends. Level 4 is the last rung the doc names, and a failure
+    at level 1 has nowhere lower to go: what follows two of those is a card on
+    the concept's prerequisite, which is a different rule.
+    """
+    current = min(max(level or 1, 1), 4)
+    return min(current + 1, 4) if passed else max(current - 1, 1)
 
 
 def load_vault(corpus: Path) -> list[dict]:
