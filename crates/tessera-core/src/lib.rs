@@ -12,6 +12,7 @@
 pub mod bridge;
 pub mod core;
 pub mod pipeline;
+pub mod raster;
 pub mod retrieval;
 pub mod rpc;
 

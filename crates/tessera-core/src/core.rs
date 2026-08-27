@@ -248,6 +248,83 @@ impl Core {
         self.ask_on(board_id, question, depth_override, Anchor::default())
     }
 
+    /// Read an image into a card. Doc 07 part A.
+    pub fn read_image(
+        &mut self,
+        board_id: &str,
+        image_id: &str,
+    ) -> Result<pipeline::CardOutcome, CoreError> {
+        let policy = self.resolved()?;
+        let pack = self.packs.get(&self.pack_code)?.clone();
+        let ctx = RunContext {
+            registry: &self.registry,
+            provider: self.provider.as_ref(),
+            pack: &pack,
+            policy,
+            profile_id: self.profile_id.clone(),
+            source: self.source,
+            ledger: &self.ledger,
+            retrievers: &self.retrievers,
+        };
+
+        self.runtime
+            .handle()
+            .clone()
+            .block_on(pipeline::run_read(&mut self.store, &ctx, board_id, image_id))
+            .map_err(|f| CoreError::Runtime(f.to_string()))
+    }
+
+    /// Put an image on a board. Doc 01 section 4.6.
+    pub fn add_image(
+        &mut self,
+        board_id: &str,
+        bytes: &[u8],
+        mime: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<String, CoreError> {
+        Ok(repo::write_image(
+            &mut self.store,
+            repo::NewImage {
+                board_id,
+                origin: "pasted",
+                bytes,
+                mime,
+                width,
+                height,
+                source_ink_ids: None,
+            },
+        )?)
+    }
+
+    /// Turn a board's ink into an image. Doc 12 phase 9's sketch raster path.
+    ///
+    /// The strokes stay: the raster is a second representation of the same
+    /// drawing, made so a vision model has something to look at, and deleting
+    /// the ink would take away the thing the person can still edit.
+    pub fn rasterise_ink(&mut self, board_id: &str) -> Result<String, CoreError> {
+        let strokes: Vec<crate::raster::Stroke> = repo::read_ink(&self.store, board_id)?
+            .into_iter()
+            .filter_map(|s| serde_json::from_value(s).ok())
+            .collect();
+
+        let raster = crate::raster::rasterise(&strokes)
+            .map_err(|e| CoreError::Runtime(e.to_string()))?;
+
+        Ok(repo::write_image(
+            &mut self.store,
+            repo::NewImage {
+                board_id,
+                origin: "sketch_raster",
+                bytes: &raster.bytes,
+                mime: "image/png",
+                width: raster.width,
+                height: raster.height,
+                source_ink_ids: None,
+            },
+        )?)
+    }
+
     /// Generate an exercise from the cards this board already holds. Doc 08.
     pub fn make_exercise(
         &mut self,
@@ -461,6 +538,39 @@ fn default_library_limit() -> i64 {
     500
 }
 
+/// A bound on one pasted image, so a gesture cannot fill the profile folder.
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Decode one base64 image. `None` on anything that is not base64, which the
+/// boundary reports as a bad image rather than storing a blob nobody can read.
+fn decode_base64(s: &str) -> Option<Vec<u8>> {
+    const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut lookup = [255u8; 256];
+    for (i, c) in SET.iter().enumerate() {
+        lookup[*c as usize] = i as u8;
+    }
+
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+    for byte in s.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = lookup[byte as usize];
+        if value == 255 {
+            return None;
+        }
+        buffer = (buffer << 6) | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 /// Register every method the shell may call. Doc 10 section 2's boundary.
 pub fn build_router() -> Router<Core> {
     let mut r = Router::new();
@@ -619,6 +729,61 @@ pub fn build_router() -> Router<Core> {
         let sources = repo::list_sources(&core.store, &core.profile_id, p.limit.clamp(1, 1000))
             .map_err(store_error)?;
         Ok(json!({ "sources": sources }))
+    });
+
+    // Doc 01 section 4.6. The bytes arrive base64 because the boundary is
+    // JSON-RPC and a webview has no path to the blob store; the core writes them
+    // once, by hash, so a board forked from a bundle never duplicates a picture.
+    r.register("board.add_image", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct AddImage {
+            board_id: String,
+            data: String,
+            mime: String,
+            width: u32,
+            height: u32,
+        }
+        let p: AddImage = params(p)?;
+        let bytes = decode_base64(&p.data).ok_or_else(|| {
+            RpcError::core("bad_image", "That image could not be read as an image.")
+        })?;
+        // A bound, so a paste cannot fill the profile folder in one gesture.
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return Err(RpcError::core(
+                "image_too_large",
+                "That image is over 20 MB. Scale it down and paste it again.",
+            ));
+        }
+        let id = core
+            .add_image(&p.board_id, &bytes, &p.mime, p.width, p.height)
+            .map_err(core_error)?;
+        Ok(json!({ "image_id": id }))
+    });
+
+    // Doc 07 section A3: "on demand from Read sketch, Read this image, or Read
+    // on an Image row".
+    r.register("card.read", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Read {
+            board_id: String,
+            image_id: String,
+        }
+        let p: Read = params(p)?;
+        let outcome = core.read_image(&p.board_id, &p.image_id).map_err(core_error)?;
+        Ok(json!({
+            "card_id": outcome.card_id,
+            "run_id": outcome.run_id,
+            "status": outcome.status,
+            "confidence": outcome.confidence,
+            "flags": outcome.flags,
+        }))
+    });
+
+    // The sketch raster path. Doc 12 phase 9 names it; the ink survives it.
+    r.register("board.rasterise_ink", |core: &mut Core, p| {
+        let p: BoardRef = params(p)?;
+        let image_id = core.rasterise_ink(&p.board_id).map_err(core_error)?;
+        Ok(json!({ "image_id": image_id }))
     });
 
     // Doc 08 section 3: "on demand from a board". The toolbar's Check

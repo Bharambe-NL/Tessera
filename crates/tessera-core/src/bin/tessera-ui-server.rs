@@ -94,6 +94,30 @@ fn mock() -> Arc<MockProvider> {
                 // cards in its prompt and invents nothing, so doc 08 section 5's
                 // traceability rule passes for a reason rather than by luck.
                 "exercise" => exercise_reply(request),
+                // A mock has no eyes. What this stands in for is the shape of a
+                // vision answer, so the deterministic half of doc 07 part A is
+                // drivable: the injection check, the summary mapping and the
+                // card. Whether a real model recovers a real table is measured
+                // on a live vision run and nowhere else.
+                "read" => MockResponse::Json(json!({
+                    "description": "A hand drawn table of two rules and the values beside them.",
+                    "recovered_structure": {
+                        "kind": "table",
+                        "table": {
+                            "columns": ["Rule", "Value"],
+                            "rows": [
+                                ["the model validation interval", "20 months"],
+                                ["the confidence level", "96.5 per cent"]
+                            ]
+                        },
+                        "text_blocks": [{ "text": "Rule", "bbox": [0, 0, 40, 12] }]
+                    },
+                    "detected_source_markers": [],
+                    "notable": [{ "text": "20 months", "kind": "number" }],
+                    "legibility": 0.9,
+                    "injection_suspected": false,
+                    "caveats": []
+                })),
                 _ => MockResponse::Garbage,
             }
         }))),
