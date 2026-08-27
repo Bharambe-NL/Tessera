@@ -1759,6 +1759,59 @@ fails six of them.
 
 ---
 
+### BN-098 Walkthrough line 15 had no screen, and finding one out took four defects
+
+**Spec** 01 section 4.4, 15 section 2, 12's acceptance walkthrough line 15.
+
+**The row** is "a card on a second board builds on a verified card from the
+first, citing the original source". The core has done it since M6 and a Rust test
+has proved it since then. `builds_on` was recorded on the card, carried over the
+RPC in `board.get`, and rendered by nothing. The plan called this the encouraging
+row because the hard part was built; what it lacked was a surface, and a surface
+that does not exist is indistinguishable from one that does until someone drives
+it.
+
+**Decision** The build trail names the prior cards, read from `card.answered.v1`
+like every other row in that disclosure rather than from the card row, so the
+disclosure has one source and cannot disagree with itself. Doc 15 section 2's
+rule decides the wording: it names the cards and never stands in for the
+citations below it, because a prior card is context and the source it cited is
+the evidence.
+
+**Driving it end to end found four things**, none of which a unit test would have.
+
+1. **The boards retriever is not a retriever.** Doc 04 section 10's
+   `no_retriever_enabled` refuses a plan with nothing to retrieve from, and doc
+   05 adds `boards` to every sub-question rather than making it a substitute for
+   one. A dev core with only memory configured could not answer a deep card at
+   all.
+2. **The dev server could never produce a verified card.** Its Synthesizer mock
+   returned a fixed answer that cited nothing, so every deep card came back
+   flagged `unsupported_claim`, and doc 15 section 3 rules out a card with an
+   open block flag. Memory had nothing to remember, in the one place a person
+   would look at it.
+3. **A citation marker after the full stop is its own sentence.** The Synthesizer
+   binds by walking sentences and reading the `[n]` markers in each, so the first
+   fix put the marker outside the claim it belonged to and every card stayed
+   flagged. The marker goes before the stop.
+4. **`verifier_below_threshold` was telling people something untrue.** Its
+   message read "the support check is not enabled yet", which stopped being true
+   at M8 when that check was built. Doc 07 section B9 has the rule fire while a
+   pack has not reached 0.90 agreement with the ledger check, which no pack has,
+   so it fires on every deep and research card in the product. Anyone reading it
+   would conclude nothing had checked their card, when what is pending is the
+   measurement that would let the checking run unsupervised.
+
+**`own_card_sole_support` still did not fire**, and correctly: the answer carries
+no figures, and BN-089 scoped the rule to figures on purpose. Its first real
+opportunity came and went, which is worth more than the n/a it keeps.
+
+**Reason** Recorded because the fourth one is the interesting one. It was in
+front of a user on every deep card since M8 and no test noticed, because no test
+reads a flag's prose and the copy lint checks style rather than truth.
+
+---
+
 ---
 
 ## Measured findings
