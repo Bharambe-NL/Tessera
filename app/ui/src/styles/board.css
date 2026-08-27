@@ -113,8 +113,17 @@ body {
   text-wrap: balance;
 }
 
-.card .head .close {
+/* Doc 09 section 5's Rerun verb, pushed to the trailing edge of the header. */
+.card .head .rerun {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  flex: none;
+}
+
+.card .head .rerun:hover:not(:disabled) {
+  color: var(--ink);
 }
 
 .badge,
@@ -171,6 +180,40 @@ body {
   background: var(--rust);
   color: var(--rust-ink);
   border-color: transparent;
+}
+
+/* The card's own flags, opened by the chip. Doc 09 section 6 keeps the
+   decisions themselves in the Flags queue; this is the reason, in place. */
+.flag-list {
+  list-style: none;
+  margin: 0 0 var(--s4);
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+
+.flag-list li {
+  display: grid;
+  gap: 2px;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-node);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  font-size: 12px;
+}
+
+.flag-list li.sev-warn {
+  border-left-color: var(--amber-ink);
+}
+
+.flag-list li.sev-block {
+  border-left-color: var(--rust-ink);
+}
+
+.flag-list .rule {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-2);
 }
 
 .card .body {

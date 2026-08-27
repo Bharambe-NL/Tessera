@@ -98,8 +98,33 @@ export class Rpc {
     return this.call<Board>('board.get', { board_id: boardId });
   }
 
-  ask(boardId: string, question: string, depth?: string) {
-    return this.call<AskResult>('card.ask', { board_id: boardId, question, depth });
+  /**
+   * Doc 09 section 5's Branch verb, in its three forms. With no anchor at all
+   * the card is a root; with a parent alone it is a follow-up; with a parent and
+   * either anchor it is a branch. The core rejects an anchor with no parent,
+   * because a span belongs to the card it was selected on.
+   */
+  ask(boardId: string, question: string, depth?: string, anchor: AskAnchor = {}) {
+    return this.call<AskResult>('card.ask', {
+      board_id: boardId,
+      question,
+      depth,
+      parent_card_id: anchor.parentCardId,
+      anchor_text: anchor.anchorText,
+      anchor_block_ref: anchor.anchorBlockRef,
+    });
+  }
+
+  /** Doc 09 section 5's Rerun verb: check the card again, retrieve nothing. */
+  verify(boardId: string, cardId: string) {
+    return this.call<AskResult>('card.verify', { board_id: boardId, card_id: cardId });
+  }
+
+  rename(boardId: string, title: string) {
+    return this.call<{ board_id: string; title: string }>('board.rename', {
+      board_id: boardId,
+      title,
+    });
   }
 
   history(boardId: string) {
@@ -125,6 +150,15 @@ export interface BoardSummary {
   mode: string;
   cards: number;
   open_flags: number;
+}
+
+/** Where a new card hangs from. Mirrors `Anchor` in `tessera-core`. */
+export interface AskAnchor {
+  parentCardId?: string;
+  /** The highlighted span, for the highlight to branch verb. */
+  anchorText?: string;
+  /** A JSON pointer into the parent visual payload, for block investigate. */
+  anchorBlockRef?: string;
 }
 
 export interface AskResult {

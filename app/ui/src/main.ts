@@ -12,12 +12,12 @@ import './styles/board.css';
 import './styles/chrome.css';
 
 import { boundsOf, layout } from './canvas/layout.js';
-import { drawEdges, measureHeights, renderCards } from './canvas/render.js';
+import { drawEdges, measureHeights, renderCards, toggleFlags } from './canvas/render.js';
 import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
-import { Rpc, RpcError, type Notification } from './rpc.js';
+import { Rpc, RpcError, type AskAnchor, type Notification } from './rpc.js';
 import { COPY, PRODUCT_NAME } from './strings.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -85,14 +85,18 @@ function toast(message: string, level: 'info' | 'warn' | 'error' = 'info'): void
  * The stage list is derived from events (doc 09 section 4), so it is the
  * bridge's notifications that fill it, never a guess made here.
  */
-function placeholderCard(id: string, question: string): void {
+function placeholderCard(id: string, question: string, anchor: AskAnchor): void {
   if (!board) return;
+  const parent = anchor.parentCardId ?? null;
+  const anchored = Boolean(anchor.anchorText || anchor.anchorBlockRef);
   board.cards.push({
     id,
-    parent_card_id: null,
-    kind: 'root',
-    anchor_text: null,
-    anchor_block_ref: null,
+    parent_card_id: parent,
+    // The same rule the core applies, so the placeholder draws the edge the
+    // finished card will draw rather than jumping when the reload lands.
+    kind: parent === null ? 'root' : anchored ? 'branch' : 'follow',
+    anchor_text: anchor.anchorText ?? null,
+    anchor_block_ref: anchor.anchorBlockRef ?? null,
     question,
     depth,
     audience_id: null,
@@ -110,31 +114,84 @@ function placeholderCard(id: string, question: string): void {
   renderBoard(board);
 }
 
+/**
+ * Set when a notification says the board changed in a way the read model has to
+ * be re-read for.
+ *
+ * Pattern 25: the notification vocabulary is a view over the log, so most kinds
+ * announce a change rather than carrying it. `flag_raised` names a rule and a
+ * severity and not the reason the Flags queue shows, and `flag_resolved` names
+ * only the card, so guessing the rest here would put a string on screen that no
+ * event said. Re-reading the board is what turns the announcement into content.
+ */
+let staleRead = false;
+
 function applyNotification(n: Notification): void {
   if (!board) return;
   if (n.kind === 'toast') {
     toast(n.message, n.level);
     return;
   }
-  if (!('card_id' in n)) return;
+  if (n.kind === 'board_updated') {
+    staleRead = true;
+    return;
+  }
 
   const card = board.cards.find((c) => c.id === n.card_id);
-  if (!card) return;
+  // A card the read model has never seen: the reload is what brings it in.
+  if (!card) {
+    staleRead = true;
+    return;
+  }
 
-  if (n.kind === 'card_stage') {
-    const existing = card.stages.find((s) => s.label === n.label);
-    if (existing) existing.done = n.done;
-    else card.stages.push({ label: n.label, done: n.done });
-    card.status = 'running';
+  switch (n.kind) {
+    case 'card_stage': {
+      const existing = card.stages.find((s) => s.label === n.label);
+      if (existing) existing.done = n.done;
+      else card.stages.push({ label: n.label, done: n.done });
+      card.status = 'running';
+      break;
+    }
+    // Terminal, and worth applying live rather than waiting: this is what stops
+    // the card spinning the moment its answer lands.
+    case 'card_answered': {
+      card.status = n.status === 'flagged' ? 'flagged' : 'done';
+      card.confidence = n.confidence;
+      staleRead = true;
+      break;
+    }
+    case 'card_failed': {
+      card.status = 'failed';
+      toast(n.reason, 'error');
+      break;
+    }
+    case 'card_updated':
+    case 'flag_raised':
+    case 'flag_resolved': {
+      staleRead = true;
+      break;
+    }
   }
 }
 
-async function drainNotifications(): Promise<void> {
+/**
+ * Read the bridge once and apply what it says.
+ *
+ * `allowReload` is false while an ask is in flight, because a reload replaces
+ * the card array and would drop the placeholder standing in for the card being
+ * written. The ask reloads once it finishes, so nothing is lost by waiting.
+ */
+async function drainNotifications(allowReload = true): Promise<void> {
   if (!boardId) return;
   try {
     const { notifications, index } = await rpc.notifications(boardId, lastEventIndex);
     lastEventIndex = index;
     for (const n of notifications) applyNotification(n);
+    if (staleRead && allowReload) {
+      staleRead = false;
+      await reload();
+      return;
+    }
     if (board) renderBoard(board);
   } catch {
     // A dropped poll is not worth telling the user about; the reload after the
@@ -144,52 +201,152 @@ async function drainNotifications(): Promise<void> {
 
 async function reload(): Promise<void> {
   if (!boardId) return;
+  staleRead = false;
   board = await rpc.getBoard(boardId);
   titleInput.value = board.title;
   renderBoard(board);
   viewport.fit(boundsOf(board.cards, heightOf));
 }
 
-async function submit(question: string): Promise<void> {
-  if (!boardId || !question.trim()) return;
-
-  ask.value = '';
-  ask.style.height = 'auto';
-  setMode('Working', 'busy');
+/**
+ * Run one call that writes a card, with the stage poll running underneath it.
+ *
+ * Ask and rerun differ only in the call and in whether a placeholder card is
+ * standing in, so the busy state, the poll, the error and the reload are here
+ * once rather than twice.
+ */
+async function whileRunning<T>(work: () => Promise<T>, failure: string): Promise<T | null> {
+  setMode(COPY.modeWorking, 'busy');
   composer.classList.add('busy');
-
-  // The card exists before the answer does, so the reader sees it start.
-  const provisional = `pending-${Date.now()}`;
-  placeholderCard(provisional, question.trim());
-
-  // Poll the bridge while the run is in flight. The core answers the ask
-  // synchronously, so this is what fills the stage list in the meantime.
-  const poll = window.setInterval(() => void drainNotifications(), 250);
+  const poll = window.setInterval(() => void drainNotifications(false), 250);
 
   try {
-    await rpc.ask(boardId, question.trim(), depth);
+    return await work();
   } catch (e) {
-    const message = e instanceof RpcError ? e.message : 'That card did not finish.';
-    toast(message, 'error');
+    toast(e instanceof RpcError ? e.message : failure, 'error');
+    return null;
   } finally {
     window.clearInterval(poll);
     composer.classList.remove('busy');
-    if (board) board.cards = board.cards.filter((c) => c.id !== provisional);
     await reload();
-    setMode(rpc.connected ? 'Live' : 'Offline', rpc.connected ? 'live' : 'offline');
+    setMode(rpc.connected ? COPY.modeLive : COPY.modeOffline, rpc.connected ? 'live' : 'offline');
   }
+}
+
+async function submit(question: string, anchor: AskAnchor = {}): Promise<void> {
+  if (!boardId || !question.trim()) return;
+
+  // The card exists before the answer does, so the reader sees it start. The
+  // reload at the end of the run replaces it with the card the core wrote.
+  placeholderCard(`pending-${Date.now()}`, question.trim(), anchor);
+
+  const id = boardId;
+  await whileRunning(() => rpc.ask(id, question.trim(), depth, anchor), COPY.askFailed);
+}
+
+/** Clear the composer and ask. Its own input, so its own reset. */
+function submitFromComposer(): void {
+  const question = ask.value;
+  ask.value = '';
+  ask.style.height = 'auto';
+  void submit(question);
+}
+
+/**
+ * One listener for every verb on every card. Doc 09 section 5.
+ *
+ * Delegation rather than a handler per card because `renderCards` rebuilds a
+ * card's markup whenever its signature changes, and a listener bound to an
+ * element that gets replaced stops firing without saying so. This one is bound
+ * to the container, which is never replaced.
+ */
+function wireCardActions(): void {
+  cardsEl.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    const button = target?.closest<HTMLElement>('[data-act]');
+    const cardEl = target?.closest<HTMLElement>('.card');
+    const cardId = cardEl?.dataset.cardId;
+    if (!button || !cardId || !boardId) return;
+
+    switch (button.dataset.act) {
+      case 'flags': {
+        toggleFlags(cardId);
+        if (board) renderBoard(board);
+        break;
+      }
+      case 'follow': {
+        const input = cardEl?.querySelector<HTMLInputElement>('.followup');
+        const question = input?.value ?? '';
+        if (!question.trim()) {
+          input?.focus();
+          break;
+        }
+        if (input) input.value = '';
+        void submit(question, { parentCardId: cardId });
+        break;
+      }
+      case 'rerun': {
+        const id = boardId;
+        void whileRunning(() => rpc.verify(id, cardId), COPY.rerunFailed);
+        break;
+      }
+    }
+  });
+
+  // Enter in a card's follow-up box sends it, matching the composer.
+  cardsEl.addEventListener('keydown', (e) => {
+    const input = (e.target as HTMLElement | null)?.closest<HTMLInputElement>('.followup');
+    if (!input || e.key !== 'Enter') return;
+    e.preventDefault();
+    const cardId = input.closest<HTMLElement>('.card')?.dataset.cardId;
+    if (!cardId || !input.value.trim()) return;
+    const question = input.value;
+    input.value = '';
+    void submit(question, { parentCardId: cardId });
+  });
+}
+
+/**
+ * Rename the board on blur or Enter.
+ *
+ * Doc 01 section 4.1: a board takes its title from the first question until a
+ * person names it, and this is what stops that inference.
+ */
+function wireTitle(): void {
+  const commit = () => {
+    const title = titleInput.value.trim();
+    if (!boardId || !board || !title || title === board.title) return;
+    const id = boardId;
+    void rpc
+      .rename(id, title)
+      .then(() => {
+        if (board) board.title = title;
+      })
+      .catch((e: unknown) => {
+        toast(e instanceof RpcError ? e.message : COPY.renameFailed, 'error');
+        if (board) titleInput.value = board.title;
+      });
+  };
+
+  titleInput.addEventListener('blur', commit);
+  titleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      titleInput.blur();
+    }
+  });
 }
 
 function wireComposer(): void {
   composer.addEventListener('submit', (e) => {
     e.preventDefault();
-    void submit(ask.value);
+    submitFromComposer();
   });
 
   ask.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      void submit(ask.value);
+      submitFromComposer();
     }
   });
 
@@ -304,11 +461,13 @@ async function boot(): Promise<void> {
   }
 
   wireComposer();
+  wireCardActions();
+  wireTitle();
 
   // No core behind the page: a plain browser can still see the canvas render,
   // which is what the fixture is for, but it cannot ask anything.
   if (!rpc.connected) {
-    setMode('Offline', 'offline');
+    setMode(COPY.modeOffline, 'offline');
     const fixture = makeBoard(Number(params.get('cards') ?? '6'));
     board = fixture;
     titleInput.value = fixture.title;
@@ -324,11 +483,11 @@ async function boot(): Promise<void> {
     const { boards } = await rpc.listBoards();
     boardId = boards[0]?.id ?? (await rpc.createBoard()).board_id;
     await reload();
-    setMode('Live', 'live');
+    setMode(COPY.modeLive, 'live');
     ask.focus();
   } catch (e) {
-    const message = e instanceof RpcError ? e.message : 'The core did not answer.';
-    setMode('Offline', 'offline');
+    const message = e instanceof RpcError ? e.message : COPY.coreSilent;
+    setMode(COPY.modeOffline, 'offline');
     toast(message, 'error');
   }
 }

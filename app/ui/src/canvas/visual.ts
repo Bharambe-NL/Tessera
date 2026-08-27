@@ -11,6 +11,7 @@
  * (doc 07 section B8.3: blocks that fail are hidden, never silently removed).
  */
 
+import { COPY } from '../strings.js';
 import type { BlockIndexEntry, BottomLine, TreeNode, Visual } from './types.js';
 
 const HUES = ['h1', 'h2', 'h3', 'h4'] as const;
@@ -50,8 +51,8 @@ function lookupFor(visual: Visual): BlockLookup {
 
 /** A hidden block leaves a placeholder naming why, per doc 09 section 4. */
 function hiddenBlock(entry: BlockIndexEntry): string {
-  return `<div class="block-hidden" data-ref="${esc(entry.ref)}">Hidden after review. ${esc(
-    entry.hidden_reason ?? 'A flag covers this block.',
+  return `<div class="block-hidden" data-ref="${esc(entry.ref)}">${COPY.blockHidden} ${esc(
+    entry.hidden_reason ?? COPY.blockHiddenUnexplained,
   )}</div>`;
 }
 

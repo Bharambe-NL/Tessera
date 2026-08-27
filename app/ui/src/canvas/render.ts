@@ -8,9 +8,28 @@
  * gate depends on.
  */
 
+import { COPY } from '../strings.js';
 import { CARD_W, DEFAULT_CARD_H } from './layout.js';
-import type { Card, Citation } from './types.js';
+import type { Card, Citation, FlagSummary } from './types.js';
 import { citeMarkers, esc, visualHTML } from './visual.js';
+
+/**
+ * Cards whose flag list is open.
+ *
+ * View state, so it lives with the view rather than on the read model: the core
+ * has no opinion about which disclosures a reader has expanded, and putting it
+ * on `Card` would make it something a reload could silently revert.
+ */
+const flagsOpen = new Set<string>();
+
+export function toggleFlags(cardId: string): boolean {
+  if (flagsOpen.has(cardId)) {
+    flagsOpen.delete(cardId);
+    return false;
+  }
+  flagsOpen.add(cardId);
+  return true;
+}
 
 /** Everything that changes a card's markup. Position is deliberately absent. */
 function signature(c: Card): string {
@@ -29,24 +48,51 @@ function signature(c: Card): string {
     c.citations.map((s) => [s.ordinal, s.verdict, s.stale]),
     c.flags.map((f) => [f.rule_id, f.severity]),
     c.stages.map((s) => [s.label, s.done]),
+    flagsOpen.has(c.id),
   ]);
 }
 
 function confidenceDot(c: Card): string {
   // Doc 09 section 4: unchecked grey, under 0.5 amber, over 0.5 olive.
-  if (c.confidence === null) return `<span class="dot unchecked" title="Unverified"></span>`;
+  if (c.confidence === null) return `<span class="dot unchecked" title="${COPY.unverified}"></span>`;
   const tone = c.confidence < 0.5 ? 'low' : 'good';
-  return `<span class="dot ${tone}" title="Confidence ${c.confidence.toFixed(2)}"></span>`;
+  return `<span class="dot ${tone}" title="${COPY.confidence} ${c.confidence.toFixed(2)}"></span>`;
+}
+
+function worstSeverity(flags: FlagSummary[]): string {
+  if (flags.some((f) => f.severity === 'block')) return 'block';
+  return flags.some((f) => f.severity === 'warn') ? 'warn' : 'info';
 }
 
 function flagChip(c: Card): string {
   if (c.flags.length === 0) return '';
-  const worst = c.flags.some((f) => f.severity === 'block')
-    ? 'block'
-    : c.flags.some((f) => f.severity === 'warn')
-      ? 'warn'
-      : 'info';
-  return `<button class="chip flag ${worst}" data-act="flags" data-no-pan>${c.flags.length}</button>`;
+  const open = flagsOpen.has(c.id);
+  const label = open ? COPY.closeFlags : COPY.openFlags;
+  return (
+    `<button class="chip flag ${worstSeverity(c.flags)}" data-act="flags" data-no-pan ` +
+    `aria-expanded="${open}" aria-label="${label}">${c.flags.length}</button>`
+  );
+}
+
+/**
+ * The card's own flags, shown where the chip was clicked.
+ *
+ * Doc 09 section 5 reads Open on a flag as "go to the card, target highlighted",
+ * and the reader is already on the card. Accept and Dismiss arrive with the
+ * Flags queue, which is where a decision is recorded.
+ */
+function flagList(c: Card): string {
+  if (!flagsOpen.has(c.id) || c.flags.length === 0) return '';
+  const rows = c.flags
+    .map(
+      (f) =>
+        `<li class="sev-${esc(f.severity)}">` +
+        `<span class="rule">${esc(f.rule_id)}</span>` +
+        `<span class="reason">${esc(f.reason)}</span>` +
+        `</li>`,
+    )
+    .join('');
+  return `<ul class="flag-list" data-flags-for="${esc(c.id)}">${rows}</ul>`;
 }
 
 function sourcesBlock(c: Card): string {
@@ -58,19 +104,23 @@ function sourcesBlock(c: Card): string {
         `<span class="ord">${s.ordinal}</span>` +
         `<a href="${esc(s.locator)}" target="_blank" rel="noopener noreferrer">${esc(s.source_title)}</a>` +
         `<span class="cls">${esc(s.source_class)}</span>` +
-        (s.stale ? `<span class="stale-tag">stale</span>` : '') +
+        (s.stale ? `<span class="stale-tag">${COPY.staleTag}</span>` : '') +
         `</li>`,
     )
     .join('');
-  return `<details class="sources"><summary>Sources (${c.citations.length})</summary><ol>${rows}</ol></details>`;
+  return (
+    `<details class="sources"><summary>${COPY.sources} (${c.citations.length})</summary>` +
+    `<ol>${rows}</ol></details>`
+  );
 }
 
 function bodyFor(c: Card): string {
   let body = `<div class="msg">${esc(c.question)}</div>`;
+  body += flagList(c);
 
   if (c.status === 'queued' || c.status === 'running') {
     if (c.stages.length === 0) {
-      body += `<div class="status dots" role="status" aria-label="Working"></div>`;
+      body += `<div class="status dots" role="status" aria-label="${COPY.working}"></div>`;
     } else {
       // Doc 09 section 4: stages derive from events and tick off in order.
       body += `<div class="stages" role="status">${c.stages
@@ -81,30 +131,33 @@ function bodyFor(c: Card): string {
   }
 
   if (c.status === 'failed') {
-    body += `<div class="failed">This card did not finish. Rerun it, or open how this was built.</div>`;
+    body += `<div class="failed">${COPY.cardFailed}</div>`;
     return body;
   }
 
   if (c.answer) body += `<div class="answer">${citeMarkers(esc(c.answer))}</div>`;
   if (c.findings.length) {
-    body += `<div class="findings"><b>Key findings</b>${c.findings
+    body += `<div class="findings"><b>${COPY.keyFindings}</b>${c.findings
       .map((f) => `<div>${citeMarkers(esc(f.text))}</div>`)
       .join('')}</div>`;
   }
   body += visualHTML(c.visual);
   body += sourcesBlock(c);
-  body += `<details class="built"><summary>How this was built</summary><div class="built-body" data-built-for="${esc(
+  body += `<details class="built"><summary>${COPY.howBuilt}</summary><div class="built-body" data-built-for="${esc(
     c.id,
   )}"></div></details>`;
   return body;
 }
 
 function cardHTML(c: Card): string {
-  const title = c.anchor_text ?? (c.kind === 'follow' ? 'Follow-up' : c.question);
+  const title = c.anchor_text ?? (c.kind === 'root' ? c.question : COPY.followTitle);
   const depthBadge =
     c.depth !== 'fast' ? `<span class="badge ${c.depth}">${c.depth}</span>` : `<span class="badge fast">fast</span>`;
-  const model = c.model_alias ? `<span class="alias" title="Rerun as…">${esc(c.model_alias)}</span>` : '';
-  const disabled = c.status === 'done' || c.status === 'flagged' ? '' : 'disabled';
+  const model = c.model_alias ? `<span class="alias" title="${COPY.rerunAs}">${esc(c.model_alias)}</span>` : '';
+  // Doc 09 section 5's verbs act on a card that has an answer to act on. A
+  // running card has nothing to follow up or check again yet.
+  const settled = c.status === 'done' || c.status === 'flagged';
+  const disabled = settled ? '' : 'disabled';
 
   return (
     `<div class="head">` +
@@ -113,12 +166,14 @@ function cardHTML(c: Card): string {
     model +
     confidenceDot(c) +
     flagChip(c) +
-    `<button class="close" data-act="remove" data-no-pan aria-label="Remove card">✕</button>` +
+    `<button class="rerun" data-act="rerun" ${disabled} data-no-pan aria-label="${COPY.rerunCard}">` +
+    `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>` +
+    `</button>` +
     `</div>` +
     `<div class="body">${bodyFor(c)}</div>` +
     `<div class="foot">` +
-    `<input class="followup" placeholder="Ask a follow-up" ${disabled} data-no-pan aria-label="Ask a follow-up"/>` +
-    `<button class="send" ${disabled} data-act="follow" data-no-pan aria-label="Send follow-up">` +
+    `<input class="followup" placeholder="${COPY.askFollowUp}" ${disabled} data-no-pan aria-label="${COPY.askFollowUp}"/>` +
+    `<button class="send" ${disabled} data-act="follow" data-no-pan aria-label="${COPY.sendFollowUp}">` +
     `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>` +
     `</button>` +
     `</div>`
