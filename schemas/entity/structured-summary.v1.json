@@ -12,7 +12,7 @@
     },
     "relations": {
       "type": "array",
-      "description": "Relations forming a hierarchy select the tree type. Doc 06 section B8.",
+      "description": "Relations forming a strict hierarchy select the tree type; relations with a cycle or a cross link select the flow type, which doc 16 section 3.5 adds because a tree can draw neither. Doc 06 section B8.",
       "items": {
         "type": "object",
         "required": ["from", "to", "kind"],
@@ -25,7 +25,7 @@
     },
     "values": {
       "type": "array",
-      "description": "Doc 01 section 3: the model never stores a number it computed, so a value carries an explicit unit and the citation that supports it. In deep and research a value without a citation is a schema violation, checked by the harness against the mode.",
+      "description": "Doc 01 section 3: the model never stores a number it computed, so a value carries an explicit unit and the citation that supports it. In deep and research a value without a citation is a schema violation, checked by the harness against the mode. Values in differing units are separate quantities and select the stats type, doc 16 section 3.5; values sharing one unit are a comparison and select a table.",
       "items": {
         "type": "object",
         "required": ["label", "value"],

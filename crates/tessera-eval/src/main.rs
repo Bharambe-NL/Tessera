@@ -1536,44 +1536,135 @@ fn first_number(text: &str) -> Option<String> {
 }
 
 fn visualised(request: &CompletionRequest) -> Value {
-    // Compose a table from the values the summary carries, in the order the
-    // prompt lists them. The labels have to come back verbatim or doc 06
-    // section B8.3 cannot trace them, which is exactly what this exercises.
-    // The prompt carries the summary as pretty printed json, so the labels are
-    // read back out of it. They have to come back verbatim: doc 06 section B8.3
-    // drops a block whose label traces to nothing in the summary, and this is
-    // what exercises that.
+    // Lay the summary out in the shape the Visualizer asked for, using its own
+    // labels verbatim. Doc 06 section B8.3 drops a block whose label traces to
+    // nothing in the summary, and answering in a shape nobody asked for is the
+    // other half of the same failure: the payload would not fit the type and
+    // the visual would be declined, which reads as a Visualizer that cannot
+    // draw rather than a mock that cannot write.
     let prompt = prompt_of(request);
-    let mut labels = Vec::new();
-    let mut values = Vec::new();
-    for line in prompt.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("\"label\": \"") {
-            labels.push(rest.trim_end_matches([',', '"']).to_string());
-        } else if let Some(rest) = line.strip_prefix("\"value\": \"") {
-            values.push(rest.trim_end_matches([',', '"']).to_string());
-        }
-    }
+    let visual_type = prompt
+        .split(" as a ")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .unwrap_or("table")
+        .trim()
+        .to_string();
+    let Some(summary) = summary_of(&prompt) else {
+        return json!({ "declined": true, "reason": "no_structure", "visual": null });
+    };
 
-    if labels.is_empty() {
+    let values: Vec<&Value> = summary["values"].as_array().into_iter().flatten().collect();
+    let relations: Vec<&Value> = summary["relations"].as_array().into_iter().flatten().collect();
+    let text = |v: &Value, key: &str| v[key].as_str().unwrap_or_default().to_string();
+
+    let payload = match visual_type.as_str() {
+        "stats" => json!({ "tiles": values.iter().map(|v| json!({
+            "value": text(v, "value"), "unit": text(v, "unit"), "label": text(v, "label")
+        })).collect::<Vec<_>>() }),
+        "flow" => {
+            // One node per endpoint, in the order the relations name them, so
+            // an id is stable and the labels come back verbatim.
+            let mut nodes: Vec<Value> = Vec::new();
+            let mut seen: Vec<String> = Vec::new();
+            let id_of = |label: String, nodes: &mut Vec<Value>, seen: &mut Vec<String>| {
+                if let Some(i) = seen.iter().position(|s| *s == label) {
+                    return format!("n{i}");
+                }
+                let id = format!("n{}", seen.len());
+                nodes.push(json!({ "id": id, "label": label.clone() }));
+                seen.push(label);
+                id
+            };
+            let edges: Vec<Value> = relations
+                .iter()
+                .map(|r| {
+                    let from = id_of(text(r, "from"), &mut nodes, &mut seen);
+                    let to = id_of(text(r, "to"), &mut nodes, &mut seen);
+                    json!({ "from": from, "to": to, "label": text(r, "kind") })
+                })
+                .collect();
+            json!({ "nodes": nodes, "edges": edges })
+        }
+        "steps" => json!({ "steps": summary["steps"].as_array().into_iter().flatten()
+            .filter_map(Value::as_str)
+            .map(|s| json!({ "label": s }))
+            .collect::<Vec<_>>() }),
+        "list" => json!({ "groups": summary["groups"].as_array().into_iter().flatten()
+            .map(|g| json!({
+                "heading": text(g, "heading"),
+                "items": g["items"].as_array().into_iter().flatten()
+                    .filter_map(Value::as_str)
+                    .map(|i| json!({ "name": i }))
+                    .collect::<Vec<_>>()
+            }))
+            .collect::<Vec<_>>() }),
+        "tree" => {
+            let root = relations
+                .first()
+                .map(|r| text(r, "from"))
+                .unwrap_or_else(|| "Summary".into());
+            json!({ "root": { "label": root, "children": relations.iter()
+                .filter(|r| text(r, "from") == root)
+                .map(|r| json!({ "label": text(r, "to") }))
+                .collect::<Vec<_>>() } })
+        }
+        _ => json!({
+            "columns": ["Source", "Value"],
+            "rows": values.iter().map(|v| {
+                let label = text(v, "label");
+                let value = text(v, "value");
+                json!([label.clone(), if value.is_empty() { label } else { value }])
+            }).collect::<Vec<_>>(),
+        }),
+    };
+
+    if payload.as_object().is_some_and(|p| {
+        p.values()
+            .all(|v| v.as_array().is_some_and(Vec::is_empty) || v.is_null())
+    }) {
         return json!({ "declined": true, "reason": "no_structure", "visual": null });
     }
 
     json!({
-        "type": "table",
+        "type": visual_type,
         "title": "Values by source",
-        "payload": {
-            "columns": ["Source", "Value"],
-            "rows": labels
-                .iter()
-                .enumerate()
-                .map(|(i, label)| {
-                    json!([label, values.get(i).cloned().unwrap_or_else(|| label.clone())])
-                })
-                .collect::<Vec<_>>(),
-        },
+        "payload": payload,
         "caveats": []
     })
+}
+
+/// The summary the Visualizer's prompt carries, as json.
+///
+/// Parsed rather than scraped line by line: a flow needs the relations and a
+/// stats tile needs the unit, and reading five keys out of prose one prefix at
+/// a time is how a mock ends up quietly answering about the wrong fields.
+fn summary_of(prompt: &str) -> Option<Value> {
+    let body = prompt.split("Summary:").nth(1)?;
+    let start = body.find('{')?;
+    let bytes = body.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, byte) in bytes.iter().enumerate().skip(start) {
+        match byte {
+            b'"' if !escaped => in_string = !in_string,
+            b'\\' if in_string => {
+                escaped = !escaped;
+                continue;
+            }
+            b'{' if !in_string => depth += 1,
+            b'}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return serde_json::from_str(&body[start..=i]).ok();
+                }
+            }
+            _ => {}
+        }
+        escaped = false;
+    }
+    None
 }
 
 /// An exercise built from the cards in the prompt, quoting them.

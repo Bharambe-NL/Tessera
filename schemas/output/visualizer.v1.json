@@ -38,8 +38,11 @@
         "list",
         "steps",
         "figure",
+        "flow",
+        "stats",
         "none"
-      ]
+      ],
+      "description": "The shapes the Visualizer draws, which is doc 01 section 4.3.1's list without the ones the harness produces (image) or v1.1 reserves (chart, widget). flow and stats arrive with doc 16 section 3.5."
     },
     "title": {
       "type": "string"

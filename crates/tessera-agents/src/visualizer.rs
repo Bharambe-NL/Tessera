@@ -22,6 +22,11 @@ use crate::prompts;
 
 pub struct Visualizer;
 
+/// Doc 16 section 3.5: "at most 6 tiles". A hard cap rather than a doctrine
+/// limit, because the shape is the limit: seven large numerals is a table with
+/// the labels taken off.
+const STATS_TILES: usize = 6;
+
 const SYSTEM: &str = "\
 You lay out a summary that has already been written and checked. You are not \
 adding to it.
@@ -176,8 +181,29 @@ fn select_type(summary: &Value, hint: &str) -> Option<&'static str> {
             .unwrap_or(0)
     };
 
-    if len("relations") >= 2 && forms_hierarchy(summary) {
+    if len("relations") >= 2 && strict_hierarchy(summary) {
         return Some("tree");
+    }
+    // Doc 16 section 3.5: a tree cannot express a cycle or a cross link, so a
+    // relation set that is not a strict hierarchy is a flow. Before values,
+    // because relations say how things stand to each other and that is the
+    // stronger structure, which is the order the hierarchy rule above already
+    // takes.
+    if len("relations") >= 2 {
+        return Some("flow");
+    }
+    // Doc 16 section 3.5: at most six large numerals, each one cited. Its own
+    // example is "1949, 120m", which is the distinction: a year beside a size
+    // is two quantities and a tile each, while eight beside ten is one quantity
+    // measured twice and belongs in a table where the two can be read against
+    // each other. So the test is whether the units differ, not whether the
+    // values are few.
+    if (2..=STATS_TILES).contains(&len("values"))
+        && headline_figures(summary)
+        && len("steps") == 0
+        && len("groups") == 0
+    {
+        return Some("stats");
     }
     if len("values") >= 2 {
         return Some("table");
@@ -189,9 +215,14 @@ fn select_type(summary: &Value, hint: &str) -> Option<&'static str> {
         return Some("list");
     }
     if len("relations") >= 1 {
-        return Some("tree");
+        return Some(if strict_hierarchy(summary) { "tree" } else { "flow" });
     }
 
+    // Doc 16 section 3.5's two shapes are deliberately not hintable, which is
+    // why the Router's enum does not carry them. A hint is a guess made before
+    // anything was retrieved, and both of these are chosen from structure the
+    // Synthesizer grounded: a flow needs edges and a tile needs a figure with a
+    // unit, so a hint for either would name a shape with nothing to put in it.
     match hint {
         "tree" | "table" | "list" | "steps" | "figure" => {
             // The hint only stands if there is something to put in it.
@@ -214,17 +245,58 @@ fn leak(hint: &str) -> &'static str {
     }
 }
 
-/// A hierarchy is a relation set where some node is never a target.
-fn forms_hierarchy(summary: &Value) -> bool {
+/// Doc 16 section 3.5: "tree remains for strict hierarchies".
+///
+/// Strict means every node has at most one parent and some node has none. A
+/// relation set where a node is reached twice is a cross link and one that
+/// reaches back is a cycle; a tree can draw neither, and drawing it as a tree
+/// anyway would silently drop one of the two edges.
+fn strict_hierarchy(summary: &Value) -> bool {
     let Some(relations) = summary.get("relations").and_then(Value::as_array) else {
         return false;
     };
-    let targets: std::collections::BTreeSet<&str> =
-        relations.iter().filter_map(|r| r["to"].as_str()).collect();
+    let mut targets: std::collections::BTreeSet<&str> = Default::default();
+    for relation in relations {
+        let Some(to) = relation["to"].as_str() else {
+            continue;
+        };
+        // Reached twice: a cross link, whatever the rest of the set does.
+        if !targets.insert(to) {
+            return false;
+        }
+    }
+    // A root, which a cycle does not have.
     relations
         .iter()
         .filter_map(|r| r["from"].as_str())
         .any(|from| !targets.contains(from))
+}
+
+/// Whether the summary's values are separate quantities rather than one
+/// quantity measured more than once.
+///
+/// Two conditions, both from doc 16 section 3.5. Every value is a numeral,
+/// because a tile is a large numeral and a summary whose values are words is a
+/// table however few of them there are. And the units differ, because tiles
+/// stand side by side with nothing to read across them: values sharing a unit
+/// are a comparison, and a comparison wants rows.
+fn headline_figures(summary: &Value) -> bool {
+    let Some(values) = summary.get("values").and_then(Value::as_array) else {
+        return false;
+    };
+    if values.is_empty() {
+        return false;
+    }
+    let numeric = values.iter().all(|v| {
+        v["value"]
+            .as_str()
+            .is_some_and(|text| text.chars().any(|c| c.is_ascii_digit()))
+    });
+    let units: std::collections::BTreeSet<&str> = values
+        .iter()
+        .map(|v| v["unit"].as_str().unwrap_or_default())
+        .collect();
+    numeric && units.len() >= 2
 }
 
 async fn compose(
@@ -295,6 +367,35 @@ fn payload_schema(visual_type: &str) -> Value {
     let payload = match visual_type {
         "tree" => json!({ "type": "object", "required": ["root"], "additionalProperties": false,
                           "properties": { "root": node } }),
+        "flow" => json!({
+            "type": "object", "required": ["nodes"], "additionalProperties": false,
+            "properties": {
+                "nodes": { "type": "array", "items": {
+                    "type": "object", "required": ["id", "label"], "additionalProperties": false,
+                    "properties": {
+                        "id": { "type": "string" }, "label": { "type": "string" },
+                        "note": { "type": "string" }
+                    }
+                }},
+                "edges": { "type": "array", "items": {
+                    "type": "object", "required": ["from", "to"], "additionalProperties": false,
+                    "properties": {
+                        "from": { "type": "string" }, "to": { "type": "string" },
+                        "label": { "type": "string" }
+                    }
+                }}
+            }
+        }),
+        "stats" => json!({
+            "type": "object", "required": ["tiles"], "additionalProperties": false,
+            "properties": { "tiles": { "type": "array", "items": {
+                "type": "object", "required": ["value", "label"], "additionalProperties": false,
+                "properties": {
+                    "value": { "type": "string" }, "unit": { "type": "string" },
+                    "label": { "type": "string" }
+                }
+            }}}
+        }),
         "table" => json!({
             "type": "object", "required": ["columns", "rows"], "additionalProperties": false,
             "properties": {
@@ -375,6 +476,14 @@ fn enforce_limits(composed: &mut Value, visual_type: &str, doctrine: &Value) -> 
     match visual_type {
         "table" => truncate(payload["rows"].as_array_mut(), max_rows),
         "steps" => truncate(payload["steps"].as_array_mut(), max_nodes),
+        // The tile cap is the shape's, not the pack's, so it is the smaller of
+        // the two. Edges follow their nodes: an edge to a node that was cut
+        // would draw a line to nothing.
+        "stats" => truncate(payload["tiles"].as_array_mut(), STATS_TILES.min(max_rows.max(1))),
+        "flow" => {
+            truncate(payload["nodes"].as_array_mut(), max_nodes);
+            dropped += drop_dangling_edges(payload);
+        }
         "tree" => {
             truncate(payload["root"]["children"].as_array_mut(), max_nodes);
             let budget = max_nodes;
@@ -416,6 +525,29 @@ fn enforce_limits(composed: &mut Value, visual_type: &str, doctrine: &Value) -> 
 /// Remove the blocks whose labels trace back to nothing, returning how many
 /// went. Doc 06 section B8.3's second pass, which drops those blocks rather
 /// than the diagram.
+/// Remove edges naming a node the flow does not carry, returning how many went.
+///
+/// Every path that shortens the node list calls this: a doctrine limit, an
+/// untraceable prune, and a model that named an endpoint it never declared. An
+/// edge whose end is missing has nothing to draw between.
+fn drop_dangling_edges(payload: &mut Value) -> usize {
+    let ids: std::collections::BTreeSet<String> = payload["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["id"].as_str().map(str::to_string))
+        .collect();
+    let Some(edges) = payload["edges"].as_array_mut() else {
+        return 0;
+    };
+    let before = edges.len();
+    edges.retain(|e| {
+        let end = |key: &str| e[key].as_str().is_some_and(|id| ids.contains(id));
+        end("from") && end("to")
+    });
+    before - edges.len()
+}
+
 fn prune_untraceable(composed: &mut Value, visual_type: &str, untraceable: &[String]) -> usize {
     let gone: std::collections::BTreeSet<&str> = untraceable.iter().map(String::as_str).collect();
     let payload = &mut composed["payload"];
@@ -440,6 +572,21 @@ fn prune_untraceable(composed: &mut Value, visual_type: &str, untraceable: &[Str
                 steps.retain(|s| !s["label"].as_str().is_some_and(|l| gone.contains(l)));
                 dropped += before - steps.len();
             }
+        }
+        "stats" => {
+            if let Some(tiles) = payload["tiles"].as_array_mut() {
+                let before = tiles.len();
+                tiles.retain(|t| !t["label"].as_str().is_some_and(|l| gone.contains(l)));
+                dropped += before - tiles.len();
+            }
+        }
+        "flow" => {
+            if let Some(nodes) = payload["nodes"].as_array_mut() {
+                let before = nodes.len();
+                nodes.retain(|n| !n["label"].as_str().is_some_and(|l| gone.contains(l)));
+                dropped += before - nodes.len();
+            }
+            dropped += drop_dangling_edges(payload);
         }
         "tree" => {
             if let Some(children) = payload["root"]["children"].as_array_mut() {
@@ -476,6 +623,13 @@ fn has_content(composed: &Value, visual_type: &str) -> bool {
     match visual_type {
         "table" => payload["rows"].as_array().is_some_and(|r| !r.is_empty()),
         "steps" => payload["steps"].as_array().is_some_and(|s| !s.is_empty()),
+        "stats" => payload["tiles"].as_array().is_some_and(|t| !t.is_empty()),
+        // Nodes without edges is a list drawn as boxes, which is what doc 16
+        // section 3.5 says a flow is not for.
+        "flow" => {
+            payload["nodes"].as_array().is_some_and(|n| !n.is_empty())
+                && payload["edges"].as_array().is_some_and(|e| !e.is_empty())
+        }
         // A root with no children draws one box. Doc 06 section B10 would
         // rather have no visual than one that says nothing, and BN-110 found
         // every visual in the first paid run was exactly this: a single block,
@@ -600,6 +754,53 @@ fn index_blocks(
                     false,
                     &mut blocks,
                 );
+            }
+        }
+        "flow" => {
+            for (i, node) in payload["nodes"].as_array().into_iter().flatten().enumerate() {
+                add(
+                    format!("/nodes/{i}"),
+                    node["label"].as_str().unwrap_or_default(),
+                    false,
+                    &mut blocks,
+                );
+            }
+            // An edge label is the relation's kind, which the summary carries
+            // and no citation hangs off. Structural for the same reason a
+            // column name is: it names how two claims stand to each other
+            // rather than making a third.
+            for (i, edge) in payload["edges"].as_array().into_iter().flatten().enumerate() {
+                let Some(label) = edge["label"].as_str().filter(|l| !l.is_empty()) else {
+                    continue;
+                };
+                add(format!("/edges/{i}"), label, true, &mut blocks);
+            }
+        }
+        "stats" => {
+            // Doc 16 section 3.5: every tile cited. The label and the value are
+            // one block, because a tile is one thing on the canvas and two
+            // blocks would let half of it be hidden. The value is what has to
+            // trace, since that is the claim.
+            for (i, tile) in payload["tiles"].as_array().into_iter().flatten().enumerate() {
+                let value = tile["value"].as_str().unwrap_or_default();
+                let unit = tile["unit"].as_str().unwrap_or_default();
+                let label = tile["label"].as_str().unwrap_or_default();
+                let traced = lookup
+                    .citations_for(format!("{value} {unit}").trim())
+                    .or_else(|| lookup.citations_for(value))
+                    .or_else(|| lookup.citations_for(label));
+                match traced {
+                    Some(ordinals) => blocks.push(json!({
+                        "ref": format!("/tiles/{i}"), "label": label, "citation_ordinals": ordinals
+                    })),
+                    // Never `no_claim`: doc 16 section 3.5 makes an uncited tile
+                    // a `numeric_without_citation` block flag, which needs the
+                    // block to be there and uncited to fire on.
+                    None if lookup.knows(value) || lookup.knows(label) => blocks.push(json!({
+                        "ref": format!("/tiles/{i}"), "label": label, "citation_ordinals": []
+                    })),
+                    None => untraceable.push(label.to_string()),
+                }
             }
         }
         _ => {
@@ -798,6 +999,144 @@ mod tests {
             ]
         });
         assert_eq!(select_type(&summary, "none"), Some("tree"));
+    }
+
+    #[test]
+    fn a_cross_link_becomes_a_flow() {
+        // Doc 16 section 3.5: a tree cannot express a cross link. Perception is
+        // reached from two places, and drawing it as a tree would draw it twice
+        // or drop one of the edges.
+        let summary = json!({
+            "relations": [
+                { "from": "World model", "to": "Perception", "kind": "has" },
+                { "from": "Planner", "to": "Perception", "kind": "reads" }
+            ]
+        });
+        assert_eq!(select_type(&summary, "none"), Some("flow"));
+    }
+
+    #[test]
+    fn a_cycle_becomes_a_flow() {
+        let summary = json!({
+            "relations": [
+                { "from": "Draft", "to": "Review", "kind": "goes to" },
+                { "from": "Review", "to": "Draft", "kind": "returns to" }
+            ]
+        });
+        // Every node is a target, so there is no root and no tree.
+        assert_eq!(select_type(&summary, "none"), Some("flow"));
+    }
+
+    #[test]
+    fn figures_in_different_units_become_tiles() {
+        // Doc 16 section 3.5's own example: "1949, 120m".
+        let summary = json!({ "values": [
+            { "label": "founded", "value": "1949", "unit": "", "citation": 1 },
+            { "label": "floor space", "value": "120", "unit": "m", "citation": 2 }
+        ]});
+        assert_eq!(select_type(&summary, "none"), Some("stats"));
+    }
+
+    #[test]
+    fn one_quantity_measured_twice_stays_a_table() {
+        // Tiles stand side by side with nothing to read across them, and two
+        // figures in the same unit are there to be read against each other.
+        let summary = json!({ "values": [
+            { "label": "old", "value": "8", "unit": "%", "citation": 1 },
+            { "label": "new", "value": "10", "unit": "%", "citation": 2 }
+        ]});
+        assert_eq!(select_type(&summary, "none"), Some("table"));
+    }
+
+    #[test]
+    fn a_flow_indexes_its_nodes_and_its_edge_labels() {
+        let summary = json!({
+            "relations": [
+                { "from": "Draft", "to": "Review", "kind": "goes to" },
+                { "from": "Review", "to": "Draft", "kind": "returns to" }
+            ],
+            "values": [{ "label": "Review", "value": "2", "unit": "days", "citation": 4 }]
+        });
+        let composed = json!({
+            "title": "The loop",
+            "payload": {
+                "nodes": [{ "id": "a", "label": "Draft" }, { "id": "b", "label": "Review" }],
+                "edges": [{ "from": "a", "to": "b", "label": "goes to" }]
+            }
+        });
+        let indexed = index_blocks(&composed, "flow", &summary, Shape::default()).expect("indexes");
+        let blocks = indexed.blocks.as_array().expect("blocks");
+
+        let node = blocks
+            .iter()
+            .find(|b| b["ref"] == "/nodes/1")
+            .expect("the second node");
+        assert_eq!(node["citation_ordinals"], json!([4]));
+        // An edge label names how two claims stand to each other rather than
+        // making a third, so it carries no citation and says so.
+        let edge = blocks.iter().find(|b| b["ref"] == "/edges/0").expect("the edge");
+        assert_eq!(edge["no_claim"], json!(true));
+    }
+
+    #[test]
+    fn an_edge_goes_with_the_node_it_pointed_at() {
+        let mut composed = json!({
+            "title": "T",
+            "payload": {
+                "nodes": [{ "id": "a", "label": "Draft" }, { "id": "b", "label": "invented" }],
+                "edges": [{ "from": "a", "to": "b" }]
+            }
+        });
+        let dropped = prune_untraceable(&mut composed, "flow", &["invented".to_string()]);
+        // The node and the edge that had nothing left to point at.
+        assert_eq!(dropped, 2);
+        assert_eq!(composed["payload"]["edges"], json!([]));
+        // Nodes with no edges left is a list drawn as boxes, which is not a flow.
+        assert!(!has_content(&composed, "flow"));
+    }
+
+    #[test]
+    fn a_seventh_tile_is_cut_whatever_the_pack_allows() {
+        // Doc 16 section 3.5 caps tiles at six. The shape is the limit, so a
+        // pack allowing more rows does not buy a seventh numeral.
+        let mut composed = json!({
+            "title": "T",
+            "payload": { "tiles": (0..9).map(|i| json!({ "value": format!("{i}"), "label": format!("l{i}") })).collect::<Vec<_>>() }
+        });
+        let dropped = enforce_limits(&mut composed, "stats", &json!({ "max_rows": 20 }));
+        assert_eq!(dropped, 3);
+        assert_eq!(composed["payload"]["tiles"].as_array().expect("tiles").len(), 6);
+    }
+
+    #[test]
+    fn an_uncited_tile_keeps_its_block_and_no_marking() {
+        // Doc 16 section 3.5 makes an uncited tile a `numeric_without_citation`
+        // block flag, which needs a block that is present and uncited. Marking
+        // it `no_claim` would excuse exactly the case the rule exists to catch.
+        let summary = json!({ "values": [
+            { "label": "founded", "value": "1949", "unit": "" },
+            { "label": "floor space", "value": "120", "unit": "m", "citation": 2 }
+        ]});
+        let composed = json!({
+            "title": "In numbers",
+            "payload": { "tiles": [
+                { "value": "1949", "unit": "", "label": "founded" },
+                { "value": "120", "unit": "m", "label": "floor space" }
+            ]}
+        });
+        let indexed = index_blocks(&composed, "stats", &summary, Shape::default()).expect("indexes");
+        let blocks = indexed.blocks.as_array().expect("blocks");
+        let uncited = blocks
+            .iter()
+            .find(|b| b["ref"] == "/tiles/0")
+            .expect("the first tile");
+        assert_eq!(uncited["citation_ordinals"], json!([]));
+        assert!(uncited.get("no_claim").is_none());
+        let cited = blocks
+            .iter()
+            .find(|b| b["ref"] == "/tiles/1")
+            .expect("the second tile");
+        assert_eq!(cited["citation_ordinals"], json!([2]));
     }
 
     #[test]

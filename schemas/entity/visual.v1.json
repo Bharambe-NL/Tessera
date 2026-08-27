@@ -203,6 +203,44 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "flow"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/flow"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stats"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/stats"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -598,6 +636,111 @@
         },
         "sandbox_policy": {
           "type": "string"
+        }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "description": "Doc 16 section 3.5. Nodes and the edges between them, which a tree cannot express: a tree has no cycles and no cross links, and a flow is where the answer has one.",
+      "required": [
+        "nodes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "note": {
+                "type": "string"
+              },
+              "citation_ordinals": {
+                "$ref": "tessera:entity/common.v1#/$defs/citation_ordinals"
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "description": "Both ends name a node id. An edge to a node that is not there is dropped by the Visualizer rather than stored.",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "bottom_line": {
+          "$ref": "#/$defs/bottom_line"
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "description": "Doc 16 section 3.5. At most six large numerals, every one of them cited: a tile is a figure with nothing around it to qualify it, so a tile without a citation is a numeric_without_citation block flag.",
+      "required": [
+        "tiles"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tiles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "required": [
+              "value",
+              "label"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "minLength": 1
+              },
+              "unit": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "citation_ordinals": {
+                "$ref": "tessera:entity/common.v1#/$defs/citation_ordinals"
+              }
+            }
+          }
+        },
+        "bottom_line": {
+          "$ref": "#/$defs/bottom_line"
         }
       }
     }
