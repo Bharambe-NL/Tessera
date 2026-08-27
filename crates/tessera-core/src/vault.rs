@@ -349,6 +349,40 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
 
 // ------------------------------------------------------------------ links --
 
+/// Index a page so the vault retriever can find it. Doc 16 section 3.3.
+///
+/// The wikilinks are stripped first: `[[Liquidity risk]]` indexed verbatim
+/// matches a query for brackets and misses the sentence the link is part of.
+pub fn index_page(
+    store: &tessera_store::Store,
+    profile_id: &str,
+    page: &PageRow,
+) -> Result<(), tessera_store::StoreError> {
+    tessera_retrievers::pages::index_page(
+        store.conn(),
+        profile_id,
+        &page.id,
+        &page.title,
+        &crate::wikilink::strip(&page.body),
+        // No embedder in the product yet, so this is the lexical half. BN-107.
+        None,
+    )?;
+    Ok(())
+}
+
+/// Re-index every page in the profile.
+///
+/// Cheap enough to do whole after a sync: a vault is hundreds of pages of
+/// markdown, and the alternative is a set of dirty flags that can disagree with
+/// the rows they track.
+pub fn reindex(store: &tessera_store::Store, profile_id: &str) -> Result<usize, tessera_store::StoreError> {
+    let pages = repo::list_pages(store, profile_id, 10_000)?;
+    for page in &pages {
+        index_page(store, profile_id, page)?;
+    }
+    Ok(pages.len())
+}
+
 /// Parse a page's body and store what its wikilinks point at.
 ///
 /// Doc 16 sections 2.2 and 3.1. Resolution order is page, then concept, then
@@ -422,6 +456,7 @@ pub fn sync(
     let files = read_vault(&root);
     let mut report = SyncReport::default();
 
+    let mut touched = false;
     for action in plan(&rows, &files) {
         match action {
             Action::Agreed { page_id, body } => {
@@ -498,6 +533,13 @@ pub fn sync(
             }
             Action::Skipped { path, reason } => report.skipped.push((path, reason)),
         }
+        touched = true;
+    }
+
+    // One pass at the end rather than one per page: a sync that adopted forty
+    // files would otherwise re-read and re-chunk the same vault forty times.
+    if touched {
+        reindex(store, profile_id)?;
     }
 
     Ok(report)

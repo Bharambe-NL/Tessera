@@ -234,6 +234,7 @@
               "local",
               "regulatory",
               "structured",
+              "vault",
               "boards"
             ]
           },

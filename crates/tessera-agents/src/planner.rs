@@ -111,11 +111,14 @@ impl Agent for Planner {
         // Doc 04 section 10: `no_retriever_enabled` fails with a pointer at the
         // fix, because a plan that can retrieve from nowhere is not a plan.
         //
-        // Boards does not count. Doc 15 section 2 makes a prior card context
-        // and never evidence, so a profile whose only retriever is its own
-        // memory can corroborate itself and learn nothing, which is the exact
-        // loop the own_card_sole_support rule exists to block.
-        if !enabled.iter().any(|id| id != "boards") {
+        // Boards does not count, and neither does the vault. Doc 15 section 2
+        // makes a prior card context and never evidence, and doc 16 section 3.3
+        // says the same of a page: a profile whose only retrievers are its own
+        // memory and its own notes can corroborate itself and learn nothing,
+        // which is the exact loop the own_card_sole_support rule exists to
+        // block. Both are what a person already had; a retriever is what
+        // brings something new.
+        if !enabled.iter().any(|id| id != "boards" && id != "vault") {
             return Err(Failure::new(
                 "no_retriever_enabled",
                 "No retriever is enabled. Enable at least web or local in Profile.",

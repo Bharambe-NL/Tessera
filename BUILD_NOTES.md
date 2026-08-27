@@ -2536,6 +2536,55 @@ grounded sweep and the bundle round trip.
 
 ---
 
+### BN-114 A page is retrievable, and it is not a document
+
+**Spec** 16 section 3.3; 05 section 8.5; 15 section 2.
+
+**Built** 2026-08-27, M15 12a-iv, product half. The synthetic vault and its metrics are the
+second half and land next.
+
+**One implementation, one more id.** Doc 16 section 3.3 says "the local retriever indexes
+`vault/` like any folder, so pages are retrievable with no new retriever", and that holds for the
+implementation: this is `indexed` over another folder, exactly as `boards` is. What it needs of
+its own is the id, because one `IndexedConfig` carries one source class and a folder set holding
+both a person's documents and their pages could not label them apart. Doc 16 section 3.3 is
+emphatic that it must, since the Verifier extends `own_card_sole_support` to `page` and a numeric
+claim may not rest on a note the person wrote. Indexing the vault as `local` would have made it
+evidence.
+
+The id also pays for itself at 12d: doc 16 section 3.4 restricts a notebook question to vault
+plus boards, which needs `vault` to be a name the allowlist can hold.
+
+**Indexed from the row, not the file.** The row is what the mirror has just agreed with the file,
+and the wikilinks are stripped first: `[[Liquidity risk]]` indexed verbatim matches a query for
+brackets and misses the sentence the link is part of. The title leads the indexed text, because
+a page called "Liquidity risk" whose body never repeats the phrase is still the page somebody
+asking about liquidity risk wants.
+
+**The vault is configured without anybody pointing at it**, unlike `local`, which waits for a
+folder. The profile's own pages are already where the app can read them, so an empty vault is a
+retriever with nothing to find rather than one nobody has set up. A pack can still turn it off,
+because doctrine is data.
+
+**And it cannot be the only retriever.** Doc 04 section 10's `no_retriever_enabled` excluded
+`boards` on the grounds that a profile whose only retriever is its own memory can corroborate
+itself. A page is context too, so the vault joins boards in not counting. Both are what a person
+already had; a retriever is what brings something new. The existing test caught this the moment
+the general pack enabled the vault, which is the right way round.
+
+**Trust ranks.** `page` at 4 in both finance packs, doc 16 section 3.3's proposal, level with
+`local_document` and above `own_card`. General ranks it 3, level with its own local documents,
+because doc 16 speaks only of finance and an unranked class is the least trusted: leaving it out
+would have ranked a person's own notes below a blog. The twin parity test now also asserts that
+the two finance packs order their source classes identically, which is what makes a corpus score
+transfer, while still allowing the twin's extra synthetic issuer to shift the absolute numbers.
+
+**Verified** Full battery green, 50 Playwright tests, the grounded sweep and the bundle round
+trip. The end to end test writes a markdown file into `vault/`, syncs, asks a deep question and
+asserts a citation whose source class is `page`.
+
+---
+
 ---
 
 ## Measured findings

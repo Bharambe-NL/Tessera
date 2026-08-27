@@ -51,6 +51,21 @@ impl IndexedConfig {
         }
     }
 
+    /// Doc 16 section 3.3. A page enters as a source of its own class for the
+    /// same reason a prior card does: the Verifier extends
+    /// `own_card_sole_support` to it, so a numeric claim may not rest on a page
+    /// alone, and the page's carried citations are what supply the original
+    /// passage.
+    pub fn pages(folder_ids: Vec<String>) -> Self {
+        Self {
+            folder_ids,
+            source_class: "page".into(),
+            // A page is somebody's own note, which ages like an internal memo
+            // rather than like a regulation.
+            freshness_class: "internal_memo".into(),
+        }
+    }
+
     /// Doc 05 section 8.5. A prior card enters as a source of its own class so
     /// that the Verifier can single it out.
     pub fn boards() -> Self {

@@ -2293,6 +2293,21 @@ fn synth_output_citing_one() -> Value {
     })
 }
 
+/// A plan that reads the profile's own pages.
+fn vault_plan_output() -> Value {
+    json!({
+        "sub_questions": [
+            {
+                "text": "What do my notes say about the buffer?",
+                "purpose": "Establish what I already wrote down.",
+                "queries": { "vault": "capital conservation buffer" }
+            }
+        ],
+        "answer_scope": "The buffer as my notes record it.",
+        "caveats": []
+    })
+}
+
 /// A plan that reads the folders the profile watches rather than a corpus it
 /// has not subscribed to.
 fn local_plan_output() -> Value {
@@ -2561,6 +2576,65 @@ fn a_watched_folder_is_cited_without_the_test_building_a_retriever_set() {
     assert!(cited > 0, "nothing cited the watched folder");
 
     std::fs::remove_dir_all(&folder).ok();
+}
+
+#[test]
+fn a_page_in_the_vault_is_cited_by_a_deep_card_as_a_page() {
+    // Doc 16 section 3.3. The class is the point: a page enters as `page` and
+    // not as `local_document`, because the Verifier extends
+    // `own_card_sole_support` to it and a numeric claim may not rest on a note
+    // the person wrote. Indexing it as a document would make it evidence.
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(vault_plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output_citing_one()))
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
+    );
+    let root = std::env::temp_dir().join(format!("tessera-vaultcard-{}", tessera_store::new_id()));
+    let mut core = core_at_with(&root, Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    // A page written in an editor, found by the mirror at start.
+    std::fs::create_dir_all(root.join("vault")).expect("dir");
+    std::fs::write(
+        root.join("vault/capital-buffer.md"),
+        "# Capital conservation buffer\n\nThe capital conservation buffer for a significant \
+         institution is 2.5 %, per the note I took from the rule.",
+    )
+    .expect("write");
+    let report = core.sync_vault().expect("sync");
+    assert_eq!(report.created, 1, "{report:?}");
+
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("the card runs");
+
+    let cited: Vec<(String, String)> = {
+        let conn = core.store.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.class, s.title FROM citation c
+                   JOIN passage p ON p.id = c.passage_id
+                   JOIN source s ON s.id = p.source_id",
+            )
+            .expect("prepare");
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows")
+    };
+    assert!(
+        cited.iter().any(|(class, _)| class == "page"),
+        "the vault page was not cited as a page: {cited:?}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]

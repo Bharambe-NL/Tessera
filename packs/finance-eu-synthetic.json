@@ -104,6 +104,10 @@
       "trust_rank": 4
     },
     {
+      "class": "page",
+      "trust_rank": 4
+    },
+    {
       "class": "own_card",
       "trust_rank": 5
     },
@@ -327,6 +331,11 @@
     {
       "id": "structured",
       "enabled_by_default": false,
+      "must_exclude": []
+    },
+    {
+      "id": "vault",
+      "enabled_by_default": true,
       "must_exclude": []
     },
     {
