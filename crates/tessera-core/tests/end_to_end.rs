@@ -2638,6 +2638,217 @@ fn a_page_in_the_vault_is_cited_by_a_deep_card_as_a_page() {
 }
 
 #[test]
+fn a_card_saved_as_a_page_carries_its_citations_and_says_so_on_the_card() {
+    // Doc 16 section 3.2. The citations are copied rather than re-derived,
+    // which is the whole difference between a page that keeps its evidence and
+    // one that becomes the evidence. Doc 16 section 2.2: the assessed package
+    // pointed the next answer's citation at the note, and two hops later the
+    // regulation was out of reach.
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(local_plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output_citing_one()))
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
+    );
+    let root = std::env::temp_dir().join(format!("tessera-save-{}", tessera_store::new_id()));
+    let mut core = core_at_with(&root, Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    let folder = std::env::temp_dir().join(format!("tessera-savedocs-{}", tessera_store::new_id()));
+    std::fs::create_dir_all(&folder).expect("folder");
+    std::fs::write(
+        folder.join("buffer.md"),
+        "The capital conservation buffer for a significant institution is 2.5 %.",
+    )
+    .expect("document");
+
+    let router = build_router();
+    call(
+        &router,
+        &mut core,
+        "profile.watch_folder",
+        json!({ "root": folder.display().to_string(), "label": "Internal documents" }),
+    );
+
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("card");
+    let card_id: String = core
+        .store
+        .conn()
+        .query_row("SELECT id FROM card WHERE board_id = ?1", [&board_id], |r| {
+            r.get(0)
+        })
+        .expect("card id");
+
+    let saved = call(
+        &router,
+        &mut core,
+        "card.save_as_page",
+        json!({ "board_id": board_id, "card_id": card_id }),
+    );
+    assert_eq!(saved["created"], true, "{saved}");
+    assert!(
+        saved["citations_carried"].as_u64().unwrap_or(0) > 0,
+        "the page carried none of the card's citations: {saved}"
+    );
+
+    // The page is a file the person owns, in the words the card used.
+    let path = root.join(saved["file_path"].as_str().expect("a file path"));
+    let body = std::fs::read_to_string(&path).expect("the page is on disk");
+    assert!(body.contains("capital conservation buffer"), "{body}");
+    assert!(
+        body.contains("## Sources"),
+        "the page says where the card got it: {body}"
+    );
+
+    // And the card says which page it became, which is what the chip renders.
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    let card = board["cards"]
+        .as_array()
+        .expect("cards")
+        .iter()
+        .find(|c| c["id"] == card_id.as_str())
+        .expect("the card");
+    assert_eq!(card["page_id"], saved["page_id"]);
+
+    // Saving twice is not a second page.
+    let again = call(
+        &router,
+        &mut core,
+        "card.save_as_page",
+        json!({ "board_id": board_id, "card_id": card_id }),
+    );
+    assert_eq!(again["created"], false, "{again}");
+    assert_eq!(again["page_id"], saved["page_id"]);
+    let pages: i64 = core
+        .store
+        .conn()
+        .query_row("SELECT count(*) FROM page", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(pages, 1);
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+#[test]
+fn a_card_with_nothing_to_keep_is_refused_with_a_reason() {
+    // Doc 16 section 3.2: only done or warn flagged cards can be saved.
+    use tessera_store::repo::CardView;
+
+    let root = std::env::temp_dir().join(format!("tessera-save-{}", tessera_store::new_id()));
+    let mut core = core_at(&root);
+    let profile_id = core.profile_id.clone();
+
+    let running = CardView {
+        id: "card-1".into(),
+        parent_card_id: None,
+        kind: "root".into(),
+        anchor_text: None,
+        anchor_block_ref: None,
+        question: "what is the buffer?".into(),
+        depth: "deep".into(),
+        audience_id: None,
+        answer: None,
+        findings: Vec::new(),
+        visual: None,
+        citations: Vec::new(),
+        flags: Vec::new(),
+        status: "running".into(),
+        confidence: None,
+        builds_on: Vec::new(),
+        model_alias: None,
+        stages: Vec::new(),
+        position: json!({}),
+        page_id: None,
+    };
+    let refused = tessera_core::vault::save_card_as_page(&mut core.store, &profile_id, None, &running);
+    assert!(matches!(
+        refused,
+        Err(tessera_core::vault::SaveError::Refused(
+            tessera_core::vault::NOT_SETTLED
+        ))
+    ));
+
+    // And a blocked card stays on the board until the flag is decided.
+    let blocked = CardView {
+        status: "flagged".into(),
+        answer: Some("The buffer is 2.5 %.".into()),
+        flags: vec![json!({ "rule_id": "numeric_without_citation", "severity": "block" })],
+        ..running
+    };
+    let refused = tessera_core::vault::save_card_as_page(&mut core.store, &profile_id, None, &blocked);
+    assert!(matches!(
+        refused,
+        Err(tessera_core::vault::SaveError::Refused(
+            tessera_core::vault::BLOCKED
+        ))
+    ));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_figure_that_rests_on_a_page_alone_is_flagged_and_stands_when_its_source_is_cited() {
+    // Doc 16 phase 12b's acceptance, end to end rather than at the detector.
+    // A page is context; the passages it carried are the evidence. The two
+    // halves run the same board with the same page, and the only difference is
+    // whether the document the page came from is cited beside it.
+    let root = std::env::temp_dir().join(format!("tessera-sole-{}", tessera_store::new_id()));
+    let mut core = core_at_with(
+        &root,
+        Arc::new(
+            MockProvider::new()
+                .on("route", MockResponse::Json(router_output(true)))
+                .on("plan", MockResponse::Json(vault_plan_output()))
+                .on("synthesize", MockResponse::Json(synth_output_citing_one()))
+                .on("visualize", MockResponse::Json(visual_output()))
+                .on("verify", verify_scripted()),
+        ),
+    );
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    std::fs::create_dir_all(root.join("vault")).expect("dir");
+    std::fs::write(
+        root.join("vault/capital-buffer.md"),
+        "# Capital conservation buffer\n\nThe capital conservation buffer for a significant \
+         institution is 2.5 %, from a card I read.",
+    )
+    .expect("write");
+    core.sync_vault().expect("sync");
+
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("card");
+
+    let flags: Vec<String> = {
+        let conn = core.store.conn();
+        let mut stmt = conn.prepare("SELECT rule_id FROM flag").expect("prepare");
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows")
+    };
+    assert!(
+        flags.iter().any(|f| f == "own_card_sole_support"),
+        "a figure resting on a page alone was admitted: {flags:?}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn a_fast_card_never_retrieves() {
     // Doc 06 section A8: a fast card is written from model knowledge and
     // marked unverified. Going to the corpus for it would be a different

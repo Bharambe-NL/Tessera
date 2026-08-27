@@ -294,6 +294,14 @@ export const COPY = {
   boardPackUpdated: 'Judged again under',
   boardPackUpdateFailed: 'The pack update did not finish. The board still names the version it had.',
 
+  /**
+   * Doc 16 section 3.2's ninth verb, and doc 16 section 7 point 1's vocabulary:
+   * a sticky is the thing on the board and a page is the thing in the vault.
+   */
+  saveAsPage: 'Keep as a page',
+  savedAsPage: 'In my pages',
+  saveFailed: 'That card was not saved.',
+
   profileDoctrine: 'Doctrine',
   /** Doc 10 section 9: a pack is data, and importing one is reading a file. */
   profilePackImport: 'Import a doctrine pack',

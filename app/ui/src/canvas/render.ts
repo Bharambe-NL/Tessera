@@ -47,9 +47,23 @@ function signature(c: Card): string {
     c.visual?.block_index.map((b) => (b.hidden ? 1 : 0)) ?? null,
     c.citations.map((s) => [s.ordinal, s.verdict, s.stale]),
     c.flags.map((f) => [f.rule_id, f.severity]),
+    // Without this the chip would appear only after some other change forced
+    // the card's markup to be rebuilt.
+    c.page_id ?? null,
     c.stages.map((s) => [s.label, s.done]),
     flagsOpen.has(c.id),
   ]);
+}
+
+/**
+ * Doc 16 section 4: the card header shows a page chip once it has been saved.
+ *
+ * A chip rather than a link, because the Pages view is 12c and a chip that led
+ * nowhere would be a promise the shell cannot keep yet.
+ */
+function pageChip(c: Card): string {
+  if (!c.page_id) return '';
+  return `<span class="chip page" data-page="${esc(c.page_id)}">${COPY.savedAsPage}</span>`;
 }
 
 function confidenceDot(c: Card): string {
@@ -174,6 +188,16 @@ function cardHTML(c: Card): string {
     model +
     confidenceDot(c) +
     flagChip(c) +
+    pageChip(c) +
+    // Doc 16 section 3.2's ninth verb, offered only where there is something to
+    // keep. A blocked card is refused by the core; hiding the verb on one that
+    // has no answer yet keeps the refusal for the case a person cannot see.
+    (c.page_id
+      ? ''
+      : `<button class="save" data-act="save" ${disabled} data-no-pan ` +
+        `aria-label="${COPY.saveAsPage}" title="${COPY.saveAsPage}">` +
+        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM7 3v6h8M7 21v-8h10v8"/></svg>` +
+        `</button>`) +
     `<button class="rerun" data-act="rerun" ${disabled} data-no-pan aria-label="${COPY.rerunCard}">` +
     `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>` +
     `</button>` +

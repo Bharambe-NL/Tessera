@@ -22,6 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use tessera_store::blob::BlobStore;
 use tessera_store::repo::{self, PageRow};
 
@@ -345,6 +346,198 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
         out.push_str(part.as_os_str().to_str()?);
     }
     Some(out)
+}
+
+// --------------------------------------------------------- save as a page --
+
+/// Why a card could not be saved. Doc 16 section 3.2.
+pub const NOT_SETTLED: &str = "a card is saved once it has an answer";
+pub const BLOCKED: &str = "a blocked card is not saved";
+
+/// Turn a card into a page. Doc 16 section 3.2.
+///
+/// "Creates a Page from question, answer, findings, and a markdown rendering of
+/// the visual; `source_card_id` and `citations_carried` set."
+///
+/// The citations are copied rather than re-derived. Doc 16 section 2.2 is the
+/// reason: the assessed package pointed the next answer's citation at the note,
+/// so two hops later the regulation was out of reach and possibly stale. A page
+/// is context and the passages it carries are the evidence, which only holds
+/// while they are the same passages the card cited.
+pub fn save_card_as_page(
+    store: &mut tessera_store::Store,
+    profile_id: &str,
+    doctrine_pack_id: Option<&str>,
+    card: &repo::CardView,
+) -> Result<String, SaveError> {
+    // Doc 16 section 3.2: "Only done or warn flagged cards can be saved."
+    if card.status != "done" && card.status != "flagged" {
+        return Err(SaveError::Refused(NOT_SETTLED));
+    }
+    if card.flags.iter().any(|f| f["severity"] == "block") {
+        return Err(SaveError::Refused(BLOCKED));
+    }
+
+    let taken: std::collections::BTreeSet<String> = repo::list_pages(store, profile_id, 10_000)
+        .map_err(SaveError::Store)?
+        .into_iter()
+        .map(|p| p.file_path)
+        .collect();
+    let title = title_for(store, profile_id, &card.question).map_err(SaveError::Store)?;
+    let path = file_path("", &title, &taken);
+    let body = page_body(&title, card);
+
+    // Doc 16 section 3.2: blocked content is excluded. A block flag hides a
+    // visual block rather than the answer, and a page that carried the hidden
+    // tile would put back exactly what the Verifier took out.
+    let carried: Vec<Value> = card
+        .citations
+        .iter()
+        .filter_map(|c| {
+            Some(serde_json::json!({
+                "ordinal": c["ordinal"].as_i64()?,
+                "passage_id": c["passage_id"].as_str().unwrap_or_default(),
+            }))
+        })
+        .collect();
+
+    let page_id = repo::create_page(
+        store,
+        repo::NewPage {
+            profile_id,
+            title: &title,
+            body: &body,
+            file_path: &path,
+            source_card_id: Some(&card.id),
+            citations_carried: Value::Array(carried),
+            doctrine_pack_id,
+        },
+    )
+    .map_err(SaveError::Store)?;
+
+    repo::set_card_page(store, &card.id, &page_id).map_err(SaveError::Store)?;
+    save_links(store, profile_id, &page_id, &body).map_err(SaveError::Store)?;
+    // The link somebody wrote before this page existed. Doc 16 section 3.1.
+    repo::resolve_pending_links(store, "page", &page_id, &title).map_err(SaveError::Store)?;
+
+    let root = store.root().to_path_buf();
+    write_file(&root, &path, &body, None);
+    repo::mark_page_synced(store, &page_id, &body).map_err(SaveError::Store)?;
+
+    if let Some(page) = repo::read_page(store, &page_id).map_err(SaveError::Store)? {
+        index_page(store, profile_id, &page).map_err(SaveError::Store)?;
+    }
+    Ok(page_id)
+}
+
+/// What went wrong saving a card.
+#[derive(Debug)]
+pub enum SaveError {
+    /// The card is not one a person may save, and why.
+    Refused(&'static str),
+    Store(tessera_store::StoreError),
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SaveError::Refused(why) => write!(f, "{why}"),
+            SaveError::Store(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// A title from the question, free for this profile to take.
+fn title_for(
+    store: &tessera_store::Store,
+    profile_id: &str,
+    question: &str,
+) -> Result<String, tessera_store::StoreError> {
+    let trimmed = question.trim().trim_end_matches(['?', '.', '!']).trim();
+    let base = if trimmed.is_empty() { "A card" } else { trimmed };
+    let base = base[..base.len().min(120)].trim().to_string();
+    let base = base[..1].to_uppercase() + &base[1..];
+
+    let mut title = base.clone();
+    let mut n = 2;
+    while repo::page_by_title(store, profile_id, &title)?.is_some() {
+        title = format!("{base} {n}");
+        n += 1;
+    }
+    Ok(title)
+}
+
+/// The markdown a saved card becomes. Doc 16 section 3.2.
+fn page_body(title: &str, card: &repo::CardView) -> String {
+    let mut out = format!("# {title}\n\n");
+    if let Some(answer) = card.answer.as_deref() {
+        out.push_str(answer.trim());
+        out.push('\n');
+    }
+
+    let findings: Vec<&str> = card.findings.iter().filter_map(|f| f["text"].as_str()).collect();
+    if !findings.is_empty() {
+        out.push_str("\n## What it said\n\n");
+        for finding in findings {
+            out.push_str(&format!("- {finding}\n"));
+        }
+    }
+
+    if let Some(visual) = card.visual.as_ref()
+        && let Some(rendered) = visual_markdown(visual)
+    {
+        out.push_str("\n## The diagram, as text\n\n");
+        out.push_str(&rendered);
+    }
+
+    if !card.citations.is_empty() {
+        out.push_str("\n## Sources\n\n");
+        for citation in &card.citations {
+            let ordinal = citation["ordinal"].as_i64().unwrap_or(0);
+            let title = citation["source_title"].as_str().unwrap_or("A source");
+            let locator = citation["locator"].as_str().unwrap_or("");
+            out.push_str(&format!("{ordinal}. {title} ({locator})\n"));
+        }
+    }
+    out
+}
+
+/// The visual's labels as a list, blocks the Verifier hid left out.
+///
+/// A rendering rather than a copy of the payload: doc 16 section 3.2 wants the
+/// page readable in any editor, and a JSON blob in a markdown file is neither
+/// readable nor a diagram.
+fn visual_markdown(visual: &Value) -> Option<String> {
+    let blocks = visual["block_index"].as_array()?;
+    let mut lines = Vec::new();
+    for block in blocks {
+        // Doc 07 section B8: a hidden block was hidden for a reason, and a page
+        // that carried it would put back what the Verifier took out.
+        if block["hidden"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        let Some(label) = block["label"].as_str() else {
+            continue;
+        };
+        let ordinals: Vec<String> = block["citation_ordinals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|o| o.as_i64().map(|n| format!("[{n}]")))
+            .collect();
+        lines.push(format!(
+            "- {label}{}",
+            if ordinals.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", ordinals.join(""))
+            }
+        ));
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines.join("\n") + "\n")
 }
 
 // ------------------------------------------------------------------ links --

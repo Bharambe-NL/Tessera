@@ -114,7 +114,8 @@ body {
 }
 
 /* Doc 09 section 5's Rerun verb, pushed to the trailing edge of the header. */
-.card .head .rerun {
+.card .head .rerun,
+.card .head .save {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -122,7 +123,15 @@ body {
   flex: none;
 }
 
-.card .head .rerun:hover:not(:disabled) {
+/* Whichever verb comes first takes the gap; the second sits beside it. Doc 16
+   section 3.2's Save is offered only until the card has a page, so the rerun
+   has to be able to take the gap back. */
+.card .head .save + .rerun {
+  margin-left: 0;
+}
+
+.card .head .rerun:hover:not(:disabled),
+.card .head .save:hover:not(:disabled) {
   color: var(--ink);
 }
 
@@ -168,6 +177,14 @@ body {
 
 .dot.good {
   background: var(--olive-ink);
+}
+
+/* Doc 16 section 7 point 1: the vault object is a page, and it reads as one
+   rather than as a flag. Olive, because nothing is wrong. */
+.chip.page {
+  background: var(--olive);
+  color: var(--olive-ink);
+  border-color: transparent;
 }
 
 .chip.flag.warn {

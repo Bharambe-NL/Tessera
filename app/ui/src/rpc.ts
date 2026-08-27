@@ -234,6 +234,21 @@ export class Rpc {
   }
 
   /**
+   * Doc 16 section 3.2's ninth verb. The page carries the card's citations
+   * rather than becoming one, so what the next answer cites is still the
+   * passage the card found.
+   */
+  saveAsPage(boardId: string, cardId: string) {
+    return this.call<{
+      page_id: string;
+      title: string | null;
+      file_path: string | null;
+      citations_carried?: number;
+      created: boolean;
+    }>('card.save_as_page', { board_id: boardId, card_id: cardId });
+  }
+
+  /**
    * Doc 09 section 5's Branch verb, in its three forms. With no anchor at all
    * the card is a root; with a parent alone it is a follow-up; with a parent and
    * either anchor it is a branch. The core rejects an anchor with no parent,

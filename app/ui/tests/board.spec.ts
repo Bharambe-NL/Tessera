@@ -257,3 +257,25 @@ test('no card on the board reports a failure', async ({ page }) => {
   await expect(page.locator('#cards .failed')).toHaveCount(0);
   await expect(page.locator('#toasts .toast.error')).toHaveCount(0);
 });
+
+test('a card is kept as a page and says so afterwards', async ({ page }) => {
+  // Doc 16 section 3.2's ninth verb. The chip is what tells a person the card
+  // is now somewhere they own, and the verb goes away because there is nothing
+  // left to do to it.
+  await askFirst(page);
+
+  const card = page.locator('#cards .card').first();
+  await expect(card.locator('.save')).toBeVisible();
+  await expect(card.locator('.chip.page')).toHaveCount(0);
+
+  await card.locator('.save').click();
+  await expect(card.locator('.chip.page')).toBeVisible({ timeout: 30_000 });
+  await expect(card.locator('.chip.page')).toHaveText('In my pages');
+  await expect(card.locator('.save')).toHaveCount(0, {
+    timeout: 30_000,
+  });
+
+  // And it is the core that says so: the chip survives a reload.
+  await page.reload();
+  await expect(page.locator('#cards .card .chip.page')).toBeVisible({ timeout: 30_000 });
+});
