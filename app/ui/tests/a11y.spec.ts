@@ -106,6 +106,22 @@ test('text on the board meets the contrast floor', async ({ page }) => {
   expect(failures, JSON.stringify(failures, null, 2)).toEqual([]);
 });
 
+test('text in a flow and in a tile meets the contrast floor', async ({ page }) => {
+  // Doc 16 section 3.5's two shapes paint their own colours: a tile is a large
+  // numeral on a filled block and an edge label is small text on another, and
+  // neither is on screen when the board draws a tree.
+  for (const question of ['how does the review loop work?', 'the hall in numbers']) {
+    await freshCore(page);
+    await useCore(page);
+    await page.goto('/');
+    await page.locator('#ask').fill(question);
+    await page.locator('#ask').press('Enter');
+    await expect(page.locator('#cards .card .answer')).toBeVisible({ timeout: 30_000 });
+    const failures = await contrastFailures(page);
+    expect(failures, `${question}: ${JSON.stringify(failures, null, 2)}`).toEqual([]);
+  }
+});
+
 test('text on every page meets the contrast floor', async ({ page }) => {
   await askOne(page);
   for (const view of ['home', 'flags', 'library', 'notebook', 'pages', 'profile'] as const) {

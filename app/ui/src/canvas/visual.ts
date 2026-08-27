@@ -12,7 +12,7 @@
  */
 
 import { COPY } from '../strings.js';
-import type { BlockIndexEntry, BottomLine, TreeNode, Visual } from './types.js';
+import type { BlockIndexEntry, BottomLine, FlowEdge, FlowNode, Tile, TreeNode, Visual } from './types.js';
 
 const HUES = ['h1', 'h2', 'h3', 'h4'] as const;
 
@@ -119,6 +119,40 @@ function treeLevel(nodes: TreeNode[], depth: number, path: string, lookup: Block
     : '';
 
   return `${row}<div class="arrow" aria-hidden="true">↓</div>${childRow}${deeper}`;
+}
+
+/**
+ * Lay a flow out in layers, longest path first.
+ *
+ * Doc 16 section 3.5 asks for "a small layered layout". A node sits one layer
+ * below the deepest thing that reaches it, which puts sources at the top and
+ * the ends at the bottom. A cycle has no such order, so a node already placed
+ * stays where it is and the edge that closed the loop is drawn in the list
+ * below rather than dragging a node down forever.
+ */
+function layers(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[][] {
+  const depth = new Map(nodes.map((n) => [n.id, 0]));
+  // One pass per node is enough for any acyclic run, and it is what bounds the
+  // walk when the flow loops.
+  for (let pass = 0; pass < nodes.length; pass += 1) {
+    let moved = false;
+    for (const e of edges) {
+      const from = depth.get(e.from);
+      const to = depth.get(e.to);
+      if (from === undefined || to === undefined) continue;
+      if (to <= from) {
+        depth.set(e.to, from + 1);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  const rows: FlowNode[][] = [];
+  for (const n of nodes) {
+    const d = Math.min(depth.get(n.id) ?? 0, nodes.length - 1);
+    (rows[d] ??= []).push(n);
+  }
+  return rows.filter((r) => r && r.length);
 }
 
 /**
@@ -229,6 +263,65 @@ export function visualHTML(v: Visual | null): string {
         )
         .join('');
       return `<div class="vis">${head}<div class="steps">${steps}</div></div>`;
+    }
+
+    case 'flow': {
+      const payload = v.payload as { nodes: FlowNode[]; edges?: FlowEdge[]; bottom_line?: BottomLine };
+      const nodes = payload.nodes ?? [];
+      if (!nodes.length) return '';
+      const edges = payload.edges ?? [];
+      const label = new Map(nodes.map((n) => [n.id, n.label]));
+      const rows = layers(nodes, edges)
+        .map(
+          (layer, depth) =>
+            `<div class="row">${layer
+              .map((n) =>
+                block(`/nodes/${nodes.indexOf(n)}`, lookup, (attrs) => {
+                  const hue = HUES[(depth + layer.indexOf(n)) % HUES.length];
+                  const note = n.note ? ` data-note="${esc(n.note)}"` : '';
+                  return `<span class="node clk ${hue}"${attrs}${note} tabindex="0" role="button">${esc(
+                    n.label,
+                  )}</span>`;
+                }),
+              )
+              .join('')}</div>`,
+        )
+        .join('<div class="arrow" aria-hidden="true">↓</div>');
+
+      // Every edge is named, not only the ones the layering could draw as a
+      // descent. Doc 16 section 3.5 adds this type for the cycles and cross
+      // links a tree cannot show, so the edge that goes back up is the one that
+      // most needs saying.
+      const written = edges
+        .map((e, i) =>
+          block(`/edges/${i}`, lookup, (attrs) => {
+            const middle = e.label ? `<span class="how"${attrs}>${esc(e.label)}</span>` : '';
+            return `<li class="edge">${esc(label.get(e.from) ?? e.from)}${middle}<i aria-hidden="true">→</i>${esc(
+              label.get(e.to) ?? e.to,
+            )}</li>`;
+          }),
+        )
+        .join('');
+      const list = written ? `<ul class="edges">${written}</ul>` : '';
+      return `<div class="vis flow">${head}${rows}${list}${bottomLine(payload.bottom_line)}</div>`;
+    }
+
+    case 'stats': {
+      const payload = v.payload as { tiles: Tile[]; bottom_line?: BottomLine };
+      const tiles = (payload.tiles ?? [])
+        .map((t, i) =>
+          block(
+            `/tiles/${i}`,
+            lookup,
+            (attrs) =>
+              `<div class="tile clk ${HUES[i % HUES.length]}"${attrs} tabindex="0" role="button"><b>${esc(
+                t.value,
+              )}${t.unit ? `<i>${esc(t.unit)}</i>` : ''}</b><span>${esc(t.label)}</span></div>`,
+          ),
+        )
+        .join('');
+      if (!tiles) return '';
+      return `<div class="vis">${head}<div class="tiles">${tiles}</div>${bottomLine(payload.bottom_line)}</div>`;
     }
 
     case 'figure': {

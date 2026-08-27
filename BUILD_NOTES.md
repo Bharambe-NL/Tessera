@@ -2916,6 +2916,49 @@ grounded sweep and the bundle round trip.
 
 ---
 
+### BN-122 Drawing the two new shapes, and the corpus expectation that was not written
+
+**Spec** 16 section 3.5, 09 section 14, 06 section B12.
+
+**Built** 2026-08-27, M15 12e-ii.
+
+**A flow draws its layers and names every edge.** Nodes sit one layer below the deepest thing that
+reaches them, which puts the sources at the top and the ends at the bottom. A cycle has no such
+order, so a node already placed stays where it is and the walk is bounded by the node count rather
+than running forever. Every edge is then written out below the diagram, labelled and clickable,
+because the edge that goes back up is the one a tree could not have shown at all and the one most
+worth saying out loud.
+
+**A tile is one block, not two.** The numeral and the label render together and carry one pointer,
+because a tile is one thing on the canvas: two blocks would let the Verifier hide half of it and
+leave a number on screen with its meaning gone.
+
+**The contrast gate had never seen either.** Both shapes paint their own colours, a large numeral on
+a filled block and a small edge label on another, and neither is on screen when the board draws a
+tree. The gate now asks a question that produces each one.
+
+**The metric says which shape missed, not how many did.** `visual_type_match` was one ratio over six
+shapes: 0.250, which reads as a Visualizer that picks the wrong type three times in four. Split by
+what the corpus expected it reads `table 65/65, tree 0/125, list 0/48, steps 0/22`, which says
+something else entirely: the selection rule is right every time it is asked for the shape the
+grounded mock can write, and the mock writes values and nothing else. A type at zero is either a
+wrong rule or a summary shape the provider never writes, and those want opposite fixes.
+
+**The corpus expectation the plan asked for is deliberately not written.** M15's step called for
+corpus questions expecting flow and stats. An `expected_visual` is a claim that a good answer to
+this question would draw this shape, and nothing planted in this corpus is a cycle or a set of
+figures in differing units: every fact is one value, one date, one obligation or one ordered
+procedure. Writing the expectation anyway would be ground truth asserting a shape the material
+cannot support, which is worse than a recorded gap, and it would score every provider a miss for
+declining to invent one. What lands instead is the guard that ground truth may only expect a shape
+the canvas draws, mirroring the renderer's own switch, and the breakdown above, which is what will
+show the two shapes the day the corpus grows material for them.
+
+**Verified** Full battery green, 63 Playwright tests including both new shapes and their contrast,
+82 generator guards, the grounded sweep rescored and the bundle round trip.
+
+---
+
 ---
 
 ## Measured findings

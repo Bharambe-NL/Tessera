@@ -473,6 +473,91 @@ table.cmp td {
   opacity: 0.8;
 }
 
+/* Doc 16 section 3.5: a small layered layout, with every edge named below it. */
+.vis.flow {
+  text-align: center;
+}
+
+.vis .edges {
+  list-style: none;
+  margin: var(--s4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s1);
+  text-align: left;
+}
+
+.vis .edge {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.vis .edge i {
+  font-style: normal;
+  color: var(--ink-3);
+}
+
+.vis .edge .how {
+  padding: 0 var(--s2);
+  border-radius: var(--r-node);
+  background: var(--slate);
+  color: var(--slate-ink);
+  cursor: pointer;
+}
+
+/* Doc 16 section 3.5: at most six large numerals, every one of them cited. */
+.vis .tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: var(--s2);
+}
+
+.vis .tile {
+  padding: var(--s3);
+  border-radius: var(--r-node);
+  background: var(--slate);
+  color: var(--slate-ink);
+}
+
+.vis .tile b {
+  display: block;
+  font-size: 22px;
+  line-height: 1.1;
+  font-weight: 600;
+}
+
+.vis .tile b i {
+  font-style: normal;
+  font-size: 13px;
+  margin-left: 2px;
+  opacity: 0.75;
+}
+
+.vis .tile span {
+  display: block;
+  margin-top: var(--s1);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.vis .tile.h1 {
+  background: var(--olive);
+  color: var(--olive-ink);
+}
+
+.vis .tile.h3 {
+  background: var(--rust);
+  color: var(--rust-ink);
+}
+
+.vis .tile.h4 {
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
 .vis.figure {
   margin: var(--s5) 0 0;
   text-align: center;

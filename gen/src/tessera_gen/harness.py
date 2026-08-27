@@ -985,20 +985,39 @@ def score(results: Path, corpus: Path) -> Report:
     report.metrics.append(_ratio("visual_fidelity", bound, blocks))
 
     hits = total = 0
+    by_expected: dict[str, list[int]] = {}
     for run in answered:
         expected = run.get("expected_visual")
         if not expected or expected == "none":
             continue
         total += 1
+        seen = by_expected.setdefault(expected, [0, 0])
+        seen[1] += 1
         if run.get("visual_type") == expected:
             hits += 1
+            seen[0] += 1
     # Doc 06 section B12 gates this at 0.85, and it is left ungated here on
     # purpose. The type comes from the shape of the summary the model wrote, so
     # on a scripted provider it measures the script: the grounded mock emits
     # values and nothing else, which selects a table every time. A gate that
     # fails every free run is a gate people learn to ignore. It becomes a gate
     # on a live sweep, where the summary is the model's own.
-    report.metrics.append(_ratio("visual_type_match", hits, total))
+    #
+    # Split by the type the corpus expected, because one ratio over six shapes
+    # says a quarter matched and nothing about which. A type at zero is either a
+    # selection rule that is wrong or a summary shape the provider never writes,
+    # and those want opposite fixes.
+    drawn = ", ".join(
+        f"{kind} {seen[0]}/{seen[1]}" for kind, seen in sorted(by_expected.items())
+    )
+    report.metrics.append(
+        _ratio(
+            "visual_type_match",
+            hits,
+            total,
+            f"by expected type: {drawn}" if drawn else "",
+        )
+    )
 
     # ------------------------------------------------------- honesty -------
     # Not in doc 02's table, but it is what this build's deep path is actually
