@@ -1155,6 +1155,24 @@ fn ancestor_question(prompt: &str) -> Option<String> {
 /// measurable for nothing, and the Verifier's own override still runs on top.
 fn support_judged(request: &CompletionRequest) -> Value {
     let prompt = prompt_of(request);
+
+    // Doc 07 section B8.5's rules share the verify stage with the support check,
+    // so the prompt says which one is being asked. The mock answers that none
+    // matched: its answers are verbatim quotes of retrieved passages, so it has
+    // no jurisdiction drift or scope creep to find, and inventing one would put
+    // a flag in the record that nothing in the corpus expects. What this does
+    // measure is that the rules are dispatched, parsed and reported at all,
+    // which they were not before.
+    if prompt.contains("For each rule, say whether it matches") {
+        let matches: Vec<Value> = prompt
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("- "))
+            .filter_map(|line| line.split_once(": "))
+            .map(|(rule_id, _)| json!({ "rule_id": rule_id, "matched": false }))
+            .collect();
+        return json!({ "matches": matches });
+    }
+
     let passages: std::collections::BTreeMap<usize, String> =
         passages_in(&prompt).into_iter().collect();
 

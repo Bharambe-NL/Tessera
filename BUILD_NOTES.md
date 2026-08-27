@@ -761,6 +761,39 @@ existed, which is whenever there were any readings at all. Two passages of equal
 though one outranked the other, and `later_date` and `presented_both` could not be produced by any
 input. The output schema had allowed all three since it was written.
 
+### BN-065 The doctrine model rules run, and the rule's own words are the check
+
+**Spec** 07 section B8.5.
+
+**Decision** A rule whose detector starts with `model:` is collected during the deterministic pass
+and asked in one batched call at the `doctrine_model_checks` stage. Each rule's own `description` is
+the question, so the pack decides what is looked for and the code decides only when to ask. Matches
+are capped at warn. A call that fails lists every rule as unchecked and flags the card, never as
+passed.
+
+**Reason** Doctrine is data, never code. The alternative was a detector function per rule id, which
+would have put `jurisdiction_drift` in Rust and made the pack a list of names for behaviour it did
+not contain. The finance pack has shipped three of these rules since it was written and every one was
+listed as skipped: "This build runs deterministic detectors only."
+
+### BN-066 The support check flags cards, and a flagged card is not remembered
+
+**Spec** 15 section 3's eligibility rule, and 07 section B10's fail closed posture.
+
+**Decision** Kept. A card the support check could not verify is flagged, and doc 15 section 3 only
+remembers a card whose status is `done`.
+
+**Reason** Found by a test rather than by a metric. An end to end memory test scripted the mock for
+route, plan, synthesize and visualize but not verify, so the support check failed, the card was
+flagged, and it was no longer eligible to be recalled on another board. That is the fail closed rule
+working: a card nobody could verify should not become the evidence for the next one. The fixture now
+answers both verify stage calls, which is what a fixture wanting an admitted card has to do.
+
+Worth naming because the chain is not obvious: eligibility reads `status = 'done'` and separately
+excludes open `block` flags, and the Verifier sets the status to `flagged` on any warn. The second
+clause is therefore unreachable, and any warn flag anywhere keeps a card out of memory. That is
+defensible and it is stricter than doc 15 section 3 reads on its own.
+
 ---
 
 ## Measured findings

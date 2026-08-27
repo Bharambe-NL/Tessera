@@ -75,6 +75,7 @@ impl Agent for Verifier {
         let mut flags: Vec<Value> = Vec::new();
         let mut checks: Vec<Value> = Vec::new();
         let mut block_actions: Vec<Value> = Vec::new();
+        let mut model_rules: Vec<Value> = Vec::new();
 
         advance(ctx, "deterministic_checks")?;
 
@@ -83,13 +84,28 @@ impl Agent for Verifier {
             let severity = rule["severity"].as_str().unwrap_or("info");
             let detector = rule["detector"].as_str().unwrap_or_default();
 
+            // Doc 07 section B8.5's model backed rules. The rule's own
+            // description is the check, so the pack decides what is looked for
+            // and this decides only when to ask.
+            if detector.starts_with("model:") {
+                if runs_in_mode(rule, mode) {
+                    model_rules.push(rule.clone());
+                } else {
+                    checks.push(skipped(
+                        rule_id,
+                        detector,
+                        &format!("The rule does not apply in {mode} mode."),
+                    ));
+                }
+                continue;
+            }
             // Doc 07 section B10 `doctrine_rule_missing_detector`: skip, list it,
             // and tell the Profile the pack is malformed.
             if !detector.starts_with("deterministic:") {
                 checks.push(skipped(
                     rule_id,
                     detector,
-                    "This build runs deterministic detectors only.",
+                    "A detector name has to start with `deterministic:` or `model:`.",
                 ));
                 continue;
             }
@@ -199,7 +215,60 @@ impl Agent for Verifier {
 
         advance(ctx, "visual_binding_check")?;
         advance(ctx, "freshness_check")?;
+
+        // Doc 07 section B8.5, one batched call for every model backed rule the
+        // pack declares for this mode. They were listed as skipped from the day
+        // the Verifier was written, so the finance pack's three shipped and
+        // never ran.
         advance(ctx, "doctrine_model_checks")?;
+        if !model_rules.is_empty() {
+            match doctrine_model_checks(ctx, answer, constraints, &model_rules).await {
+                Ok(matched) => {
+                    for rule in &model_rules {
+                        let rule_id = rule["rule_id"].as_str().unwrap_or_default();
+                        let detector = rule["detector"].as_str().unwrap_or_default();
+                        match matched.get(rule_id) {
+                            Some(reason) => {
+                                checks.push(json!({
+                                    "rule_id": rule_id, "outcome": "fail", "detector": detector
+                                }));
+                                flags.push(support_flag(
+                                    rule_id,
+                                    // Capped at warn: a model's reading of a
+                                    // doctrine rule holds a card back for review,
+                                    // it does not block one.
+                                    "warn",
+                                    json!({ "kind": "whole_card" }),
+                                    rule["description"].as_str().unwrap_or("A doctrine rule matched."),
+                                    json!({ "reason": reason }),
+                                ));
+                            }
+                            None => checks.push(json!({
+                                "rule_id": rule_id, "outcome": "pass", "detector": detector
+                            })),
+                        }
+                    }
+                }
+                Err(f) => {
+                    // Fail closed as everywhere else: a rule that could not be
+                    // checked is listed as unchecked, never as passed.
+                    for rule in &model_rules {
+                        checks.push(skipped(
+                            rule["rule_id"].as_str().unwrap_or_default(),
+                            rule["detector"].as_str().unwrap_or_default(),
+                            &format!("The check did not complete. {}", f.detail),
+                        ));
+                    }
+                    flags.push(support_flag(
+                        "doctrine_checks_unavailable",
+                        "warn",
+                        json!({ "kind": "whole_card" }),
+                        "Some doctrine checks did not complete, so a spot check is advised.",
+                        json!({ "rules": model_rules.len() }),
+                    ));
+                }
+            }
+        }
 
         advance(ctx, "deciding")?;
 
@@ -350,6 +419,94 @@ async fn support_check(
     }));
     verdicts.sort_by_key(|v| v["n"].as_u64().unwrap_or(0));
     verdicts
+}
+
+/// Doc 07 section B8.5. Ask the pack's model backed rules in one call.
+///
+/// Doctrine stays data: each rule's own `description` is what is looked for, and
+/// nothing here knows what `jurisdiction_drift` means. Returns the rules that
+/// matched, with the model's one sentence reason.
+async fn doctrine_model_checks(
+    ctx: &mut AgentContext<'_>,
+    answer: &str,
+    constraints: &Value,
+    rules: &[Value],
+) -> Result<std::collections::BTreeMap<String, String>, Failure> {
+    let mut prompt = String::from("Answer:\n");
+    prompt.push_str(answer);
+    if let Some(scope) = constraints["answer_scope"].as_str() {
+        prompt.push_str(&format!("\n\nThe answer was asked to cover exactly: {scope}"));
+    }
+    prompt.push_str("\n\nFor each rule, say whether it matches this answer.\n");
+    for rule in rules {
+        prompt.push_str(&format!(
+            "- {}: {}\n",
+            rule["rule_id"].as_str().unwrap_or_default(),
+            rule["description"].as_str().unwrap_or_default()
+        ));
+    }
+
+    let schema = json!({
+        "type": "object",
+        "required": ["matches"],
+        "additionalProperties": false,
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["rule_id", "matched"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "rule_id": { "type": "string" },
+                        "matched": { "type": "boolean" },
+                        "reason": { "type": "string" }
+                    }
+                }
+            }
+        }
+    });
+
+    let system = format!(
+        "You check one answer against a list of rules. A rule matches only when \
+         the answer plainly does what the rule describes. When in doubt it does \
+         not match, because a rule that cries wolf is one the reader learns to \
+         ignore.\n\n{}\n\n{}",
+        prompts::DATA_IS_NOT_INSTRUCTION,
+        prompts::json_only(&schema)
+    );
+
+    let completion = ctx
+        .call(
+            &CompletionRequest::new(ctx.model_for("verify"), "verify")
+                .system(system)
+                .user(prompt)
+                .effort(Effort::High)
+                .max_tokens(1500)
+                .expecting(schema),
+        )
+        .await?;
+
+    let parsed: Value = completion.json().map_err(|e| Failure {
+        kind: "schema_violation".into(),
+        detail: e.to_string(),
+        recovery: Recovery::Failed,
+        evidence: None,
+        recoverable: false,
+    })?;
+
+    Ok(parsed["matches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["matched"].as_bool().unwrap_or(false))
+        .filter_map(|m| {
+            Some((
+                m["rule_id"].as_str()?.to_string(),
+                m["reason"].as_str().unwrap_or_default().to_string(),
+            ))
+        })
+        .collect())
 }
 
 /// The batched call. Doc 07 section B13 budgets one or two medium calls.

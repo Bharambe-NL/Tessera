@@ -50,6 +50,37 @@ fn synth_output() -> Value {
     })
 }
 
+/// Doc 07 section B8.2 and B8.5 both run on the verify stage, so a mock that
+/// answers one shape for both fails the other's schema and the card is held
+/// back. Fail closed is right; a fixture that wants an admitted card has to
+/// answer both, which is what this does.
+fn verify_scripted() -> MockResponse {
+    MockResponse::Scripted(Arc::new(|request| {
+        let mut prompt = String::new();
+        for message in &request.messages {
+            for block in &message.content {
+                if let tessera_providers::ContentBlock::Text { text } = block {
+                    prompt.push('\n');
+                    prompt.push_str(text);
+                }
+            }
+        }
+        if prompt.contains("For each rule, say whether it matches") {
+            let matches: Vec<Value> = prompt
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("- "))
+                .filter_map(|line| line.split_once(": "))
+                .map(|(rule_id, _)| json!({ "rule_id": rule_id, "matched": false }))
+                .collect();
+            return MockResponse::Json(json!({ "matches": matches }));
+        }
+        let verdicts: Vec<Value> = (1..=6)
+            .map(|n| json!({ "n": n, "verdict": "supported", "reason": "The passage states it." }))
+            .collect();
+        MockResponse::Json(json!({ "verdicts": verdicts }))
+    }))
+}
+
 fn visual_output() -> Value {
     json!({
         "title": "Parts of a world model",
@@ -466,7 +497,8 @@ fn an_unknown_domain_costs_the_card_nothing() {
             .on("route", MockResponse::Json(router_output(true)))
             .on("plan", MockResponse::Json(plan_output()))
             .on("synthesize", MockResponse::Json(synth_output()))
-            .on("visualize", MockResponse::Json(visual_output())),
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
@@ -518,7 +550,8 @@ fn a_research_card_is_planned_before_it_is_synthesized() {
             .on("route", MockResponse::Json(router_output(true)))
             .on("plan", MockResponse::Json(plan_output()))
             .on("synthesize", MockResponse::Json(synth_output()))
-            .on("visualize", MockResponse::Json(visual_output())),
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
@@ -596,7 +629,8 @@ fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
             .on("route", MockResponse::Json(router_output(true)))
             .on("plan", MockResponse::Json(plan_output()))
             .on("synthesize", MockResponse::Json(synth_output()))
-            .on("visualize", MockResponse::Json(visual_output())),
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
@@ -727,7 +761,8 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
             .on("route", MockResponse::Json(router_output(true)))
             .on("plan", MockResponse::Json(plan_output()))
             .on("synthesize", MockResponse::Json(synth_output()))
-            .on("visualize", MockResponse::Json(visual_output())),
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
     );
     let mut core = core_with(Arc::clone(&provider));
     core.use_pack("finance-eu-synthetic").expect("pack");
