@@ -19,6 +19,7 @@ second as the first would make an unbuilt stage look like a broken one.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,10 +41,13 @@ THRESHOLDS: dict[str, float] = {
     # backlinks panel that finds most of the links into a page is a panel
     # nobody can trust to tell them what refers to what.
     "backlink_completeness": 1.0,
-    # Doc 16 section 5's other two, gated from 12d when the notebook can
-    # produce them. Listed now so the day a run sets them the number is judged
-    # rather than reported.
+    # Doc 16 section 5's other two, measured by the `--notebook` leg.
     "grounding_state_accuracy": 0.95,
+    # Doc 16 phase 12d's acceptance in as many words: "the ungrounded state
+    # appears whenever no_passages; never a silent fallback". The state and the
+    # passage count are both on the event the core wrote, so this checks the two
+    # against each other rather than against a rule restated here.
+    "ungrounded_is_no_passages": 1.0,
     "verifier_agreement": 0.90,
     "staleness_detection": 0.95,
     # Doc 06 section B12: "every block in block_index has at least one supported
@@ -155,6 +159,13 @@ MOCKED: dict[str, str] = {
     # The type follows the shape of the summary the model wrote, and the mock
     # writes one shape.
     "visual_type_match": "the mock emits one summary shape, so it selects one visual type",
+    # The grounded mock quotes its passages into prose the Verifier cannot bind
+    # sentence by sentence, so every card carries unsupported statements and
+    # every notebook answer reads as partly grounded whatever the vault did. The
+    # same artefact `flag_false_positive_rate` is exempted for.
+    "grounding_state_accuracy": (
+        "the mock's prose leaves sentences the Verifier cannot bind, so every answer is partly grounded"
+    ),
     # Doc 07 section A12 sets this at 0.80 on clean rasters. A mock cannot see,
     # and a fixture that returns the structure the corpus recorded would be
     # scoring this repository against itself. Listed here so that the day a run
@@ -364,6 +375,61 @@ def load_runs(results: Path) -> tuple[list[dict], dict]:
     return runs, manifest
 
 
+#: Doc 16 section 5's two vault question families, and the state each expects.
+#: A page only question is answerable from the vault; a no vault match question
+#: is not, and doc 16 section 3.4 makes that the ungrounded state.
+_GROUNDING_EXPECTED = {"page_only": "grounded", "no_vault_match": "ungrounded"}
+
+#: Doc 01 section 4.8's classes that carry a claim and never support one. Doc 16
+#: section 3.3 adds `page` to the `own_card` rule for exactly this reason.
+_CONTEXT_ONLY = {"page", "own_card"}
+
+
+def _grounding_event(run: dict) -> dict:
+    for event in run.get("events") or []:
+        if event.get("type") == "notebook.grounding.v1":
+            return event.get("payload") or {}
+    return {}
+
+
+def _grounding(run: dict) -> str | None:
+    return _grounding_event(run).get("state")
+
+
+def _passages_seen(run: dict) -> int:
+    return int(_grounding_event(run).get("passages") or 0)
+
+
+def _expected_grounding(run: dict) -> str | None:
+    for case in run.get("edge_case_ids") or []:
+        if case in _GROUNDING_EXPECTED:
+            return _GROUNDING_EXPECTED[case]
+    return None
+
+
+#: A figure with a unit, which is what doc 05 v0.2's rule is about. Restated
+#: here rather than read off the Verifier's finding, because a scorer that
+#: trusts the check it is scoring agrees with itself by construction.
+_FIGURE = re.compile(r"\d[\d.,]*\s*(?:%|per cent|percent|months?|days?|hours?|years?|weeks?)")
+
+
+def _page_sole_support(run: dict) -> bool:
+    """A figure resting on pages alone that no block flag stopped.
+
+    Doc 05 v0.2 line 106 is about a figure: a page is context, and a number
+    resting on one alone is a claim with nothing behind it. An answer that
+    restates a definition from the reader's own note and states no figure is not
+    that failure, and counting it would gate the notebook on saying anything at
+    all about what the reader wrote.
+    """
+    classes = {c.get("source_class") for c in run.get("citations") or []}
+    if not classes or not classes <= _CONTEXT_ONLY:
+        return False
+    if not _FIGURE.search(run.get("answer") or ""):
+        return False
+    return not any(f.get("severity") == "block" for f in run.get("flags") or [])
+
+
 def load_vault(corpus: Path) -> list[dict]:
     """The pages the corpus planted. Doc 16 section 5."""
     path = corpus / "vault.jsonl"
@@ -565,7 +631,11 @@ def score(results: Path, corpus: Path) -> Report:
     # and would score every flag against an expectation no question set. Every
     # metric about answering therefore runs on the questions, and the staleness
     # metrics below read both.
-    runs = [r for r in everything if r.get("kind", "card") != "verify_only"]
+    # A notebook question is asked over the vault alone and a re-verification
+    # answers nothing, so neither belongs among the answers: counting them would
+    # measure a run that could reach every retriever against one that was never
+    # allowed to, and one that was never asked anything at all.
+    runs = [r for r in everything if r.get("kind", "card") not in ("verify_only", "notebook")]
     report.reverified = sum(1 for r in everything if r.get("kind") == "verify_only")
 
     # The verify leg asks questions to build a stale ancestor for the Planner,
@@ -1249,15 +1319,52 @@ def score(results: Path, corpus: Path) -> Report:
             )
         )
 
-    # Doc 16 section 5's other two. The notebook is 12d, so these have nothing
-    # to measure until it lands and they say so rather than reporting 0.
-    # The core of the notebook lands at 12d-i, and the states it records are on
-    # the event log. What is missing is a run that asks notebook questions: the
-    # corpus grows the families at 12a-iv and the eval leg that drives them is
-    # what turns these two into numbers.
-    waiting = "no run asked a notebook question; the eval leg that does lands with 12d"
-    report.metrics.append(Metric("grounding_state_accuracy", None, 0, 0, waiting))
-    report.metrics.append(Metric("page_sole_support_rate", None, 0, 0, waiting))
+    # Doc 16 section 5's other two, and doc 16 phase 12d's own acceptance
+    # sentence beside them. Measured over the rows the `--notebook` leg wrote:
+    # a notebook question is asked over the vault alone, so it is kept out of
+    # every answer metric above and scored on its own terms here.
+    notebook = [r for r in everything if r.get("kind") == "notebook"]
+    if not notebook:
+        waiting = "no run asked a notebook question; run the eval with --notebook"
+        report.metrics.append(Metric("grounding_state_accuracy", None, 0, 0, waiting))
+        report.metrics.append(Metric("ungrounded_is_no_passages", None, 0, 0, waiting))
+        report.metrics.append(Metric("page_sole_support_rate", None, 0, 0, waiting))
+    else:
+        states = [(_expected_grounding(r), _grounding(r)) for r in notebook]
+        report.metrics.append(
+            _ratio(
+                "grounding_state_accuracy",
+                sum(1 for want, got in states if want == got),
+                len(states),
+                "answers whose grounding state is the one the corpus planted",
+            )
+        )
+        # The state and the passage count come off the same event, so this asks
+        # whether the core kept its own contract rather than restating the rule
+        # and agreeing with itself.
+        honest = sum(
+            1 for r in notebook if (_grounding(r) == "ungrounded") == (_passages_seen(r) == 0)
+        )
+        report.metrics.append(
+            _ratio(
+                "ungrounded_is_no_passages",
+                honest,
+                len(notebook),
+                "answers where ungrounded and no passages mean each other",
+            )
+        )
+        # Doc 16 section 5: "page sole support after verification 0". A page is
+        # context, so an answer resting on pages alone has to be flagged before
+        # a reader sees it. The rate is what got through unflagged.
+        through = sum(1 for r in notebook if _page_sole_support(r))
+        report.metrics.append(
+            _ratio(
+                "page_sole_support_rate",
+                through,
+                len(notebook),
+                "answers stating a figure on pages alone that carry no block flag",
+            )
+        )
 
     exercises = load_exercises(results) if exercise else []
     items = [
