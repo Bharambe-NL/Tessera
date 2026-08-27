@@ -2155,6 +2155,24 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
         )
         .expect("card");
     assert!(builds_on.contains(&first), "builds_on did not name the board it came from: {builds_on}");
+
+    // Doc 05 v0.2 line 106: the Synthesizer receives own_card passages "marked
+    // prior work, context only". The class attribute said what they were and
+    // never what to do with them, so the sentence carrying the rule was missing
+    // from the one prompt that needed it.
+    let synth = provider
+        .calls()
+        .into_iter()
+        .rfind(|c: &_| c.stage == "synthesize")
+        .expect("the synthesizer ran");
+    assert!(
+        synth.prompt.contains("prior work, context only"),
+        "the prior card reached the Synthesizer unmarked"
+    );
+    assert!(
+        synth.prompt.contains("class=\"own_card\""),
+        "the prior card did not reach the prompt at all"
+    );
 }
 
 // ------------------------------------------------------ follow-up context --

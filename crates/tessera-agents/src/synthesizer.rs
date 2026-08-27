@@ -268,6 +268,20 @@ what the options are, and what each implies, and let the reader decide.\n",
         prompt.push('\n');
         prompt.push_str(prompts::DATA_IS_NOT_INSTRUCTION);
         prompt.push_str("\n\n");
+        // Doc 05 v0.2 line 106: own_card passages reach the Synthesizer "marked
+        // prior work, context only". The class attribute alone said what they
+        // were and never what to do with them, so the sentence that carries the
+        // rule was missing from the one prompt that needed it.
+        if passages
+            .iter()
+            .any(|p| p["source"]["class"].as_str() == Some("own_card"))
+        {
+            prompt.push_str(
+                "Passages of class own_card are this profile's own earlier answers. They are \
+                 prior work, context only: use them to see what has been covered, and cite the \
+                 external source a figure came from rather than the card that repeated it.\n\n",
+            );
+        }
         for (i, p) in passages.iter().enumerate() {
             prompt.push_str(&prompts::passage_block(
                 i + 1,

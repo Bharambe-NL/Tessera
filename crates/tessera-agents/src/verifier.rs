@@ -131,6 +131,7 @@ impl Agent for Verifier {
                 "fast_mode_notice" => fast_mode_notice(mode),
                 "injection_suspected" => injection_suspected(&passages),
                 "stale_source" => stale_source(&passages),
+                "own_card_sole_support" => own_card_sole_support(answer, &citations, &passages),
                 "verifier_below_threshold" => below_threshold(mode),
                 // An unknown deterministic name is a malformed pack, not a pass.
                 other => {
@@ -970,6 +971,90 @@ fn injection_suspected(passages: &[Value]) -> Option<Vec<Value>> {
 
 /// Doc 07 section B8.4. In `verify_only` mode this is the only check that runs,
 /// and it can flip a done card to flagged months after it was written.
+/// Doc 05 v0.2 line 106: a numeric or regulatory claim whose only support is a
+/// prior card of this profile's own.
+///
+/// The memory rule, in the words HANDOFF section 2 uses: a prior card is
+/// context, never evidence. A card that answered a question in March is not a
+/// source for the same figure in August; the source it cited is, and it travels
+/// in the packet beside it, so the Synthesizer had one to cite and chose the
+/// card instead.
+///
+/// Numeric or regulatory, not every claim, because a prior card summarising what
+/// a rule is about is the kind of context memory exists to supply. It is the
+/// figures and the citations to instruments that have to rest on the thing
+/// itself.
+///
+/// Doc 16 line 69 extends the same rule to `page` sources when the vault lands.
+/// Both classes are listed here rather than one, so that arrival is a pack edit
+/// rather than a code edit.
+fn own_card_sole_support(
+    answer: &str,
+    citations: &[Value],
+    passages: &[Value],
+) -> Option<Vec<Value>> {
+    /// Classes that carry a claim but never support one.
+    const CONTEXT_ONLY: [&str; 2] = ["own_card", "page"];
+
+    let class_of: std::collections::BTreeMap<&str, &str> = passages
+        .iter()
+        .filter_map(|p| Some((p["passage_id"].as_str()?, p["source"]["class"].as_str()?)))
+        .collect();
+
+    let mut out = Vec::new();
+    for (start, end, text) in numeric_spans(answer) {
+        // Every citation whose span covers this figure. A figure with none is
+        // `numeric_without_citation`'s finding, not this one: two rules firing
+        // on one absence would put two flags on one span.
+        let covering: Vec<&Value> = citations
+            .iter()
+            .filter(|c| {
+                let (Some(s), Some(e)) = (
+                    c["claim_span"]["start"].as_u64(),
+                    c["claim_span"]["end"].as_u64(),
+                ) else {
+                    return false;
+                };
+                start >= s as usize && end <= e as usize
+            })
+            .collect();
+        if covering.is_empty() {
+            continue;
+        }
+
+        // Sole support means every one of them is context only. One external
+        // source among them is what the rule asks for, and the others are then
+        // the prior work they are meant to be.
+        let all_context = covering.iter().all(|c| {
+            c["passage_id"]
+                .as_str()
+                .and_then(|id| class_of.get(id))
+                .is_some_and(|class| CONTEXT_ONLY.contains(class))
+        });
+        if !all_context {
+            continue;
+        }
+
+        out.push(hit(
+            "answer_span",
+            None,
+            "A figure rests only on this profile's own earlier work, which is context rather than \
+             evidence.",
+            json!({
+                "value": text,
+                "start": start,
+                "end": end,
+                "classes": covering
+                    .iter()
+                    .filter_map(|c| c["passage_id"].as_str())
+                    .filter_map(|id| class_of.get(id).copied())
+                    .collect::<Vec<_>>(),
+            }),
+        ));
+    }
+    Some(out)
+}
+
 fn stale_source(passages: &[Value]) -> Option<Vec<Value>> {
     Some(
         passages
@@ -1066,8 +1151,15 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
 
 /// Numbers carrying a unit or a percent sign, with their offsets.
 fn numeric_spans(text: &str) -> Vec<(usize, usize, String)> {
+    // Two alternatives rather than one, because the trailing `\b` cannot follow
+    // `%`: a word boundary needs a word character on one side, and `%` is not
+    // one, so `2.5 %` and `2.5%` matched nothing at all. Every figure written
+    // with the symbol escaped this and every rule built on it. The synthetic
+    // corpus spells percentages as `%` in all 147 of them and the unit tests
+    // spelled them out as `percent`, so nothing on either side of the build had
+    // ever put the two together.
     let Ok(re) = regex::Regex::new(
-        r"(?i)\b\d[\d,.]*\s*(%|percent|per cent|bps|basis points|eur|usd|gbp|million|billion|days?|months?|years?)\b",
+        r"(?i)\b\d[\d,.]*\s*(?:%|(?:percent|per cent|bps|basis points|eur|usd|gbp|million|billion|days?|months?|years?)\b)",
     ) else {
         return Vec::new();
     };
@@ -1138,6 +1230,30 @@ mod tests {
                 .as_str()
                 .is_some_and(|v| v.contains('3'))
         );
+    }
+
+    #[test]
+    fn a_percentage_written_with_the_symbol_is_a_figure_like_any_other() {
+        // The hole this closes: the span regex ended in `\b`, which cannot
+        // follow `%` because a word boundary needs a word character on one side.
+        // So `2.5 %` and `2.5%` matched nothing, and every rule built on
+        // `numeric_spans` skipped them in silence. The synthetic corpus writes
+        // all 147 of its percentages with the symbol and the tests above wrote
+        // theirs as `percent`, so neither side ever met the other.
+        for answer in [
+            "The buffer is 2.5 % for these firms.",
+            "The buffer is 2.5% for these firms.",
+            "The buffer is 2.5 %.",
+        ] {
+            let hits = numeric_without_citation(answer, &[]).expect("ran");
+            assert_eq!(hits.len(), 1, "{answer:?} produced {hits:?}");
+            assert!(
+                hits[0]["evidence"]["value"]
+                    .as_str()
+                    .is_some_and(|v| v.contains("2.5")),
+                "{answer:?} produced {hits:?}"
+            );
+        }
     }
 
     #[test]
@@ -1240,6 +1356,112 @@ mod tests {
         let hits = injection_suspected(passages.as_array().expect("a")).expect("ran");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0]["evidence"]["source"], "Internal memo");
+    }
+
+    /// Doc 05 v0.2 line 106, the rule HANDOFF section 2 states as "a prior card
+    /// is context, never evidence".
+    mod memory_is_not_evidence {
+        use super::*;
+
+        const ANSWER: &str = "The capital conservation buffer is 2.5 % for these firms.";
+
+        fn passages(classes: &[(&str, &str)]) -> Value {
+            json!(
+                classes
+                    .iter()
+                    .map(|(id, class)| json!({
+                        "passage_id": id,
+                        "text": "The buffer is 2.5 %.",
+                        "source": { "title": "A source", "class": class }
+                    }))
+                    .collect::<Vec<_>>()
+            )
+        }
+
+        /// The figure's span in ANSWER, so the citation actually covers it.
+        fn cite(passage_id: &str) -> Value {
+            let start = ANSWER.find("2.5 %").expect("the fixture states a figure");
+            json!({
+                "n": 1,
+                "passage_id": passage_id,
+                "claim_span": { "start": start, "end": start + "2.5 %".len() },
+                "binding": "answer"
+            })
+        }
+
+        #[test]
+        fn a_figure_resting_only_on_a_prior_card_is_blocked() {
+            let passages = passages(&[("p1", "own_card")]);
+            let hits = own_card_sole_support(
+                ANSWER,
+                &[cite("p1")],
+                passages.as_array().expect("a"),
+            )
+            .expect("ran");
+            assert_eq!(hits.len(), 1, "the rule did not fire: {hits:?}");
+            assert_eq!(hits[0]["evidence"]["value"], "2.5 %");
+        }
+
+        #[test]
+        fn one_external_source_among_them_is_enough() {
+            // The rule is about sole support. A prior card beside the source it
+            // cited is memory doing its job, and flagging that would make the
+            // boards retriever useless rather than careful.
+            let passages = passages(&[("p1", "own_card"), ("p2", "regulatory")]);
+            let mut second = cite("p2");
+            second["n"] = json!(2);
+            let hits = own_card_sole_support(
+                ANSWER,
+                &[cite("p1"), second],
+                passages.as_array().expect("a"),
+            )
+            .expect("ran");
+            assert!(hits.is_empty(), "a well sourced figure was blocked: {hits:?}");
+        }
+
+        #[test]
+        fn a_figure_with_no_citation_at_all_belongs_to_the_other_rule() {
+            // `numeric_without_citation` owns that absence. Two rules firing on
+            // one span would put two flags on one figure and read as two faults.
+            let passages = passages(&[("p1", "own_card")]);
+            let hits =
+                own_card_sole_support(ANSWER, &[], passages.as_array().expect("a")).expect("ran");
+            assert!(hits.is_empty());
+            let missing = numeric_without_citation(ANSWER, &[]).expect("ran");
+            assert_eq!(missing.len(), 1, "nothing claimed the uncited figure");
+        }
+
+        #[test]
+        fn prose_with_no_figure_in_it_is_left_alone() {
+            // A prior card explaining what a rule is about is exactly the
+            // context memory exists to supply.
+            let passages = passages(&[("p1", "own_card")]);
+            let prose = "The buffer applies to significant institutions.";
+            let hits = own_card_sole_support(
+                prose,
+                &[json!({
+                    "n": 1, "passage_id": "p1",
+                    "claim_span": { "start": 0, "end": prose.len() }, "binding": "answer"
+                })],
+                passages.as_array().expect("a"),
+            )
+            .expect("ran");
+            assert!(hits.is_empty());
+        }
+
+        #[test]
+        fn a_vault_page_counts_as_context_too() {
+            // Doc 16 line 69 extends the same rule to `page`, and listing both
+            // classes now makes that arrival a pack edit rather than a code one.
+            let passages = passages(&[("p1", "page")]);
+            let hits = own_card_sole_support(
+                ANSWER,
+                &[cite("p1")],
+                passages.as_array().expect("a"),
+            )
+            .expect("ran");
+            assert_eq!(hits.len(), 1);
+        }
     }
 
     #[test]

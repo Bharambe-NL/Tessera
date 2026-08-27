@@ -203,6 +203,16 @@
       ]
     },
     {
+      "rule_id": "own_card_sole_support",
+      "severity": "block",
+      "description": "A numeric or regulatory claim whose only support is a prior card of this profile's own. Doc 05 v0.2 line 106: a prior card is context, never evidence.",
+      "detector": "deterministic:own_card_sole_support",
+      "modes": [
+        "deep",
+        "research"
+      ]
+    },
+    {
       "rule_id": "visual_block_unbound",
       "severity": "warn",
       "description": "A visual block carries neither a citation nor a no_claim marking.",
