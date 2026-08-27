@@ -164,10 +164,18 @@ def _learner(rng: Rng, policy: str, path: list[PathConcept]) -> Learner:
     for concept in path:
         if policy == "overconfident":
             # Doc 17 section 3's case: claims to be able to apply everything and
-            # can answer only what sits at the bottom. The whole placement flow
-            # exists to catch this within two checks.
+            # can only recite it. The whole placement flow exists to catch this
+            # within two checks, and the rating is what makes it catchable: a
+            # claim of 3 puts the concept on the frontier, the first check at
+            # level 1 passes, and the second at level 2 is where the claim ends.
+            #
+            # Answering nothing above the roots was the first version of this
+            # policy and it caught nothing, because the frontier is the lowest
+            # depth the learner claims: a rater who is genuinely right at the
+            # frontier is not overconfident there, whatever they claim about
+            # what sits above it.
             rating = 3
-            answers = LEVELS if concept.depth == 0 else ()
+            answers = (1,)
         elif policy == "always_right":
             rating = 2 if concept.depth < 2 else 0
             answers = LEVELS

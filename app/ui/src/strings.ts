@@ -360,6 +360,14 @@ export const COPY = {
   mapCheckNow: 'Check me now',
   mapExplore: 'Explore on a board',
   mapFailed: 'The map could not be changed.',
+  // Doc 17 section 3's placement, on the Map when a mission is created or a
+  // path is loaded.
+  placeHead: 'How well do you know these?',
+  placeWhy: 'Rate what you can, skip what you would rather find out. What you say here is a claim, and the first lesson checks it.',
+  placeSkip: 'Skip',
+  placeDone: 'Go to the map',
+  placeOpen: 'Rate concepts',
+  placeLeft: 'left to rate',
   pagesEmpty: 'Nothing here yet. Keep a card as a page, or write one.',
   pagesEmptyBody: 'This page has nothing in it yet.',
   pagesNew: 'Write a page',

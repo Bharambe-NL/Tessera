@@ -1195,3 +1195,40 @@ button.wait {
 .map-verbs {
   margin-top: var(--s7);
 }
+
+/* Doc 17 section 3's placement: tiles in prerequisite order, one rating each. */
+.placement h3 {
+  margin: 0 0 var(--s3);
+}
+
+.place-tiles {
+  margin: var(--s7) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--s3);
+}
+
+.place-tile {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: var(--s5);
+  display: grid;
+  gap: var(--s3);
+}
+
+.place-tile h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.place-pass {
+  justify-self: start;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ink-3);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}

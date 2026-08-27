@@ -34,6 +34,44 @@ export interface MapState {
   filter: MapFilter;
   /** Doc 17 section 6's filter by mission: only what the mission targets. */
   missionOnly: boolean;
+  /**
+   * Doc 17 section 3's placement pass. Null until a read has been seen, so the
+   * first map with something to rate opens on the tiles and one the learner
+   * left does not reopen behind them.
+   */
+  placing: boolean | null;
+  /** The tiles this learner passed over. Doc 17 section 3: any tile is skippable. */
+  skipped: string[];
+}
+
+/**
+ * The tiles placement asks about. Doc 17 section 3.
+ *
+ * "In prerequisite order", which is depth then term: the same order the map
+ * lays its bands out in, so a learner who rates top to bottom meets what
+ * everything else rests on first.
+ *
+ * A skip is client state and nothing else. A rating is a claim the product
+ * records; declining to make one is not a second kind of claim, and writing it
+ * down would put a row in the log saying the learner decided something they
+ * decided not to decide.
+ */
+export function placementTiles(state: MapState): MapConcept[] {
+  const skipped = new Set(state.skipped);
+  return unrated(state).filter((c) => !skipped.has(c.concept_id));
+}
+
+/**
+ * Everything the learner has not rated, skips included.
+ *
+ * What decides whether the way back into placement is on the toolbar. Reading
+ * the tiles for that would take the way back away the moment somebody skipped
+ * the last one, which is exactly when they are most likely to want it.
+ */
+export function unrated(state: MapState): MapConcept[] {
+  return visible(state)
+    .filter((c) => c.self_rating === null)
+    .sort((a, b) => a.depth - b.depth || a.term.localeCompare(b.term));
 }
 
 /** Node geometry. A band per depth, a column per concept within it. */
@@ -53,6 +91,10 @@ interface Placed {
 export function mapToolsHTML(state: MapState): string {
   if (state.open) {
     return `<div class="seg"><button data-map-act="close">${COPY.mapBack}</button></div>`;
+  }
+  const tiles = placementTiles(state).length;
+  if (state.placing && tiles > 0) {
+    return `<div class="seg"><button data-map-act="placed">${COPY.placeDone}</button></div>`;
   }
   const states: [MapFilter, string][] = [
     ['all', COPY.mapAll],
@@ -74,7 +116,50 @@ export function mapToolsHTML(state: MapState): string {
     ? `<div class="seg"><button data-map-act="mission"${state.missionOnly ? ' class="on"' : ''}>` +
       `${COPY.mapMissionOnly}</button></div>`
     : '';
-  return `<div class="seg">${buttons}</div>${mission}`;
+  // The way back into placement, shown only while something is unrated.
+  const place =
+    unrated(state).length > 0
+      ? `<div class="seg"><button data-map-act="place">${COPY.placeOpen}</button></div>`
+      : '';
+  return `<div class="seg">${buttons}</div>${mission}${place}`;
+}
+
+/**
+ * Doc 17 section 3's placement: tiles in prerequisite order, four tappable
+ * levels each, and a skip.
+ *
+ * Every tile at once rather than one at a time, because the learner is being
+ * asked what they know about a subject and the shape of the subject is part of
+ * the question: a list they can see the end of is a list they will finish.
+ */
+function placementHTML(tiles: MapConcept[]): string {
+  const levels = [COPY.mapRating0, COPY.mapRating1, COPY.mapRating2, COPY.mapRating3];
+  const rows = tiles
+    .map((c) => {
+      const buttons = levels
+        .map(
+          (label, n) =>
+            `<button data-place-rate="${n}" data-place-concept="${esc(c.concept_id)}">` +
+            `${label}</button>`,
+        )
+        .join('');
+      return (
+        `<li class="place-tile" data-place-tile="${esc(c.concept_id)}">` +
+        `<h4>${esc(c.term)}</h4>` +
+        `<div class="seg map-rate">${buttons}</div>` +
+        `<button class="place-pass" data-place-skip="${esc(c.concept_id)}">${COPY.placeSkip}</button>` +
+        `</li>`
+      );
+    })
+    .join('');
+  return (
+    `<section class="placement">` +
+    `<h3>${COPY.placeHead}</h3>` +
+    `<p class="map-line">${COPY.placeWhy}</p>` +
+    `<p class="map-line muted">${tiles.length} ${COPY.placeLeft}</p>` +
+    `<ul class="place-tiles">${rows}</ul>` +
+    `</section>`
+  );
 }
 
 /**
@@ -141,6 +226,11 @@ export function mapHTML(state: MapState): string {
   const map = state.map;
   if (!map) return emptyState(COPY.mapEmpty);
   if (state.open) return panelHTML(state, state.open);
+
+  // Doc 17 section 3: placement comes before the map, because the map is a
+  // picture of what the learner knows and placement is where they say.
+  const tiles = placementTiles(state);
+  if (state.placing && tiles.length > 0) return placementHTML(tiles);
 
   const shown = visible(state);
   if (shown.length === 0) return emptyState(map.concepts.length === 0 ? COPY.mapEmpty : COPY.mapNone);

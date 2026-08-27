@@ -3897,6 +3897,66 @@ nothing below threshold and 29 of 53 metrics measured, and the 20 board bundle r
 
 ---
 
+### BN-145 Placement, and the check that comes before the teaching
+
+**Spec** Doc 17 sections 3 and 10, phase 13g-i.
+
+**What landed.** Doc 17 section 3's placement, on the Map: tiles in prerequisite order, four
+tappable levels each, any of them skippable. The order is depth then term, which is the order the
+map lays its bands out in, so a learner rating top to bottom meets what everything else rests on
+first. Placement opens itself the first time there is anything unrated and never reopens behind a
+learner who left it; the way back stays on the toolbar while anything is unrated.
+
+**A skip writes nothing.** A rating is a claim the product records as `concept.rated.v1`. Declining
+to make one is not a second kind of claim, so a skip is client state and the concept is still
+unrated when the learner comes back. The first version hid the way back into placement once every
+tile had been skipped, which is exactly when somebody would want it; the toolbar now reads what is
+unrated rather than what is on the tiles.
+
+**The check before the teaching.** Doc 17 section 3: "the first lesson checks the frontier before
+teaching anything". A lesson whose topic is a concept the learner rated 2 or more and nobody has
+checked opens with the check rather than with doc 14's intake, because placement already asked how
+much they know and teaching first would be teaching on the strength of a claim. A check that
+produced no item falls back to intake rather than opening a panel with nothing in it: doc 17
+section 4's sourcing order ends at "request a card first", and a profile with no verified card
+anywhere has nothing to ask about yet. The frontier's own filter is now a named rule,
+`learning::unverified_claim`, so the frontier and this both read one spelling of it.
+
+**The policy that caught nothing.** The corpus's overconfident rater rated 3 everywhere and could
+answer everything at depth 0 and nothing above it. The frontier is the lowest depth a learner
+claims, so that learner was placed exactly where they were genuinely right, passed every rung, and
+the flow that exists to catch them had nothing to catch. It now claims 3 everywhere and can only
+recite: level 1 passes, level 2 is where the claim ends, and the run shows `1 2x 1 2x 1 2x`.
+
+**0.667 that was a definition, not a defect.** The first reading of the gate counted any failed
+check on a concept rated 2 or more, and read 0.667 over three rows. Split by rating and level, the
+row dragging it down was the learner who is right below level 3: they rated themselves 2, which
+doc 17 section 2.1 says is "can explain it", passed levels 1 and 2, and failed at 3. That is the
+ladder finding the ceiling of an honest claim rather than catching a false one. An overclaim is a
+check failed at or below the level the rating claimed, and on that reading the metric is 1.000 over
+two rows.
+
+**Two rows is thin and the harness says so.** A lesson stays on one concept until it is mastered,
+so each scripted learner contributes at most one row and only two of the four claim something they
+cannot do. The value is reported and the gate is not applied, which is the thin sample floor
+working. More rows would need the leg to run a lesson per frontier concept rather than one per
+learner, which is a change to what a session means and is not this step's.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --grounded --learner`.
+
+| Metric | Threshold | Result |
+|---|---|---|
+| `overconfident_rating_caught` | 0.95 | 1.000, n=2, reported |
+
+**Verified** Full battery green: workspace tests including a new end to end one over the check
+first rule, clippy at `-D warnings`, fmt, style lint, 92 generator guards with the metric's own
+three cases, 74 Playwright tests including two over the placement tiles, a 40 question grounded
+sweep with nothing below threshold and 29 of 54 metrics measured, and the 20 board bundle round
+trip whole.
+
+---
+
+
 
 ---
 

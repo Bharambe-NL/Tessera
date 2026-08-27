@@ -20,6 +20,10 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('#mode-label')).toHaveText('Live');
   await page.locator('.rail-item[data-view="map"]').click();
   await expect(page.locator('#page-title')).toHaveText('Map');
+  // Doc 17 section 3: the map opens on placement while anything is unrated, so
+  // every test about the map itself steps past it first. The placement tests
+  // below are the ones that stay.
+  await page.locator('[data-map-act="placed"]').click();
 });
 
 test('the map draws a node per concept, layered by what they depend on', async ({ page }) => {
@@ -103,4 +107,49 @@ test('a node opens a lesson on the concept it names', async ({ page }) => {
   // Doc 17 section 6: the verb lands the learner on a board with a session, so
   // the page layer is gone and the tutor is there.
   await expect(page.locator('#tutor')).toBeVisible({ timeout: 60_000 });
+});
+
+test('placement asks about what is unrated, in prerequisite order, and takes a rating', async ({
+  page,
+}) => {
+  // Doc 17 section 3: "the Map view shows the concepts as tiles in prerequisite
+  // order and asks for a rating per concept with four tappable levels".
+  await page.locator('[data-map-act="place"]').click();
+  const tiles = page.locator('.place-tile');
+  await expect(tiles).toHaveCount(2, { timeout: 30_000 });
+
+  // The fixture rates the first three of a chain of five, so what is left is
+  // the two deepest, shallower first.
+  await expect(tiles.nth(0)).toContainText('planning horizon');
+  await expect(tiles.nth(1)).toContainText('model based control');
+  await expect(tiles.nth(0).locator('.map-rate button')).toHaveCount(4);
+
+  await tiles.nth(0).locator('[data-place-rate="2"]').click();
+  // Rated, so the tile is done and the one behind it moves up.
+  await expect(tiles).toHaveCount(1, { timeout: 30_000 });
+  await expect(tiles.nth(0)).toContainText('model based control');
+
+  // And the rating is a claim the map now shows on the concept.
+  await page.locator('[data-map-act="placed"]').click();
+  await page.locator('.map-node').filter({ hasText: 'planning horizon' }).click();
+  await expect(page.locator('.map-panel .chip')).toHaveText('rated', { timeout: 30_000 });
+});
+
+test('a tile can be skipped, and skipping every one leaves the map', async ({ page }) => {
+  // Doc 17 section 3: "the learner may skip any tile". A skip is not a claim,
+  // so nothing is written: the concept is still unrated when they come back.
+  await page.locator('[data-map-act="place"]').click();
+  const tiles = page.locator('.place-tile');
+  await expect(tiles).toHaveCount(2, { timeout: 30_000 });
+
+  await tiles.nth(0).locator('.place-pass').click();
+  await expect(tiles).toHaveCount(1, { timeout: 30_000 });
+  await tiles.nth(0).locator('.place-pass').click();
+
+  // Nothing left to ask, so the map is what is on screen.
+  await expect(page.locator('.map-node')).toHaveCount(5, { timeout: 30_000 });
+
+  // And asking again brings the skipped tiles back, unrated.
+  await page.locator('[data-map-act="place"]').click();
+  await expect(page.locator('.place-tile')).toHaveCount(2, { timeout: 30_000 });
 });

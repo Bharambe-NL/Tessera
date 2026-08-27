@@ -99,6 +99,13 @@ THRESHOLDS: dict[str, float] = {
     # rule that makes it structural is the packet carrying only verified cards;
     # this is the measurement that says the structure held.
     "checks_from_verified_cards": 1.00,
+    # Doc 17 section 10: "overconfident rating caught within two checks 0.95".
+    # Not 1.00, because catching one depends on there being a verified card to
+    # ask from and doc 17 section 4's sourcing order can legitimately end at
+    # "request a card first". What it does gate is the thing placement exists
+    # for: a claim is tested at the top of the lesson rather than after a
+    # lesson has been taught on the strength of it.
+    "overconfident_rating_caught": 0.95,
     # Doc 17 section 10: "learning record traceability 1.00". The record is
     # generated from rows rather than written by a model, so the gate is
     # absolute: one line the session cannot account for is a note telling a
@@ -579,6 +586,7 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
         "level_adaptation",
         "checks_from_verified_cards",
         "learning_record_traceability",
+        "overconfident_rating_caught",
     )
     if not manifest.get("learning_enabled"):
         waiting = "no learner walked the path; run the eval with --learner"
@@ -656,6 +664,7 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
         out.append(Metric("level_adaptation", None, 0, 0, waiting))
         out.append(Metric("checks_from_verified_cards", None, 0, 0, waiting))
         out.append(Metric("learning_record_traceability", None, 0, 0, waiting))
+        out.append(Metric("overconfident_rating_caught", None, 0, 0, waiting))
         return out
 
     out.append(
@@ -683,7 +692,72 @@ def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
         )
     )
     out.append(_record_traceability(sessions))
+    out.append(_overconfidence_caught(sessions))
     return out
+
+
+def _overconfidence_caught(sessions: list[dict]) -> Metric:
+    """Doc 17 section 3: "an overconfident rating is caught within the first two questions".
+
+    An overclaim is a check failed **at or below the level the rating claimed**.
+    Doc 17 section 2.1's ratings say what the learner thinks they can do, and
+    the ladder's levels say what a check asked: 2 is "can explain it", which is
+    level 2, and 3 is "can apply it", which is level 3. A failure above that is
+    the ladder finding the ceiling of an honest claim rather than a false one,
+    which is what the first version of this counted: the learner who is right
+    below level 3 rated themselves 2, passed 1 and 2, failed at 3, and was
+    scored as an overclaim caught late. Splitting the rows by rating and level
+    is what showed it, and the number went from 0.667 over three rows to 1.000
+    over two.
+
+    The question asked of a real overclaim is when the knock down came: at the
+    first or second check on that concept is the placement flow working, and
+    later than that is a lesson taught on the strength of a claim before
+    testing it.
+
+    Read from the recorded checks rather than from the scripted policy. The
+    policy says what the learner could have answered; this asks what the product
+    did about it, which is the only half worth gating.
+    """
+    caught = 0
+    over = 0
+    for session in sessions:
+        claimed = {
+            row.get("concept_id"): row.get("self_rating") or 0
+            for row in (session.get("rated_only") or [])
+            if (row.get("self_rating") or 0) >= 2
+        }
+        asked: dict[str, list[dict]] = {}
+        for check in session.get("checks") or []:
+            asked.setdefault(check.get("concept_id") or "", []).append(check)
+        for concept, checks in asked.items():
+            rating = claimed.get(concept)
+            if rating is None:
+                continue
+            failed = [
+                i
+                for i, c in enumerate(checks)
+                if not c.get("correct") and (c.get("level") or 1) <= rating
+            ]
+            if not failed:
+                continue
+            over += 1
+            if failed[0] < 2:
+                caught += 1
+    if not over:
+        return Metric(
+            "overconfident_rating_caught",
+            None,
+            0,
+            0,
+            "no claim was contradicted by a check at the level it claimed",
+        )
+    return _ratio(
+        "overconfident_rating_caught",
+        caught,
+        over,
+        "overclaimed concepts whose first failed check came in the first two",
+    )
 
 
 def _record_traceability(sessions: list[dict]) -> Metric:

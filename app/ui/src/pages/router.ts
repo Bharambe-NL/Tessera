@@ -19,7 +19,7 @@ import { COPY } from '../strings.js';
 import { flagsHTML, bulkHTML } from './flags.js';
 import { homeHTML, homeToolsHTML, type HomeFilter } from './home.js';
 import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './library.js';
-import { mapHTML, mapToolsHTML, type MapFilter, type MapState } from './map.js';
+import { mapHTML, mapToolsHTML, placementTiles, type MapFilter, type MapState } from './map.js';
 import { notebookHTML, notebookToolsHTML, type NotebookState } from './notebook.js';
 import { pagesHTML, pagesToolsHTML, type PagesState } from './pages.js';
 import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
@@ -74,7 +74,15 @@ export class Router {
   private profileTab: ProfileTab = 'context';
   private pages: PagesState = { open: null, editing: false };
   private notebook: NotebookState = { session: null, asking: false };
-  private map: MapState = { map: null, open: null, links: null, filter: 'all', missionOnly: false };
+  private map: MapState = {
+    map: null,
+    open: null,
+    links: null,
+    filter: 'all',
+    missionOnly: false,
+    placing: null,
+    skipped: [],
+  };
   /** Flags selected for a bulk decision, kept across a re-render. */
   private picked = new Set<string>();
   /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
@@ -178,6 +186,11 @@ export class Router {
           // its last answer would show a state the learner had already left.
           title.textContent = COPY.railMap;
           this.map.map = await this.rpc.readMap();
+          // Doc 17 section 3: placement opens itself the first time there is
+          // something to rate, and never again once the learner has left it.
+          // Null means nobody has decided yet, which is only true of the first
+          // read: a learner who went to the map has decided.
+          if (this.map.placing === null) this.map.placing = placementTiles(this.map).length > 0;
           if (this.map.open) {
             const fresh = this.map.map.concepts.find(
               (c) => c.concept_id === this.map.open?.concept_id,
@@ -260,6 +273,14 @@ export class Router {
       await this.render();
       return;
     }
+    if (verb === 'place' || verb === 'placed') {
+      this.map.placing = verb === 'place';
+      // Going back into placement brings the skipped tiles with it: a skip is
+      // "not now" rather than "never ask me", and the learner asked again.
+      if (verb === 'place') this.map.skipped = [];
+      await this.render();
+      return;
+    }
 
     const concept = this.map.open;
     if (!concept) return;
@@ -276,6 +297,21 @@ export class Router {
       if (verb === 'lesson' || verb === 'check') {
         await this.actions.startLesson(concept.term, verb === 'check');
       }
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.mapFailed, 'error');
+    }
+  }
+
+  /** Doc 17 section 3: one tile of the placement pass, rated or passed over. */
+  private async place(conceptId: string, rating: number | null): Promise<void> {
+    if (rating === null) {
+      this.map.skipped = [...this.map.skipped, conceptId];
+      await this.render();
+      return;
+    }
+    try {
+      await this.rpc.rateConcept(conceptId, rating);
+      await this.render();
     } catch (e) {
       this.actions.toast(e instanceof RpcError ? e.message : COPY.mapFailed, 'error');
     }
@@ -441,6 +477,16 @@ export class Router {
       const mapVerb = target.closest<HTMLElement>('[data-map-act]')?.dataset.mapAct;
       if (mapVerb) {
         void this.mapVerb(mapVerb);
+        return;
+      }
+      const skip = target.closest<HTMLElement>('[data-place-skip]')?.dataset.placeSkip;
+      if (skip) {
+        void this.place(skip, null);
+        return;
+      }
+      const tile = target.closest<HTMLElement>('[data-place-rate]');
+      if (tile?.dataset.placeConcept) {
+        void this.place(tile.dataset.placeConcept, Number(tile.dataset.placeRate));
         return;
       }
       const rate = target.closest<HTMLElement>('[data-map-rate]')?.dataset.mapRate;
