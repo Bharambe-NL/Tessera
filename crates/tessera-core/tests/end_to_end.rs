@@ -1674,6 +1674,162 @@ fn a_failed_check_walks_the_ladder_down_and_then_reaches_for_a_prerequisite() {
     assert_eq!(moved, 0, "the core restated a move the projection already made");
 }
 
+/// Doc 05 section 8.1 and doc 16 section 3.4, end to end over a real socket.
+///
+/// A notebook question that found nothing in the vault is ungrounded. The
+/// learner presses the one button doc 16 gives them, the same question runs
+/// again with the web allowed, and the answer comes back citing a page fetched
+/// from a loopback server. The seed is 127.0.0.1, and discovery never leaves a
+/// seed's host, so this test cannot reach the internet.
+#[test]
+fn a_notebook_question_reaches_the_web_when_the_learner_asks_it_to() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("addr").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(8) {
+            let Ok(mut stream) = stream else { return };
+            let Ok(clone) = stream.try_clone() else { return };
+            let mut reader = BufReader::new(clone);
+            let mut request = String::new();
+            if reader.read_line(&mut request).is_err() {
+                return;
+            }
+            while let Ok(n) = {
+                let mut line = String::new();
+                reader.read_line(&mut line).map(|n| (n, line))
+            }
+            .map(|(n, line)| if line.trim().is_empty() { 0 } else { n })
+            {
+                if n == 0 {
+                    break;
+                }
+            }
+            let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+            let body = if path == "/" {
+                "<html><body><ul><li><a href=\"models.html\">models.html</a></li></ul></body></html>"
+                    .to_string()
+            } else {
+                "<!doctype html><html><head><title>World models</title>\
+                 <meta name=\"issuer\" content=\"ledgerline.invalid\"></head><body>\
+                 <h1>World models</h1><p>A world model is an internal representation an agent \
+                 uses to predict how a situation will change.</p></body></html>"
+                    .to_string()
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let router = build_router();
+    let mut core = core_with(mock());
+    // The general pack does not enable the web; the finance packs do. Doctrine
+    // decides whether a domain may reach it at all, and the profile's seed
+    // decides where, which is doc 05 section 10's two questions kept apart.
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let seed = format!("http://127.0.0.1:{port}/");
+
+    // Doc 05 section 8.1: no seed, no web retriever. The button says so rather
+    // than failing when pressed.
+    let session = call(&router, &mut core, "notebook.open", json!({}));
+    let board_id = session["board_id"].as_str().expect("a session").to_string();
+    let asked = call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+    let card_id = asked["card_id"].as_str().expect("a card").to_string();
+
+    let refused = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "notebook.search_web",
+                json!({ "board_id": board_id, "card_id": card_id }),
+                1,
+            ),
+        )
+        .expect("a reply");
+    assert!(!refused.is_ok(), "the web answered with no seed configured");
+
+    // The profile names one, and the retriever arrives with it.
+    let watched = call(&router, &mut core, "profile.watch_web", json!({ "url": seed }));
+    assert_eq!(watched["configured"], true);
+
+    let reran = call(
+        &router,
+        &mut core,
+        "notebook.search_web",
+        json!({ "board_id": board_id, "card_id": card_id }),
+    );
+    let new_card = reran["card_id"].as_str().expect("a card").to_string();
+    assert_ne!(
+        new_card, card_id,
+        "the rerun replaced the card rather than adding one"
+    );
+
+    // Doc 05 section 8.1: what the retriever persisted. The source carries
+    // class `web`, the loopback locator and a content hash of what was
+    // fetched, and a passage under it carries the page's own words. Whether
+    // the Synthesizer then cites it is the mock's business and not this
+    // retriever's, which is why the assertion stops at the rows.
+    let sources: Vec<(String, String, String)> = core
+        .store
+        .conn()
+        .prepare("SELECT class, locator, content_hash FROM source WHERE class = 'web'")
+        .expect("query")
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .expect("rows")
+        .filter_map(std::result::Result::ok)
+        .collect();
+    assert!(
+        sources.iter().any(|(class, locator, hash)| class == "web"
+            && locator.contains(&format!("127.0.0.1:{port}"))
+            && hash.len() == 64),
+        "no web source was persisted: {sources:?}"
+    );
+    // The listing was walked and never indexed: a source whose whole content is
+    // the names of other sources is noise the ranking would then have to beat.
+    assert!(
+        sources.iter().all(|(_, locator, _)| !locator.ends_with('/')),
+        "the directory listing became a source: {sources:?}"
+    );
+
+    let text: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT p.text FROM passage p JOIN source s ON s.id = p.source_id
+             WHERE s.class = 'web' LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("a web passage");
+    assert!(
+        text.contains("internal representation"),
+        "the page's own words did not survive extraction: {text}"
+    );
+
+    // Doc 16 section 6's open point, resolved as proposed: the first answer is
+    // superseded rather than discarded, so the session still shows that the
+    // vault had nothing to say.
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(types.contains(&"notebook.superseded.v1".to_string()));
+}
+
 /// Doc 17 section 6: the map read carries the answers the view draws.
 ///
 /// The depth and the frontier are rules the product owns, so the map read says
@@ -3032,6 +3188,7 @@ fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
 
     core.retrievers = tessera_core::retrieval::RetrieverSet {
         indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+        web: None,
         embedder: None,
     };
 
@@ -3610,6 +3767,7 @@ fn a_fast_card_never_retrieves() {
     .expect("index");
     core.retrievers = tessera_core::retrieval::RetrieverSet {
         indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+        web: None,
         embedder: None,
     };
 
@@ -3650,6 +3808,7 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
     core.use_pack("finance-eu-synthetic").expect("pack");
     core.retrievers = tessera_core::retrieval::RetrieverSet {
         indexed: vec![("boards".into(), IndexedConfig::boards())],
+        web: None,
         embedder: None,
     };
 
@@ -3969,6 +4128,7 @@ fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
     .expect("index");
     sender.retrievers = tessera_core::retrieval::RetrieverSet {
         indexed: vec![("regulatory".into(), IndexedConfig::regulatory("reg"))],
+        web: None,
         embedder: None,
     };
 

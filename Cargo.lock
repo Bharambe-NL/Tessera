@@ -6055,6 +6055,7 @@ dependencies = [
  "tessera-store",
  "thiserror 2.0.20",
  "tokenizers 0.23.1",
+ "ureq",
  "zip",
 ]
 

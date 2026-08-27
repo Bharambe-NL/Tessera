@@ -3637,6 +3637,82 @@ round trip whole.
 
 ---
 
+### BN-139 The web retriever, and the two rules that make a socket safe to open
+
+**Spec** 05 section 8.1, doc 16 section 3.4.
+
+**What landed.** `tessera-retrievers::web`: fetch, main content extraction, heading and window
+chunking, BM25 over what was fetched, and a Source per page deduplicated by normalised URL, all
+under class `web`. Wired into `RetrieverSet`, reachable from a card, and behind doc 16's one click
+way out of an ungrounded notebook answer.
+
+**Nothing is reached that was not pointed at.** A profile names seeds; discovery walks a seed's
+links and drops every one that leaves its host. That is not a setting, it is the shape of the
+walk, and it is what makes the whole leg structurally incapable of leaving the machine when the
+seeds are loopback. Doc 05 section 8.1's domain denylist is the second gate, not the first.
+
+**The hooks run per URL, not per assignment.** The fan-out checks the assignment before the
+connector is called, and for the web that check has no URL to look at: only this module knows
+them. So it runs the same `HookSet::retriever_defaults()` again on every candidate, before the
+fetch. A denied domain is never opened, which the loopback test asserts as an absence: no
+passages and no fetch errors, because nothing was reached at all.
+
+**The same bytes give the same rows.** The content hash is a sha256 of the body as fetched, ties in
+the ranking break by position, and two runs over one server produce identical passage ids. Doc 05's
+whole staleness story rests on a hash that means something, and a retriever whose output moved
+between sweeps would make every number downstream of it unreadable.
+
+**Search is deliberately absent, and that is recorded rather than hidden.** Doc 05 section 8.1 opens
+with a search API and the user's key, which is live and paid. What decides whether a citation is any
+good is the rest: fetch, extract, chunk, rank, persist. That half is measurable for nothing against
+the synthetic web, and the day a key arrives, search becomes one more way to produce candidate URLs
+rather than a rewrite.
+
+**A directory listing is not a page.** The first version indexed the listing `gen serve` produces,
+which is a source whose entire content is the names of other sources, and it would rank against any
+question sharing a word with a file name. The test is text that is not a link: a page with links on
+it is still a page, a page that is only links is the index it looks like.
+
+**Two questions doctrine and the profile answer separately.** Whether a domain may use the web at
+all is the pack's (`enabled_by_default`); where it may read is the profile's (`web_seeds` in
+`retriever_config`, set by `profile.watch_web`). Neither alone configures it, which is doc 05
+section 10's "not configured" against "configured and empty" kept apart.
+
+**Measured** Nine unit tests over a fixture fetcher, three integration tests over a real loopback
+socket, and one end to end test that takes a notebook question from ungrounded to a `web` source
+with a loopback locator and a 64 character hash. A 40 question grounded sweep after the change ran
+with nothing below threshold, 29 of 50 metrics measured, and the 20 board bundle round trip whole.
+
+**Verified** Workspace tests, clippy at `-D warnings`, fmt, style lint, 89 generator guards, and 71
+Playwright tests, including the notebook test that now presses the button rather than asserting it
+is disabled.
+
+---
+
+### BN-140 The Planner is told what doctrine wants, not what the profile has
+
+**Found** 2026-08-27, while wiring the web retriever.
+
+**What it is.** The Planner's packet carries a retriever list built from `pack.enabled_by_default`,
+while the fan-out builds assignments from `RetrieverSet`, which additionally requires the profile to
+have said where to read. So the Planner can plan an assignment against a connector the fan-out will
+skip, and doc 04 section 10's `no_retriever_enabled` (whose message reads "Enable at least web or
+local in Profile") is decided from something Profile does not control.
+
+**Why it is not fixed here.** The one line fix is `r.enabled_by_default &&
+ctx.retrievers.configured(&r.id)`. It was written, and it turned eight end to end tests red: they
+ask deep questions on profiles with a finance pack, no watched folder and no seed, and today the
+Planner's fiction is what lets those runs proceed. Under the correct rule they are exactly doc 04
+section 10's case, and each one has to be re-founded on a profile that has configured something.
+That is a coherent change and it is not this step's: shipping it inside the web retriever would mix
+a new connector with a re-basing of the test suite, and the failure signal from either would be
+unreadable.
+
+**What it waits for.** Its own step, before the research profile in 13e-ii, since that step gives
+the profile something real to configure and will want the honest answer.
+
+---
+
 ---
 
 ## Measured findings

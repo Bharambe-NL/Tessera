@@ -280,6 +280,10 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     // the notebook, doc 16 section 3.4
     "notebook.asked.v1",
     "notebook.grounding.v1",
+    // Doc 16 section 6's open point, resolved as proposed: an ungrounded
+    // answer the learner reran is superseded rather than discarded, so the
+    // session still shows that the vault had nothing to say.
+    "notebook.superseded.v1",
     // exercise
     "exercise.generated.v1",
     "attempt.recorded.v1",

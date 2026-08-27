@@ -56,8 +56,9 @@ test('a question the vault answers is marked as coming from the notes', async ({
 
 test('a question the vault cannot answer says so and offers the way out', async ({ page }) => {
   // Doc 16 section 2.1's whole point, on the profile most people start from:
-  // an empty vault. The way out is the web retriever, which arrives at 13e, so
-  // the control says what it waits for rather than failing when pressed.
+  // an empty vault. The way out is doc 05 section 8.1's web retriever, live
+  // since 13e, and it says what it needs when the profile has named no source
+  // rather than failing silently.
   await openNotebook(page, 'without');
   await page.locator('[data-notebook-act="new"]').click();
   await expect(page.locator('#notebook-question')).toBeVisible({ timeout: 30_000 });
@@ -68,9 +69,13 @@ test('a question the vault cannot answer says so and offers the way out', async 
   const turn = page.locator('.turn').first();
   await expect(turn.locator('.chip.ungrounded')).toBeVisible({ timeout: 60_000 });
   await expect(turn.locator('.page-note')).toContainText('nothing on this');
-  const web = turn.locator('button.wait');
-  await expect(web).toBeDisabled();
-  await expect(web).toHaveAttribute('title', /learning system/);
+  const web = turn.locator('[data-notebook-act="search-web"]');
+  await expect(web).toBeEnabled();
+
+  // The dev profile has named no web source, so the one click way out says
+  // where to set one up rather than reaching a socket nobody pointed it at.
+  await web.click();
+  await expect(page.locator('#toasts')).toContainText('Profile', { timeout: 30_000 });
 });
 
 test('a turn is kept as a page and opened on a board', async ({ page }) => {

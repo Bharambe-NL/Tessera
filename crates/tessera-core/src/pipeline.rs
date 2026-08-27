@@ -2020,6 +2020,9 @@ fn build_planner_packet(
     // a profile that has configured nothing at all.
     let board_mode = board["mode"].as_str().unwrap_or("explore").to_string();
 
+    // What doctrine enables, not what the profile has configured. Doc 05
+    // section 10 separates the two, and this reads the first: BN-140 records
+    // the gap and why closing it is its own step rather than a line here.
     let mut retrievers: Vec<Value> = ctx
         .pack
         .retrievers

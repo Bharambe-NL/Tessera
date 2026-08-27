@@ -75,11 +75,10 @@ function turnHTML(turn: NotebookTurn): string {
     sources(turn) +
     (turn.grounding === 'ungrounded'
       ? `<p class="page-note">${COPY.notebookUngroundedNote}</p>` +
-        // Doc 16 section 3.4's one click way out, and doc 16 phase 12d's
-        // honesty about it: the web retriever is 13e, so the button says what
-        // it is waiting for rather than failing when pressed.
-        `<button class="wait" disabled title="${COPY.notebookWebLater}">` +
-        `${COPY.notebookSearchWeb}</button>`
+        // Doc 16 section 3.4's one click way out, live now that doc 05 section
+        // 8.1's web retriever exists. A profile with no web source set up is
+        // told so when it is pressed, on the page that can fix it.
+        `<button data-notebook-act="search-web">${COPY.notebookSearchWeb}</button>`
       : '') +
     (answered
       ? `<div class="verbs">` +

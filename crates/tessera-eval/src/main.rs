@@ -2448,6 +2448,10 @@ fn configure_retrievers(
 
     core.retrievers = RetrieverSet {
         indexed: configured,
+        // Doc 05 section 8.1's web leg has its own flag: a sweep that reached a
+        // socket by default would be a sweep whose numbers depend on what a
+        // server somewhere was serving that day.
+        web: None,
         embedder,
     };
     Ok(())
