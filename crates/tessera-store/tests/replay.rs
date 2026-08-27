@@ -516,3 +516,253 @@ fn test_provenance_is_preserved_through_the_log() {
     assert_eq!(ev.provenance.source, Source::Test);
     assert!(!ev.provenance.source.fires_policy_hooks());
 }
+
+// ---------------------------------------------------------------- learning ---
+
+/// Every learning column on every concept, ordered, for comparing two folds.
+fn concept_projection(store: &Store) -> Vec<String> {
+    let mut stmt = store
+        .conn()
+        .prepare(
+            "SELECT id, learning_state, self_rating, mastery, difficulty_level, last_evidence_at,
+                    path_ids FROM concept ORDER BY id",
+        )
+        .expect("prepare");
+    stmt.query_map([], |r| {
+        Ok(format!(
+            "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<i64>>(2)?,
+            r.get::<_, Option<f64>>(3)?,
+            r.get::<_, Option<i64>>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<String>>(6)?,
+        ))
+    })
+    .expect("query")
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .expect("rows")
+}
+
+fn edge_and_mission_projection(store: &Store) -> Vec<String> {
+    let c = store.conn();
+    let mut out: Vec<String> = c
+        .prepare("SELECT id, status FROM concept_edge ORDER BY id")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(format!(
+                    "edge {} {}",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?
+                ))
+            })?
+            .collect()
+        })
+        .expect("edges");
+    out.extend(
+        c.prepare("SELECT id, status FROM mission ORDER BY id")
+            .and_then(|mut s| {
+                s.query_map([], |r| {
+                    Ok(format!(
+                        "mission {} {}",
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .expect("missions"),
+    );
+    out
+}
+
+#[test]
+fn the_learning_columns_fold_the_same_way_twice() {
+    // Doc 17 section 9: "every mastery change is traceable to an event". The
+    // test of that sentence is this one: throw the columns away, fold the log
+    // back over them, and land in the same place. It lands before anything
+    // writes them on purpose, so the first thing that does has a replay to
+    // answer to.
+    let store = Store::open_in_memory().expect("store");
+    let f = seed(&store);
+    let mut store = store;
+    let now = now_iso8601();
+
+    let profile_id: String = store
+        .conn()
+        .query_row(
+            "SELECT profile_id FROM board WHERE id = ?1",
+            params![f.board_id],
+            |r| r.get(0),
+        )
+        .expect("profile");
+    let pack_id: String = store
+        .conn()
+        .query_row(
+            "SELECT doctrine_pack_id FROM board WHERE id = ?1",
+            params![f.board_id],
+            |r| r.get(0),
+        )
+        .expect("pack");
+
+    // Three concepts: one only ever read about, one rated, one checked and then
+    // failed back down, which is doc 17 section 2.3's move to the left.
+    let (seen, rated, checked) = (new_id(), new_id(), new_id());
+    for (id, term) in [
+        (&seen, "liquidity coverage ratio"),
+        (&rated, "net stable funding ratio"),
+        (&checked, "capital conservation buffer"),
+    ] {
+        store
+            .conn()
+            .execute(
+                "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                     created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'confirmed', ?5, ?5)",
+                params![id, profile_id, term, pack_id, now],
+            )
+            .expect("concept");
+    }
+    store
+        .conn()
+        .execute(
+            "INSERT INTO concept_link (id, concept_id, target_type, target_ref, relation,
+                 proposed_by, status, created_at)
+             VALUES (?1, ?2, 'card', ?3, 'mentions', 'indexer', 'confirmed', ?4)",
+            params![new_id(), seen, f.card_a, now],
+        )
+        .expect("link");
+
+    let edge = new_id();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO concept_edge (id, from_concept_id, to_concept_id, relation, proposed_by,
+                 status, weight, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'prerequisite_of', 'learning_planner', 'proposed', 1.0, ?4, ?4)",
+            params![edge, seen, checked, now],
+        )
+        .expect("edge");
+    let mission = new_id();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO mission (id, profile_id, statement, target_concept_ids,
+                 created_at, updated_at)
+             VALUES (?1, ?2, 'I sign off liquidity policies and keep guessing.', '[]', ?3, ?3)",
+            params![mission, profile_id, now],
+        )
+        .expect("mission");
+
+    let path = new_id();
+    for event in [
+        NewEvent::new(
+            "card.viewed.v1",
+            json!({ "card_id": f.card_a, "via": "open" }),
+            Provenance::user(),
+        )
+        .on_board(&f.board_id)
+        .on_card(&f.card_a),
+        NewEvent::new(
+            "concept.rated.v1",
+            json!({ "concept_id": rated, "rating": 2 }),
+            Provenance::user(),
+        ),
+        NewEvent::new(
+            "concept.state_changed.v1",
+            json!({
+                "concept_id": checked, "from": "rated", "to": "mastered",
+                "evidence": "check", "mastery": 0.82, "difficulty_level": 3
+            }),
+            Provenance::user(),
+        ),
+        // Doc 17 section 2.3: a failed check moves mastered back to checked.
+        NewEvent::new(
+            "concept.state_changed.v1",
+            json!({
+                "concept_id": checked, "from": "mastered", "to": "checked",
+                "evidence": "failed check", "mastery": 0.61
+            }),
+            Provenance::user(),
+        ),
+        NewEvent::new(
+            "path.loaded.v1",
+            json!({ "path_id": path, "concept_ids": [seen, rated] }),
+            Provenance::user(),
+        ),
+        // Loading the same path twice is loading it once.
+        NewEvent::new(
+            "path.loaded.v1",
+            json!({ "path_id": path, "concept_ids": [seen, rated] }),
+            Provenance::user(),
+        ),
+        NewEvent::new(
+            "concept.edge_confirmed.v1",
+            json!({ "edge_id": edge }),
+            Provenance::user(),
+        ),
+        NewEvent::new(
+            "mission.updated.v1",
+            json!({ "mission_id": mission, "status": "done" }),
+            Provenance::user(),
+        ),
+    ] {
+        store.append(event).expect("append");
+    }
+
+    let before = concept_projection(&store);
+    let before_rows = edge_and_mission_projection(&store);
+
+    // The fold did something, so the comparison below is not two empties.
+    let state_of = |id: &str| -> Option<String> {
+        store
+            .conn()
+            .query_row(
+                "SELECT learning_state FROM concept WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .expect("state")
+    };
+    assert_eq!(
+        state_of(&seen).as_deref(),
+        Some("exposed"),
+        "reading a card exposes its concepts"
+    );
+    assert_eq!(state_of(&rated).as_deref(), Some("rated"));
+    assert_eq!(
+        state_of(&checked).as_deref(),
+        Some("checked"),
+        "a failed check moves left"
+    );
+    let mastery: Option<f64> = store
+        .conn()
+        .query_row(
+            "SELECT mastery FROM concept WHERE id = ?1",
+            params![checked],
+            |r| r.get(0),
+        )
+        .expect("mastery");
+    assert_eq!(mastery, Some(0.61));
+    let paths: Option<String> = store
+        .conn()
+        .query_row("SELECT path_ids FROM concept WHERE id = ?1", params![seen], |r| {
+            r.get(0)
+        })
+        .expect("paths");
+    assert_eq!(paths, Some(format!("[\"{path}\"]")), "the path is listed once");
+    assert!(before_rows.contains(&format!("edge {edge} confirmed")));
+    assert!(before_rows.contains(&format!("mission {mission} done")));
+
+    // Throw the columns away and fold the whole log back over them.
+    let applied = store.rebuild_projections().expect("rebuild");
+    assert!(applied > 0, "replay folded nothing");
+
+    assert_eq!(
+        concept_projection(&store),
+        before,
+        "a second fold of the same log left the map somewhere else"
+    );
+    assert_eq!(edge_and_mission_projection(&store), before_rows);
+}

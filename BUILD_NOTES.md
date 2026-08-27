@@ -3150,6 +3150,41 @@ the workspace tests, clippy at `-D warnings`, and the bundle round trip whole at
 
 ---
 
+### BN-128 The map folds from the log, and the replay lands before anything writes it
+
+**Spec** 17 sections 2.2, 2.3 and 9.
+
+**Built** 2026-08-27, M16 13a-ii.
+
+**Why the columns are projections at all.** Doc 17 section 9 ends "every mastery change is traceable
+to an event". A learning column written outside the log would be a claim about a person that no
+replay could check, and the whole point of the map is that it is evidence rather than a
+self-assessment. So `card.viewed.v1` moves unseen to exposed, `concept.rated.v1` sets the rating,
+`concept.state_changed.v1` carries the state it settled on and the mastery with it, `path.loaded.v1`
+adds the path, and the edge and mission statuses fold the same way.
+
+**The replay test lands before anything writes them.** Nothing in the product emits these events yet.
+The test writes them by hand, folds them, throws every learning column away, folds the log again and
+asserts the map is in the same place, so the first code that writes one has a replay to answer to
+rather than a test written afterwards to agree with it. Broken once on purpose by dropping the path
+dedupe: the second fold lists the same path twice and the test says so.
+
+**Three names doc 17 gives that the vocabulary does not gain.** `lesson.planned`, `check.asked` and
+`check.answered` are the `learn.*` trio the build already emits, per the decision recorded at M14.1:
+two names for one meaning in an append only log is the BN-086 failure class. Their payloads gain
+`{concept_id, level}` where the Tutor knows them, which is 13c; the fold reads the fields when they
+arrive.
+
+**What a rebuild resets, and what it leaves alone.** The six columns go back to null, not to
+`unseen`: the fold is what decides a concept has been seen, and a reset that guessed would survive
+as a fact. An edge and a mission keep their rows and lose their status, because a proposal a person
+made is content and only its state is a projection. A path ships its edges confirmed, so the status
+an edge was created with rides on its proposal event and a replay does not quietly demote them.
+
+**Verified** Full battery green, nine replay tests, the workspace tests and clippy at `-D warnings`.
+
+---
+
 ---
 
 ## Measured findings

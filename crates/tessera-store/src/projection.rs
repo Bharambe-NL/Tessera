@@ -14,7 +14,7 @@
 //! enforced structurally: [`apply`] takes a `&Transaction` and is only ever
 //! called from inside the append transaction.
 
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::Value;
 
 use crate::error::{Result, StoreError};
@@ -237,6 +237,141 @@ pub fn apply(tx: &Transaction, ev: &Projected<'_>) -> Result<()> {
             )?;
         }
 
+        // ------------------------------------------------------- learning ---
+        //
+        // Doc 17 section 2.2's table, as a fold. The learning columns on
+        // `concept` are projections from the day they exist: doc 17 section 9
+        // ends "every mastery change is traceable to an event", and a column
+        // written outside the log would be a claim about a learner that no
+        // replay could check.
+
+        // Doc 17 section 2.2: "a card that links the concept is read" moves it
+        // from unseen to exposed. Exploration on ordinary boards counts, which
+        // is what makes the map fill without anyone opening a lesson.
+        "card.viewed.v1" => {
+            let card_id = ev
+                .card_id
+                .map(Ok)
+                .unwrap_or_else(|| field(p, ev.event_type, "card_id"))?;
+            tx.execute(
+                "UPDATE concept SET learning_state = 'exposed', last_evidence_at = ?1,
+                        updated_at = ?1
+                 WHERE (learning_state IS NULL OR learning_state = 'unseen')
+                   AND id IN (SELECT concept_id FROM concept_link
+                              WHERE target_type = 'card' AND target_ref = ?2)",
+                params![ev.timestamp, card_id],
+            )?;
+        }
+
+        // Doc 17 section 2.1: a rating is "a claim, never evidence". It sets
+        // `self_rating` and moves the state to `rated`, and doc 17 section 2.4
+        // keeps it away from mastery above 0.5, which is the mastery rule's
+        // business rather than this fold's.
+        "concept.rated.v1" => {
+            let concept_id = field(p, ev.event_type, "concept_id")?;
+            let rating = p.get("rating").and_then(Value::as_i64);
+            tx.execute(
+                "UPDATE concept SET self_rating = ?1, last_evidence_at = ?2, updated_at = ?2,
+                        learning_state = CASE
+                            WHEN learning_state IN ('checked', 'mastered', 'decayed') THEN learning_state
+                            ELSE 'rated' END
+                 WHERE id = ?3",
+                params![rating, ev.timestamp, concept_id],
+            )?;
+        }
+
+        // Doc 17 section 2.3's transitions, including the ones that go left: "a
+        // failed check can move mastered back to checked". The event says where
+        // it moved to, because only the rule that moved it knows why, and the
+        // mastery it settled on rides with it so the number is traceable to an
+        // event as doc 17 section 9 requires.
+        "concept.state_changed.v1" => {
+            let concept_id = field(p, ev.event_type, "concept_id")?;
+            let to = field(p, ev.event_type, "to")?;
+            tx.execute(
+                "UPDATE concept SET learning_state = ?1,
+                        mastery = COALESCE(?2, mastery),
+                        difficulty_level = COALESCE(?3, difficulty_level),
+                        last_evidence_at = ?4, updated_at = ?4
+                 WHERE id = ?5",
+                params![
+                    to,
+                    p.get("mastery").and_then(Value::as_f64),
+                    p.get("difficulty_level").and_then(Value::as_i64),
+                    ev.timestamp,
+                    concept_id
+                ],
+            )?;
+        }
+
+        // Doc 17 section 2.1: "learning paths this concept belongs to". Kept as
+        // a set rather than a list, because loading the same path twice is
+        // loading it once.
+        "path.loaded.v1" => {
+            let path_id = field(p, ev.event_type, "path_id")?;
+            for concept_id in p
+                .get("concept_ids")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                let current: Option<String> = tx
+                    .query_row(
+                        "SELECT path_ids FROM concept WHERE id = ?1",
+                        params![concept_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                let mut paths: Vec<String> = current
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or_default();
+                if !paths.iter().any(|p| p == path_id) {
+                    paths.push(path_id.to_string());
+                }
+                tx.execute(
+                    "UPDATE concept SET path_ids = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![serde_json::to_string(&paths)?, ev.timestamp, concept_id],
+                )?;
+            }
+        }
+
+        // Doc 01 section 4.10's rule, one layer up: an agent proposes an edge
+        // and a person confirms it. A path ships its edges already confirmed,
+        // so the status the edge was created with rides on the proposal event
+        // and a replay does not demote them.
+        "concept.edge_proposed.v1" => {
+            let edge_id = field(p, ev.event_type, "edge_id")?;
+            tx.execute(
+                "UPDATE concept_edge SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    p.get("status").and_then(Value::as_str).unwrap_or("proposed"),
+                    ev.timestamp,
+                    edge_id
+                ],
+            )?;
+        }
+
+        "concept.edge_confirmed.v1" => {
+            let edge_id = field(p, ev.event_type, "edge_id")?;
+            tx.execute(
+                "UPDATE concept_edge SET status = 'confirmed', updated_at = ?1 WHERE id = ?2",
+                params![ev.timestamp, edge_id],
+            )?;
+        }
+
+        "mission.updated.v1" => {
+            let mission_id = field(p, ev.event_type, "mission_id")?;
+            if let Some(status) = p.get("status").and_then(Value::as_str) {
+                tx.execute(
+                    "UPDATE mission SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![status, ev.timestamp, mission_id],
+                )?;
+            }
+        }
+
         _ => {}
     }
 
@@ -263,6 +398,21 @@ pub fn rebuild(tx: &Transaction) -> Result<u64> {
         "UPDATE run SET cost = '{\"input_tokens\":0,\"output_tokens\":0,\"calls\":0,\"by_provider\":{}}'",
         [],
     )?;
+
+    // Doc 17 section 2.1's learning columns, back to what a concept nobody has
+    // learned anything about looks like. Null rather than `unseen`, because the
+    // fold is what decides a concept has been seen and a reset that guessed
+    // would survive as a fact.
+    tx.execute(
+        "UPDATE concept SET learning_state = NULL, self_rating = NULL, mastery = NULL,
+                difficulty_level = NULL, last_evidence_at = NULL, path_ids = NULL",
+        [],
+    )?;
+    // An edge and a mission carry a status the log moves, so they reset with
+    // the rest. The row itself is content: a proposal a person made is not a
+    // projection of anything, and only its state is.
+    tx.execute("UPDATE concept_edge SET status = 'proposed'", [])?;
+    tx.execute("UPDATE mission SET status = 'active'", [])?;
 
     let mut stmt = tx.prepare(
         "SELECT event_type, payload, card_id, run_id, timestamp
