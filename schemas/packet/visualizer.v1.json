@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/visualizer.v1",
+  "title": "Visualizer packet",
+  "description": "Doc 06 section B4. The Visualizer reads structure the Synthesizer already grounded, never the raw passages and never the request. That absence is the point: doc 06 section B1 says it is what stops a visual from saying more than the prose, so this packet carries no passages and no question text.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "structured_summary", "doctrine"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "card_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "mode": { "$ref": "tessera:entity/common.v1#/$defs/depth" },
+    "structured_summary": {
+      "type": "object",
+      "description": "The only thing a visual is built from.",
+      "properties": {
+        "entities": { "type": "array", "items": { "type": "string" } },
+        "relations": { "type": "array", "items": { "type": "object" } },
+        "values": { "type": "array", "items": { "type": "object" } },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "groups": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "description": "The n to passage_id map a block index's ordinals resolve against.",
+      "items": { "type": "object" }
+    },
+    "visual_hint": { "type": ["string", "null"] },
+    "question_type": { "type": ["string", "null"] },
+    "audience_id": { "type": ["string", "null"] },
+    "doctrine": {
+      "type": "object",
+      "properties": {
+        "type_preferences": { "type": "object" },
+        "max_nodes": { "type": "integer", "minimum": 1 },
+        "max_rows": { "type": "integer", "minimum": 1 },
+        "generated_images": { "type": "boolean" }
+      }
+    },
+    "effort_budget": {
+      "type": "object",
+      "properties": { "max_tokens": { "type": "integer", "minimum": 1 } }
+    }
+  }
+}

@@ -719,6 +719,48 @@ The exemption is an exemption and not a retirement: a guard test already refuses
 `MOCKED` that has no threshold to be exempted from, which is how `visual_type_match` got its doc 06
 section B12 threshold back after being briefly left ungated.
 
+### BN-062 The Synthesizer and Visualizer packets are validated at their boundary
+
+**Spec** 06 sections A4 and B4, which declare both packets, and doc 12's operating principle 1,
+validate at every boundary.
+
+**Decision** `schemas/packet/synthesizer.v1.json` and `schemas/packet/visualizer.v1.json` now exist
+and both agents name them.
+
+**Reason** Neither file had ever been written. Both agents returned `tessera:entity/common.v1` as
+their packet schema, which validates the shared primitives and nothing packet shaped, so a packet
+missing its passages, its request or its summary reached a model and was answered. Four packets were
+guarded and two were not, and the two unguarded ones are the pair that spend the most tokens.
+
+### BN-063 What the packets carried and the agents never saw
+
+**Spec** 06 sections A2, A4 and A7.
+
+**Decision** Four fields that existed on one side of the boundary and nowhere on the other are now
+joined up: `ancestors` on the Synthesizer packet (hardcoded empty, while the prompt loop that reads
+them was already written), `request.kind` and `request.anchor_text` (hardcoded `root` and null),
+`plan.constraints.must_include` (produced by the Planner, read by nobody), and `writing_rules` (taken
+from the pack into the packet and never put in a prompt). `card.synthesized.v1` gains the
+`audience_id` doc 06 section A7 lists.
+
+**Reason** Each one reads as working. A follow-up was written as though nothing preceded it, a branch
+spawned from a highlighted phrase looked identical to a question typed from nothing, and the
+doctrine's units and spelling governed nothing. None of them fails a test, because what they produce
+is a plausible answer to a smaller question.
+
+### BN-064 Two of the three conflict resolutions were unreachable
+
+**Spec** 06 section A8.3: "higher trust rank wins; equal rank, later `published_at` wins; otherwise
+both are presented and the conflict is recorded."
+
+**Decision** The readings are sorted by trust rank and then by date, and the resolution names which
+rule decided. The winning value rides on the conflict so a later fix-up call can use it.
+
+**Reason** The code took the best trust rank and then reported `higher_trust` whenever a best
+existed, which is whenever there were any readings at all. Two passages of equal rank resolved as
+though one outranked the other, and `later_date` and `presented_both` could not be produced by any
+input. The output schema had allowed all three since it was written.
+
 ---
 
 ## Measured findings

@@ -476,7 +476,7 @@ pub async fn run_card(
     };
 
     // ------------------------------------------------------- Synthesizer --
-    let synth_packet = build_synth_packet(&routed, plan.as_ref(), &mode, question, &passages, ctx);
+    let synth_packet = build_synth_packet(&routed, plan.as_ref(), &mode, &subject, &passages, ctx);
     let synthesized = run_agent(
         &Synthesizer,
         store,
@@ -518,6 +518,10 @@ pub async fn run_card(
             "citation_count": synthesized["citations"].as_array().map(Vec::len).unwrap_or(0),
             "conflict_count": synthesized["conflicts"].as_array().map(Vec::len).unwrap_or(0),
             "unsupported_count": synthesized["unsupported_statements"].as_array().map(Vec::len).unwrap_or(0),
+            // Doc 06 section A7 lists this in the payload and it was missing, so
+            // the event log could not say which audience an answer was written
+            // for. Null until the audience rewrite lands.
+            "audience_id": synthesized["audience_applied"].clone(),
             "advice_handling": synthesized["advice_handling"].clone(),
         }),
     )?;
@@ -1012,11 +1016,31 @@ fn build_planner_packet(
     }))
 }
 
+/// The ancestors in the shape doc 06 section A4 declares: what was asked, an
+/// excerpt of what was answered, and whether it still stands.
+fn synth_ancestors(ancestors: &[repo::Ancestor]) -> Value {
+    Value::Array(
+        ancestors
+            .iter()
+            .take(3)
+            .map(|a| {
+                json!({
+                    "question": a.question,
+                    "answer_excerpt": a.answer.as_deref()
+                        .map(|t| truncate_chars(t, 800))
+                        .unwrap_or_default(),
+                    "stale": a.stale_citations() > 0,
+                })
+            })
+            .collect(),
+    )
+}
+
 fn build_synth_packet(
     routed: &Value,
     plan: Option<&Value>,
     mode: &str,
-    question: &str,
+    subject: &Subject<'_>,
     passages: &[Value],
     ctx: &RunContext<'_>,
 ) -> Value {
@@ -1024,12 +1048,25 @@ fn build_synth_packet(
         "schema_version": "1.0",
         "run_id": routed["run_id"].clone(),
         "mode": mode,
-        "request": { "text": question, "kind": "root", "anchor_text": null },
+        // The card's own kind and anchor, not `root` and null. A branch spawned
+        // from a highlighted phrase read as a question typed from nothing, so
+        // the prompt's "it came from the highlighted phrase" line could never
+        // fire and doc 06 section A4's `request.kind` was always the same word.
+        "request": {
+            "text": subject.question,
+            "kind": subject.card.kind,
+            "anchor_text": subject.card.anchor_text,
+        },
         // Doc 06 section A4: the Synthesizer reads the plan's constraints, so
         // the answer scope the Verifier checks is the one the Planner declared.
         "plan": plan.cloned().unwrap_or(Value::Null),
         "passages": passages,
-        "ancestors": [],
+        // Doc 06 section A2: "Reads the plan, the passages, the ancestors". The
+        // field was hardcoded empty, so the prompt loop that reads it never ran
+        // and a follow-up was written as though nothing preceded it. A stale
+        // ancestor is marked, so the answer does not lean on a value that has
+        // since moved.
+        "ancestors": synth_ancestors(subject.ancestors),
         "flags": routed["early_flags"].clone(),
         "audience": Value::Null,
         "writing_rules": serde_json::to_value(&ctx.pack.writing_rules).unwrap_or(json!({})),

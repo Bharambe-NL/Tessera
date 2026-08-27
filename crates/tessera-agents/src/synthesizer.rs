@@ -57,9 +57,10 @@ impl Agent for Synthesizer {
         "synthesizer"
     }
     fn packet_schema(&self) -> &'static str {
-        // The Synthesizer packet is assembled by the pipeline from the plan and
-        // the retrieved passages. Doc 06 section A4.
-        ids::COMMON
+        // Doc 06 section A4. It validated against the shared primitives, which
+        // guard nothing packet shaped, so a packet missing its passages or its
+        // request reached the model and was answered.
+        ids::PACKET_SYNTHESIZER
     }
     fn output_schema(&self) -> &'static str {
         ids::OUT_SYNTHESIZER
@@ -219,6 +220,36 @@ async fn draft(
         .unwrap_or_default();
     if !excluded.is_empty() {
         prompt.push_str(&format!("Do not discuss: {}\n", excluded.join(", ")));
+    }
+    // The Planner produces this and nothing read it, so a plan that named what
+    // the answer had to cover was writing into a field the Synthesizer ignored.
+    let included: Vec<&str> = packet["plan"]["constraints"]["must_include"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if !included.is_empty() {
+        prompt.push_str(&format!("Cover each of these: {}\n", included.join(", ")));
+    }
+
+    // Doc 06 section A4's `writing_rules`. They reached the packet from the pack
+    // and stopped there, so the doctrine's units, spelling and sentence length
+    // governed nothing and the house style was whatever the fixed preamble said.
+    let rules = &packet["writing_rules"];
+    let mut written = Vec::new();
+    if let Some(units) = rules["units"].as_str() {
+        written.push(format!("give amounts in {units}"));
+    }
+    if let Some(spelling) = rules["spelling"].as_str() {
+        written.push(format!("spell in {spelling}"));
+    }
+    if let Some(max) = rules["sentence_max_words"].as_u64() {
+        written.push(format!("keep sentences under {max} words"));
+    }
+    if rules["dashes"] == json!(false) {
+        written.push("use no dashes".to_string());
+    }
+    if !written.is_empty() {
+        prompt.push_str(&format!("House rules: {}.\n", written.join(", ")));
     }
 
     // Doc 06 section A8 point 5.
@@ -399,7 +430,12 @@ fn bind(draft: &Value, passages: &[Value], mode: &str, packet: &Value) -> Bound 
         // Doc 06 section A5: in fast mode citations must be empty and
         // unsupported_statements must cover the whole answer.
         unsupported.push(json!({
-            "span": { "start": 0, "end": answer.chars().count() },
+            // Byte offsets, because `sentences` returns byte offsets and every
+            // other span here comes from it. Counting characters here meant the
+            // two units disagreed on any answer containing non ASCII text, and
+            // doc 06 section A5's rule that a claim span falls inside the answer
+            // was then checked against the wrong number.
+            "span": { "start": 0, "end": answer.len() },
             "reason": "model_knowledge"
         }));
     } else {
@@ -696,24 +732,60 @@ fn detect_conflicts(summary: &Value, passages: &[Value]) -> Value {
         if distinct.len() < 2 {
             continue;
         }
-        // The doctrine resolves this: higher trust rank wins, then later date.
-        // The passage ranks are already in the packet.
-        let best = readings
-            .iter()
-            .min_by_key(|(_, o)| {
-                passages
-                    .get(o.saturating_sub(1))
+        // Doc 06 section A8.3: "higher trust rank wins; equal rank, later
+        // `published_at` wins; otherwise both are presented and the conflict is
+        // recorded."
+        //
+        // This used to pick the best trust rank and then report `higher_trust`
+        // whenever a best existed, which is whenever there were any readings at
+        // all. Two passages of equal rank resolved as though one outranked the
+        // other, and the enum's other two values could not be reached.
+        let attributes = |o: &usize| {
+            let passage = passages.get(o.saturating_sub(1));
+            (
+                passage
                     .and_then(|p| p["source"]["trust_rank"].as_i64())
-                    .unwrap_or(i64::MAX)
-            })
-            .map(|(v, _)| *v);
+                    .unwrap_or(i64::MAX),
+                passage
+                    .and_then(|p| p["source"]["published_at"].as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        };
+        let mut ranked: Vec<&(&str, usize)> = readings.iter().collect();
+        // Lowest trust_rank first, because rank 1 outranks rank 4, then the
+        // later date first.
+        ranked.sort_by(|a, b| {
+            let (rank_a, date_a) = attributes(&a.1);
+            let (rank_b, date_b) = attributes(&b.1);
+            rank_a.cmp(&rank_b).then(date_b.cmp(&date_a))
+        });
+
+        let resolution = match (ranked.first(), ranked.get(1)) {
+            (Some(first), Some(second)) => {
+                let (rank_a, date_a) = attributes(&first.1);
+                let (rank_b, date_b) = attributes(&second.1);
+                if rank_a != rank_b {
+                    "higher_trust"
+                } else if !date_a.is_empty() && !date_b.is_empty() && date_a != date_b {
+                    "later_date"
+                } else {
+                    // Equal rank and nothing to separate them by date. Doc 06
+                    // section A8.3 presents both rather than picking one.
+                    "presented_both"
+                }
+            }
+            _ => "presented_both",
+        };
+
         conflicts.push(json!({
             "claim": label,
             "readings": readings.iter().map(|(v, o)| json!({
                 "passage_id": passages.get(o.saturating_sub(1)).map(|p| p["passage_id"].clone()).unwrap_or(Value::Null),
                 "value": v
             })).collect::<Vec<_>>(),
-            "resolution": if best.is_some() { "higher_trust" } else { "presented_both" }
+            "resolution": resolution,
+            "winning_value": ranked.first().map(|(v, _)| Value::from(*v)).unwrap_or(Value::Null),
         }));
     }
     json!(conflicts)
@@ -733,6 +805,56 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn a_conflict_resolves_by_trust_then_date_then_by_saying_so() {
+        // Doc 06 section A8.3. The resolution used to read `higher_trust`
+        // whenever any reading existed, so two passages of equal rank resolved
+        // as though one outranked the other and the other two values of the
+        // enum could not be reached at all.
+        let summary = json!({ "values": [
+            { "label": "buffer", "value": "2.5", "citation": 1 },
+            { "label": "buffer", "value": "3.0", "citation": 2 },
+        ]});
+        let sourced = |ranks: [i64; 2], dates: [&str; 2]| {
+            (0..2)
+                .map(|i| {
+                    json!({
+                        "passage_id": format!("p{i}"),
+                        "text": "t",
+                        "source": { "trust_rank": ranks[i], "published_at": dates[i] }
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let resolution = |p: &[Value]| {
+            detect_conflicts(&summary, p)[0]["resolution"]
+                .as_str()
+                .expect("a resolution")
+                .to_string()
+        };
+        let winner = |p: &[Value]| {
+            detect_conflicts(&summary, p)[0]["winning_value"]
+                .as_str()
+                .expect("a winner")
+                .to_string()
+        };
+
+        // Rank decides, and rank 1 outranks rank 4.
+        let by_rank = sourced([4, 1], ["2025-01-01", "2025-01-01"]);
+        assert_eq!(resolution(&by_rank), "higher_trust");
+        assert_eq!(winner(&by_rank), "3.0");
+
+        // Equal rank, so the later date decides.
+        let by_date = sourced([2, 2], ["2025-01-01", "2025-06-01"]);
+        assert_eq!(resolution(&by_date), "later_date");
+        assert_eq!(winner(&by_date), "3.0");
+
+        // Equal rank and nothing to separate them: both are presented.
+        let neither = sourced([2, 2], ["2025-01-01", "2025-01-01"]);
+        assert_eq!(resolution(&neither), "presented_both");
     }
 
     #[test]

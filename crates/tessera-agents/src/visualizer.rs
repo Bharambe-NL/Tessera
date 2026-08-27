@@ -37,7 +37,8 @@ impl Agent for Visualizer {
         "visualizer"
     }
     fn packet_schema(&self) -> &'static str {
-        ids::COMMON
+        // Doc 06 section B4.
+        ids::PACKET_VISUALIZER
     }
     fn output_schema(&self) -> &'static str {
         ids::OUT_VISUALIZER
@@ -556,6 +557,26 @@ fn index_blocks(
                         &mut blocks,
                     );
                 }
+            }
+            // Doc 06 section B5: every label in the payload appears in the block
+            // index. The payload schema allows a `bottom_line` and this walk
+            // skipped it, so a table could carry a closing claim with no block
+            // behind it and no citation, which is exactly what the rule forbids.
+            // The head is a label and the text is a claim, so only the text has
+            // to trace.
+            if payload["bottom_line"].is_object() {
+                add(
+                    "/bottom_line/head".into(),
+                    payload["bottom_line"]["head"].as_str().unwrap_or_default(),
+                    true,
+                    &mut blocks,
+                );
+                add(
+                    "/bottom_line/text".into(),
+                    payload["bottom_line"]["text"].as_str().unwrap_or_default(),
+                    false,
+                    &mut blocks,
+                );
             }
         }
         "steps" => {

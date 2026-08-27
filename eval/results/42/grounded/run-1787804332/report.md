@@ -23,14 +23,14 @@ Provider mock, 400 questions, 0 produced no card.
 | visual_type_match | 0.250 | 0.85 | reported | advisory, the mock emits one summary shape, so it selects one visual type |
 | no_source_honesty | 0.000 |  | reported | deep answers that reported no sources rather than answering unsupported |
 | flag_recall | 1.000 |  | reported |  |
-| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
+| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `numeric_without_citation`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
 | staleness_detection | n/a | 0.95 | n/a | no card in this run states a superseded value; re-verify the boards against the T3 corpus with --verify-only |
 | source_hierarchy_compliance | 1.000 |  | reported | answers that took the higher ranked value where two classes disagreed |
 | reader_structure_recovery_f1 | n/a | 0.8 | n/a | the Reader arrives at M10; set reader_enabled when it does |
 | exercise_traceability | n/a |  | n/a | the Exercise agent arrives at M10; set exercise_enabled when it does |
 | cards_produced | 1.000 |  | reported |  |
-| tokens_per_question | 3796.213 |  | reported | 1720 model calls across the run |
-| latency_p95_ms | 207.000 |  | reported |  |
+| tokens_per_question | 3919.903 |  | reported | 1720 model calls across the run |
+| latency_p95_ms | 201.000 |  | reported |  |
 | sub_question_coverage | 1.000 | 0.9 | pass |  |
 | retriever_assignment_accuracy | 1.000 | 0.95 | pass |  |
 | must_exclude_compliance | 1.000 | 1.0 | pass |  |
@@ -68,8 +68,8 @@ Provider mock, 400 questions, 0 produced no card.
 | verifier_agreement | n/a | 0.593 |
 | visual_fidelity | n/a | 1.000 |
 | visual_type_match | 0.000 | 0.250 |
-| tokens_per_question | 3022.250 | 3796.213 |
-| latency_p95_ms | 152.000 | 207.000 |
+| tokens_per_question | 3022.250 | 3919.903 |
+| latency_p95_ms | 152.000 | 201.000 |
 | planner_tokens_mean | 220.966 | 222.204 |
 | prior_card_recall | 0.988 | 1.000 |
 

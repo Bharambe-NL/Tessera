@@ -210,10 +210,10 @@
       "verdict": "reported"
     },
     {
-      "denominator": 111,
+      "denominator": 115,
       "name": "flag_false_positive_rate",
-      "note": "worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
-      "numerator": 111,
+      "note": "worst rule `numeric_without_citation`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
+      "numerator": 115,
       "reported": "1.000",
       "threshold": null,
       "value": 1.0,
@@ -273,10 +273,10 @@
       "denominator": 400,
       "name": "tokens_per_question",
       "note": "1720 model calls across the run",
-      "numerator": 1518485,
-      "reported": "3796.213",
+      "numerator": 1567961,
+      "reported": "3919.903",
       "threshold": null,
-      "value": 3796.2125,
+      "value": 3919.9025,
       "verdict": "reported"
     },
     {
@@ -284,9 +284,9 @@
       "name": "latency_p95_ms",
       "note": "",
       "numerator": 0,
-      "reported": "207.000",
+      "reported": "201.000",
       "threshold": null,
-      "value": 207.0,
+      "value": 201.0,
       "verdict": "reported"
     },
     {
@@ -453,8 +453,8 @@
       "citations": 2142,
       "flags": 2845,
       "forbidden": 0,
-      "input_tokens": 1227772,
-      "latency_p50_ms": 161,
+      "input_tokens": 1277248,
+      "latency_p50_ms": 156,
       "leg": "bulk",
       "output_tokens": 290713,
       "questions": 400,
