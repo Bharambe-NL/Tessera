@@ -1405,6 +1405,12 @@ fn grounded_mock() -> Arc<dyn ModelProvider> {
             "visualize" => MockResponse::Json(visualised(request)),
             "verify" => MockResponse::Json(support_judged(request)),
             "exercise" => MockResponse::Json(exercised(request)),
+            // Doc 14's Tutor and doc 17 section 7's Learning Planner, from the
+            // fixture the dev server reads too. The learner leg cannot run
+            // without them, and a second script here would score a second
+            // product.
+            "tutor" => MockResponse::Json(tessera_core::fixtures::tutor(&prompt_of(request))),
+            "learning_plan" => MockResponse::Json(tessera_core::fixtures::learning_plan(&prompt_of(request))),
             // Anything else is not scripted, and failing closed is the
             // right default for a stage nobody thought about.
             _ => MockResponse::Garbage,

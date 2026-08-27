@@ -3310,6 +3310,44 @@ leaves the state alone rather than demoting someone on a parse failure.
 
 ---
 
+### BN-132 The eleventh agent, and the two fixtures that became one
+
+**Spec** 17 section 7, 02 section 10.1.
+
+**Built** 2026-08-27, M16 13b-ii.
+
+**An agent that mostly does not call a model.** The Learning Planner reads the map, computes the
+frontier and the level from 13b-i's rules, and calls a model only when a topic has no concepts yet.
+Every other run costs nothing: `decomposing` is the one state that may make a call and most runs
+walk straight through it. That is doc 17 section 7's own division, and it is why the rules are a
+module of pure functions rather than a prompt.
+
+**The limit is a check, not a request.** Doc 17 allows "at most three new ones", and the packet
+carries the number rather than the prompt asking for it. A model that names eight has five dropped
+here, an idea already on the map is not proposed again, and an edge naming an idea nobody proposed is
+dropped with them: a proposal the learner cannot see is one they cannot refuse.
+
+**A lesson opens at the lowest rung its targets are ready for.** Doc 17 section 5 targets one or two
+frontier concepts plus their immediate prerequisites, and the level is the ladder's. A concept nobody
+has passed a check on opens at 1, which is a different question from where the ladder goes after a
+pass, and asking the second question of the first case is how a first lesson would have opened at
+level 2 for a learner who had never answered anything.
+
+**Two fixtures became one.** The dev server answered `tutor` and the eval's grounded mock did not;
+the mock answered `exercise` and the dev server's version was its own. A leg that ran under one could
+not run under the other, and doc 02 section 10.1 scores the product against a scripted provider, so
+two scripts would score two products. Both now read `tessera_core::fixtures`, which builds every
+reply from the prompt it was handed: the plan is the topic asked three ways, the check quotes the
+card it names, and the decomposition names the parts of the topic the learner joined together. A
+fixture that named a subject's prerequisites would be answering the question the eval asks a real
+model and scoring itself on the answer.
+
+**Verified** Full battery green, 14 agent rule tests, three fixture tests, the workspace tests,
+clippy at `-D warnings`, and 65 Playwright tests including the seven that drive the Tutor through the
+fixture that moved.
+
+---
+
 ---
 
 ## Measured findings

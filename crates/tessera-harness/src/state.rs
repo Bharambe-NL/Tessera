@@ -333,6 +333,20 @@ pub mod sequences {
         "emitting",
         "done",
     ];
+
+    /// Doc 17 section 7. Most of a Planner run is rules: it reads the map, works
+    /// out the frontier and the level, and only calls a model when a topic has
+    /// no concepts yet. `decomposing` is the state that may make that call and
+    /// the only one that ever does.
+    pub const LEARNING_PLANNER: &[&str] = &[
+        "received",
+        "reading_map",
+        "computing_frontier",
+        "decomposing",
+        "checking_proposals",
+        "emitting",
+        "done",
+    ];
 }
 
 #[cfg(test)]

@@ -88,6 +88,9 @@ fn mock() -> Arc<MockProvider> {
                 // Doc 14. Like the others it quotes rather than judges, so doc
                 // 14 section 3.5's four rules pass for a reason.
                 "tutor" => tutor_reply(request),
+                // Doc 17 section 7's one model call, so the Map and the
+                // placement flow are drivable from the product.
+                "learning_plan" => learning_plan_reply(request),
                 // A mock has no eyes. What this stands in for is the shape of a
                 // vision answer, so the deterministic half of doc 07 part A is
                 // drivable: the injection check, the summary mapping and the
@@ -197,76 +200,13 @@ fn with_vault(core: &mut Core) {
 }
 
 fn tutor_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
-    let mut prompt = String::new();
-    for message in &request.messages {
-        for block in &message.content {
-            if let tessera_providers::ContentBlock::Text { text } = block {
-                prompt.push('\n');
-                prompt.push_str(text);
-            }
-        }
-    }
+    // Doc 14's turns, from the one fixture the eval's grounded mock also reads.
+    // Two scripts would score two products.
+    MockResponse::Json(tessera_core::fixtures::tutor(&prompt_of(request)))
+}
 
-    if prompt.contains("tappable options") {
-        return MockResponse::Json(json!({
-            "questions": [
-                { "q": "How much do you already know?",
-                  "options": ["Nothing", "The basics", "A fair amount"] },
-                { "q": "What do you need it for?",
-                  "options": ["Curiosity", "Work", "An exam"] }
-            ]
-        }));
-    }
-    if prompt.contains("Plan three to five cards") {
-        return MockResponse::Json(json!({
-            "plan": {
-                "title": "World models",
-                "cards": [
-                    { "question": "what are world models?", "why": "the foundation" },
-                    { "question": "how does a world model predict?", "why": "the mechanism" },
-                    { "question": "where are world models used?", "why": "the landscape" }
-                ]
-            }
-        }));
-    }
-    if prompt.contains("multiple choice question") {
-        let card_id = prompt
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("card_id: "))
-            .unwrap_or_default()
-            .to_string();
-        let answer = prompt
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("answer: "))
-            .unwrap_or_default();
-        let claim = answer
-            .split_once(". ")
-            .map(|(f, _)| f.to_string())
-            .unwrap_or_else(|| answer.to_string());
-        return MockResponse::Json(json!({
-            "check": {
-                "item": {
-                    "id": "c1",
-                    "kind": "recall",
-                    "prompt": "What does this card say a world model is?",
-                    "options": [
-                        { "id": "a", "text": claim },
-                        { "id": "b", "text": "The card does not say." },
-                        { "id": "c", "text": "The card defers to a later source." }
-                    ],
-                    "answer_id": "a",
-                    "explanation": "The card opens with it.",
-                    "source_card_id": card_id
-                },
-                "next_if_right": "How does a world model predict the next state?",
-                "next_if_wrong": "What is a world model made of?"
-            }
-        }));
-    }
-    MockResponse::Json(json!({
-        "reply": "The cards say a world model predicts how a situation changes.",
-        "open": null
-    }))
+fn learning_plan_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
+    MockResponse::Json(tessera_core::fixtures::learning_plan(&prompt_of(request)))
 }
 
 fn exercise_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {

@@ -8,6 +8,8 @@
 //! hierarchy is a pack field the agent reads (doc 12 operating principle 4).
 
 pub mod exercise;
+pub mod learning;
+pub mod learning_planner;
 pub mod planner;
 pub mod prompts;
 pub mod reader;
@@ -18,6 +20,7 @@ pub mod verifier;
 pub mod visualizer;
 
 pub use exercise::Exercise;
+pub use learning_planner::LearningPlanner;
 pub use planner::Planner;
 pub use reader::Reader;
 pub use router::Router;
