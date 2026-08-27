@@ -202,6 +202,13 @@ pub struct DoctrinePack {
     #[serde(default)]
     pub writing_rules: WritingRules,
     pub exercise_templates: Vec<ExerciseTemplate>,
+    /// Doc 07 section A2: what the Reader looks for first is doctrine.
+    ///
+    /// The finance pack names figures, dates and article references. A pack that
+    /// names none leaves this empty, and the Reader asks for nothing in
+    /// particular rather than being handed a guess as though it were doctrine.
+    #[serde(default)]
+    pub reader_extract_first: Vec<String>,
     #[serde(default)]
     pub rulings: Vec<Value>,
 }
@@ -509,6 +516,7 @@ mod tests {
             visual_preferences: VisualPreferences::default(),
             writing_rules: WritingRules::default(),
             exercise_templates: vec![],
+            reader_extract_first: vec![],
             rulings: vec![],
         }
     }

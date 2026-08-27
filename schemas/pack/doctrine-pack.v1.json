@@ -377,6 +377,13 @@
           }
         }
       }
+    },
+    "reader_extract_first": {
+      "type": "array",
+      "description": "Doc 07 section A2: what the Reader looks for first is doctrine, not substrate. Finance names figures, dates and article references. A pack that names none leaves this out, and the Reader asks for nothing in particular rather than being handed a guess as though it were doctrine.",
+      "items": {
+        "type": "string"
+      }
     }
   }
 }

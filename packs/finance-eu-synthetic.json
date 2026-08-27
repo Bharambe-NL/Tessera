@@ -367,5 +367,10 @@
     ],
     "mastery_threshold": 2
   },
-  "rulings": []
+  "rulings": [],
+  "reader_extract_first": [
+    "figures",
+    "dates",
+    "article_refs"
+  ]
 }

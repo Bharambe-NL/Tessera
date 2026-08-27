@@ -10,6 +10,7 @@
 pub mod exercise;
 pub mod planner;
 pub mod prompts;
+pub mod reader;
 pub mod router;
 pub mod synthesizer;
 pub mod verifier;
@@ -17,6 +18,7 @@ pub mod visualizer;
 
 pub use exercise::Exercise;
 pub use planner::Planner;
+pub use reader::Reader;
 pub use router::Router;
 pub use synthesizer::Synthesizer;
 pub use verifier::Verifier;
