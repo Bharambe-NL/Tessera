@@ -723,15 +723,15 @@ impl Core {
         anchor: Anchor<'_>,
     ) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
-        let board_depth: String = self
+        let (board_depth, board_mode): (String, String) = self
             .store
             .conn()
             .query_row(
-                "SELECT default_depth FROM board WHERE id = ?1",
+                "SELECT default_depth, mode FROM board WHERE id = ?1",
                 rusqlite::params![board_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
-            .unwrap_or_else(|_| "fast".to_string());
+            .unwrap_or_else(|_| ("fast".to_string(), "explore".to_string()));
 
         let card_id = repo::create_card(
             &mut self.store,
@@ -762,6 +762,20 @@ impl Core {
             .ok();
 
         let pack = self.packs.get(&self.pack_code)?.clone();
+
+        // Doc 16 section 3.4: a notebook question runs the normal pipeline at
+        // deep "with retrievers restricted to `local:vault`, `boards`, and
+        // optionally `local:*`, web off by default". The narrowing happens here
+        // rather than inside the fan-out, because what a question may open is a
+        // property of the run and the plan-less fallback reads the set too.
+        let restricted;
+        let retrievers = if board_mode == NOTEBOOK {
+            restricted = self.retrievers.restricted(NOTEBOOK_RETRIEVERS);
+            &restricted
+        } else {
+            &self.retrievers
+        };
+
         let ctx = RunContext {
             registry: &self.registry,
             provider: self.provider.as_ref(),
@@ -770,7 +784,7 @@ impl Core {
             profile_id: self.profile_id.clone(),
             source: self.source,
             ledger: &self.ledger,
-            retrievers: &self.retrievers,
+            retrievers,
         };
 
         // The runtime is owned by the core, so a handler blocks here rather than
@@ -785,11 +799,64 @@ impl Core {
         ));
 
         match result {
-            Ok(outcome) => Ok(outcome),
+            Ok(outcome) => {
+                if board_mode == NOTEBOOK {
+                    self.record_grounding(board_id, &outcome)?;
+                }
+                Ok(outcome)
+            }
             Err(f) => Err(CoreError::Runtime(f.to_string())),
         }
     }
+
+    /// Doc 16 section 3.4's three states, recorded where the answer settled.
+    ///
+    /// Ungrounded is `no_passages` and nothing else: doc 06 section A10 makes
+    /// that an honest card that says it found nothing, and the notebook labels
+    /// it rather than replacing it with an answer from model knowledge. A card
+    /// that looks answered and is not is the failure both documents are written
+    /// against, and doc 16 section 2.1 adopts the contract on the grounds that
+    /// Tessera already has it in this path.
+    fn record_grounding(&mut self, board_id: &str, outcome: &pipeline::CardOutcome) -> Result<(), CoreError> {
+        let state = if outcome.passages_seen == 0 {
+            "ungrounded"
+        } else if outcome.unsupported > 0 {
+            "partly_grounded"
+        } else {
+            "grounded"
+        };
+        self.store.append(
+            tessera_store::event::NewEvent::new(
+                "notebook.grounding.v1",
+                json!({
+                    "card_id": outcome.card_id,
+                    "state": state,
+                    "passages": outcome.passages_seen,
+                    "unsupported": outcome.unsupported,
+                }),
+                tessera_store::event::Provenance::harness("notebook", Some(outcome.run_id.clone())),
+            )
+            .on_board(board_id)
+            .on_card(&outcome.card_id),
+        )?;
+        Ok(())
+    }
 }
+
+/// Doc 16 section 3.4: a notebook session is a board of this mode.
+pub const NOTEBOOK: &str = "notebook";
+
+/// What a new session is called until its first question renames it, which is
+/// the same rule doc 01 section 4.1 gives every other board.
+const NOTEBOOK_TITLE: &str = "A question of my notes";
+
+/// What a notebook question may open. Doc 16 section 3.4: the vault, the
+/// profile's own prior cards, and not the web.
+///
+/// Doc 16 lists `local:*` as optional. It is left out: the notebook is the view
+/// over what the person wrote, and a question that quietly reached their whole
+/// document folder would answer from somewhere they did not ask about.
+pub const NOTEBOOK_RETRIEVERS: &[&str] = &["vault", "boards"];
 
 fn truncate_title(question: &str) -> String {
     let trimmed = question.trim();
@@ -912,14 +979,24 @@ pub fn build_router() -> Router<Core> {
             /// word rather than a second method.
             #[serde(default = "default_board_status")]
             status: String,
+            /// Which board modes to list. Empty is every mode.
+            #[serde(default)]
+            modes: Vec<String>,
         }
         let p: Which = params(p).unwrap_or(Which {
             status: default_board_status(),
+            modes: Vec::new(),
         });
         if !matches!(p.status.as_str(), "active" | "trashed") {
             return Err(RpcError::core("unknown_status", "A board is active or trashed."));
         }
-        let boards = repo::list_boards(&core.store, &core.profile_id, &p.status).map_err(store_error)?;
+        // Doc 16 section 3.4 and BN-106: Home is explore and learn, the
+        // Notebook lists its own sessions, and the Map is a board nothing lists
+        // at all. Absent means every mode, so a caller that has not heard of
+        // notebooks still sees what it always saw.
+        let modes: Vec<&str> = p.modes.iter().map(String::as_str).collect();
+        let boards =
+            repo::list_boards_in(&core.store, &core.profile_id, &p.status, &modes).map_err(store_error)?;
         Ok(json!({ "boards": boards }))
     });
 
@@ -1563,6 +1640,33 @@ pub fn build_router() -> Router<Core> {
                 .unwrap_or(0),
             "created": true,
         }))
+    });
+
+    // --------------------------------------------------------- notebook --
+    // Doc 16 section 3.4. A session is a board, so everything a board has comes
+    // with it: history, events, memory and export.
+
+    r.register("notebook.open", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Open {
+            #[serde(default)]
+            board_id: Option<String>,
+        }
+        let p: Open = params(p)?;
+        let board_id = match p.board_id {
+            Some(id) => id,
+            // Doc 16 section 3.4's chat layout starts somewhere, and a notebook
+            // question runs at deep because that is what reads the vault.
+            None => core.create_board(NOTEBOOK_TITLE, "deep").map_err(core_error)?,
+        };
+        repo::start_notebook(&mut core.store, &board_id).map_err(store_error)?;
+        Ok(json!({ "board_id": board_id, "mode": crate::core::NOTEBOOK }))
+    });
+
+    r.register("notebook.sessions", |core: &mut Core, _| {
+        let boards = repo::list_boards_in(&core.store, &core.profile_id, "active", &[NOTEBOOK])
+            .map_err(store_error)?;
+        Ok(json!({ "sessions": boards }))
     });
 
     // ------------------------------------------------------------ pages --

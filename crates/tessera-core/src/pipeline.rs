@@ -109,6 +109,15 @@ pub struct CardOutcome {
     pub status: String,
     pub confidence: f64,
     pub flags: usize,
+    /// How many passages retrieval put in front of the Synthesizer.
+    ///
+    /// Doc 16 section 3.4's ungrounded state is `no_passages`, and the caller
+    /// cannot tell that from the citations: a card can retrieve ten passages
+    /// and cite none. Zero here is the vault having nothing to say.
+    pub passages_seen: usize,
+    /// Statements the Synthesizer could not support. Doc 16 section 3.4's
+    /// partly grounded state is exactly "some claims unsupported".
+    pub unsupported: usize,
 }
 
 /// How much of each kind of structure the Synthesizer returned.
@@ -280,6 +289,10 @@ pub async fn run_verify_only(
         status,
         confidence,
         flags,
+        // A re-verification retrieves nothing. Doc 16 section 3.4's states are
+        // about what a question found, and this asked none.
+        passages_seen: 0,
+        unsupported: 0,
     })
 }
 
@@ -687,6 +700,8 @@ pub async fn run_read(
                 status: "flagged".into(),
                 confidence: 0.0,
                 flags: 0,
+                passages_seen: 0,
+                unsupported: 0,
             });
         }
     };
@@ -758,6 +773,9 @@ pub async fn run_read(
         },
         confidence,
         flags,
+        // A read looks at an image rather than at the corpus.
+        passages_seen: 0,
+        unsupported: 0,
     })
 }
 
@@ -1063,6 +1081,9 @@ pub async fn run_card(
             status: "flagged".into(),
             confidence: 0.0,
             flags: early_flags.as_array().map(Vec::len).unwrap_or(0),
+            // The run stopped before retrieval, so nothing was looked at.
+            passages_seen: 0,
+            unsupported: 0,
         });
     }
 
@@ -1494,6 +1515,14 @@ pub async fn run_card(
         },
         confidence,
         flags: open_flags,
+        // Doc 16 section 3.4's three states are computed from these by the
+        // caller: no passages is ungrounded, unsupported claims are partly
+        // grounded, and neither is grounded.
+        passages_seen: passages.len(),
+        unsupported: synthesized["unsupported_statements"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0),
     })
 }
 
