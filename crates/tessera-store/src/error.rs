@@ -28,6 +28,11 @@ pub enum StoreError {
     #[error("migration to schema version {version} left {rows} broken foreign key references")]
     MigrationBrokeReferences { version: i32, rows: i64 },
 
+    /// Doc 10 section 15. The message is what the shell shows, so it says what
+    /// happened and what is on offer rather than quoting SQLite at a person.
+    #[error("this profile's database is damaged and cannot be opened: {detail}")]
+    Corrupt { detail: String },
+
     #[error("blob {0} is not in the store")]
     BlobMissing(String),
 

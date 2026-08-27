@@ -47,6 +47,25 @@ impl Store {
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(&root)?;
+
+        // Doc 10 section 15: detected on start. Before the migrations run,
+        // because a migration against a damaged page file is how a database
+        // that could still have been read becomes one that cannot: it would
+        // rewrite tables on top of the damage and the backup would then be the
+        // only copy of anything.
+        //
+        // Nothing is moved here. `quarantine` is a separate call the shell
+        // makes after telling the person what it found, because a start that
+        // silently renamed someone's work and carried on is the behaviour a
+        // person would least expect and could least undo.
+        // No database yet is the first run, not a fault, so the check only
+        // speaks about a file that is already there.
+        if root.join("tessera.sqlite").exists()
+            && let Err(detail) = integrity(&root)
+        {
+            return Err(StoreError::Corrupt { detail });
+        }
+
         let conn = Connection::open(root.join("tessera.sqlite"))?;
         Self::from_parts(conn, BlobStore::open(root.join("blobs"))?, root)
     }
@@ -363,6 +382,52 @@ fn parse_trust(s: &str) -> TrustLevel {
         "degraded" => TrustLevel::Degraded,
         _ => TrustLevel::Unverified,
     }
+}
+
+// ------------------------------------------------------------- integrity --
+//
+// Doc 10 section 15: "A corrupted SQLite file is detected on start; the app
+// offers restore from the last backup and keeps the damaged file aside." Both
+// halves live here rather than beside the backup writer, because `Store::open`
+// is what has to call the first one and it cannot reach a crate that depends
+// on it.
+
+/// Whether the database at `root` is readable, and what SQLite says if not.
+///
+/// Doc 10 section 15: detected on start. `PRAGMA integrity_check` reads every
+/// page, which is the point: an opened handle proves the header parsed and
+/// nothing else.
+pub fn integrity(root: &Path) -> std::result::Result<(), String> {
+    let path = root.join("tessera.sqlite");
+    if !path.exists() {
+        return Err("there is no database in this folder".into());
+    }
+    let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    let verdict: String = conn
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if verdict == "ok" { Ok(()) } else { Err(verdict) }
+}
+
+/// Move a damaged database aside and return where it went.
+///
+/// Doc 10 section 15: "keeps the damaged file aside". Renamed rather than
+/// deleted, because a damaged database is usually still most of someone's work
+/// and a later build may read more of it than this one can.
+pub fn quarantine(root: &Path) -> Result<PathBuf> {
+    let from = root.join("tessera.sqlite");
+    let to = root.join(format!(
+        "tessera.damaged-{}.sqlite",
+        now_iso8601().replace([':', '.'], "-")
+    ));
+    std::fs::rename(&from, &to)?;
+    // The side files belong to the database they were written for. Left behind
+    // they would be applied to whatever is restored in its place, which is a
+    // second corruption on top of the first.
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(root.join(format!("tessera.sqlite{suffix}")));
+    }
+    Ok(to)
 }
 
 /// ISO 8601 with offset, per doc 01 section 3.
