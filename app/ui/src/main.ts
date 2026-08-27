@@ -15,9 +15,9 @@ import './styles/pages.css';
 
 import { blockAnchor, selectionAnchor } from './canvas/anchor.js';
 import { trailFor, trailHTML } from './canvas/built.js';
-import { boundsOf, layout } from './canvas/layout.js';
+import { CARD_W, boundsOf, layout } from './canvas/layout.js';
 import { readingHTML } from './canvas/reading.js';
-import { drawEdges, measureHeights, renderCards, toggleFlags } from './canvas/render.js';
+import { drawEdges, measureHeights, renderCards, renderNotes, toggleFlags } from './canvas/render.js';
 import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
@@ -41,6 +41,7 @@ const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as
 const main = el<HTMLElement>('main');
 const world = el<HTMLElement>('world');
 const cardsEl = el<HTMLElement>('cards');
+const stickiesEl = el<HTMLElement>('stickies');
 const edgesEl = document.getElementById('edges') as unknown as SVGElement;
 const gateEl = el<HTMLPreElement>('gate');
 const composer = el<HTMLFormElement>('composer');
@@ -70,6 +71,7 @@ const popover = new AnchorPopover(
     root: el<HTMLElement>('anchor-pop'),
     label: document.querySelector('#anchor-pop .anchor-label') as HTMLElement,
     ask: el<HTMLButtonElement>('anchor-ask'),
+    note: el<HTMLButtonElement>('anchor-note'),
     compose: document.querySelector('#anchor-pop .compose') as HTMLFormElement,
     question: el<HTMLInputElement>('anchor-question'),
     cancel: el<HTMLButtonElement>('anchor-cancel'),
@@ -81,6 +83,10 @@ const popover = new AnchorPopover(
       ...(target.anchorText ? { anchorText: target.anchorText } : {}),
       ...(target.anchorBlockRef ? { anchorBlockRef: target.anchorBlockRef } : {}),
     });
+  },
+  (target) => {
+    window.getSelection()?.removeAllRanges();
+    void keepAsSticky(target.cardId, target.anchorText ?? target.label);
   },
 );
 popover.attach();
@@ -164,9 +170,33 @@ function renderBoard(b: Board): void {
   heights = measureHeights(b.cards);
   layout(b.cards, heightOf);
   renderCards(b.cards, { cards: cardsEl, edges: edgesEl });
-  drawEdges(b.cards, edgesEl, heightOf);
+  renderNotes(b.notes ?? [], stickiesEl);
+  drawEdges(b.cards, edgesEl, heightOf, b.notes ?? []);
 
   emptyState.hidden = b.cards.length > 0;
+}
+
+/**
+ * Doc 16 section 3.6: keep the quote as a sticky beside the card it came from.
+ *
+ * The place is computed here rather than in the core, because where there is
+ * room on the canvas is a question about the layout the reader is looking at
+ * and the core has never seen it.
+ */
+async function keepAsSticky(cardId: string, quote: string): Promise<void> {
+  const id = boardId;
+  if (!id) return;
+  const card = board?.cards.find((c) => c.id === cardId);
+  const position = card
+    ? { x: Math.round(card.position.x + CARD_W + 80), y: Math.round(card.position.y + 24), w: 220, h: 140 }
+    : { x: 560, y: 80, w: 220, h: 140 };
+  try {
+    await rpc.createNote(id, quote, { cardId, position });
+    toast(COPY.stickyKept);
+    await reload();
+  } catch {
+    toast(COPY.stickyFailed, 'error');
+  }
 }
 
 function setMode(label: string, tone: 'live' | 'busy' | 'offline'): void {
@@ -446,6 +476,25 @@ function wireBranching(): void {
     if (target?.closest('#anchor-pop')) return;
     if (target?.closest('.card .body')) return;
     popover.close();
+  });
+}
+
+/** The one verb a sticky has: taking it off again. Doc 09 section 5's undo. */
+function wireStickies(): void {
+  stickiesEl.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    const noteId = target?.closest<HTMLElement>('[data-act="unstick"]')
+      ? target.closest<HTMLElement>('.sticky')?.dataset.noteId
+      : undefined;
+    if (!noteId) return;
+    void (async () => {
+      try {
+        await rpc.removeNote(noteId);
+        await reload();
+      } catch {
+        toast(COPY.stickyFailed, 'error');
+      }
+    })();
   });
 }
 
@@ -1119,6 +1168,7 @@ async function boot(): Promise<void> {
   wireLearn();
   wireComposer();
   wireCardActions();
+  wireStickies();
   wireBranching();
   wireBuildTrail();
   wireTitle();

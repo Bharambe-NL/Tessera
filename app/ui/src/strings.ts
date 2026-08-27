@@ -302,6 +302,16 @@ export const COPY = {
   savedAsPage: 'In my pages',
   saveFailed: 'That card was not saved.',
 
+  /**
+   * Doc 16 section 3.6's "Add note", in doc 16 section 7 point 1's vocabulary:
+   * the board object is a sticky, the vault object is a page.
+   */
+  addSticky: 'Keep as a sticky',
+  stickyKept: 'On the board',
+  stickyFailed: 'That sticky was not kept.',
+  /** The undo Add note has: the words were the person's and so is taking them back. */
+  removeSticky: 'Take this sticky off',
+
   // ------------------------------------------------ pages, doc 16 --
 
   /** Doc 16 section 7 point 1: the vault object is a page, the board one a sticky. */

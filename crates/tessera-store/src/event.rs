@@ -263,6 +263,10 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     "ink.erased.v1",
     "note.added.v1",
     "note.edited.v1",
+    // Doc 09 section 5 gives every verb an undo, and taking a sticky off the
+    // board is Add note's. Added to doc 01 section 6.3's vocabulary by this
+    // pass, the way doc 11 section 13 adds the names its own agents needed.
+    "note.removed.v1",
     // vault pages, doc 16 section 4. The sticky above is a board object and a
     // page is a vault object; doc 16 section 7 point 1 keeps the UI words
     // apart too, "sticky" and "page".

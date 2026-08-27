@@ -223,6 +223,7 @@ export function makeBoard(count: number, seed = 42): Board {
     mode: 'explore',
     parent_board_id: null,
     seed_label: null,
+    notes: [],
     viewport: { x: 0, y: 0, k: 1 },
     cards: cards.slice(0, count),
   };

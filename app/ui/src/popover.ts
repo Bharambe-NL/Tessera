@@ -19,6 +19,8 @@ export interface PopoverHosts {
   root: HTMLElement;
   label: HTMLElement;
   ask: HTMLButtonElement;
+  /** Doc 16 section 3.6's "Add note", offered beside the branch. */
+  note: HTMLButtonElement;
   compose: HTMLFormElement;
   question: HTMLInputElement;
   cancel: HTMLButtonElement;
@@ -31,6 +33,8 @@ export class AnchorPopover {
     private readonly hosts: PopoverHosts,
     /** Called with the anchor and the question once the user commits. */
     private readonly onBranch: (target: AnchorTarget, question: string) => void,
+    /** Called with the anchor when the user keeps the quote as a sticky. */
+    private readonly onSticky: (target: AnchorTarget) => void,
   ) {}
 
   get open(): boolean {
@@ -48,6 +52,10 @@ export class AnchorPopover {
 
     label.textContent = target.label;
     ask.textContent = target.anchorBlockRef ? COPY.investigateBlock : COPY.askAboutThis;
+    // A sticky quotes what was selected, so a block's pointer has nothing to
+    // prefill it with. Doc 16 section 3.6 offers it "from the highlight menu".
+    this.hosts.note.hidden = !target.anchorText;
+    this.hosts.note.textContent = COPY.addSticky;
     compose.hidden = true;
     question.value = '';
     root.hidden = false;
@@ -87,9 +95,15 @@ export class AnchorPopover {
 
   /** Wire the popover's own controls. Returns a teardown function. */
   attach(): () => void {
-    const { root, ask, compose, question, cancel } = this.hosts;
+    const { root, ask, note, compose, question, cancel } = this.hosts;
 
     const onAsk = () => this.compose();
+    const onSticky = () => {
+      if (!this.target) return;
+      const target = this.target;
+      this.close();
+      this.onSticky(target);
+    };
     const onCancel = () => this.close();
     const onSubmit = (e: Event) => {
       e.preventDefault();
@@ -109,12 +123,14 @@ export class AnchorPopover {
     };
 
     ask.addEventListener('click', onAsk);
+    note.addEventListener('click', onSticky);
     cancel.addEventListener('click', onCancel);
     compose.addEventListener('submit', onSubmit);
     root.addEventListener('keydown', onKey);
 
     return () => {
       ask.removeEventListener('click', onAsk);
+      note.removeEventListener('click', onSticky);
       cancel.removeEventListener('click', onCancel);
       compose.removeEventListener('submit', onSubmit);
       root.removeEventListener('keydown', onKey);

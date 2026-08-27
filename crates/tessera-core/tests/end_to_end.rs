@@ -3717,3 +3717,127 @@ fn decode(text: &str) -> Vec<u8> {
     }
     out
 }
+
+// ---------------------------------------------------------------- stickies ---
+
+#[test]
+fn a_quote_is_kept_as_a_sticky_and_taken_off_again() {
+    // Doc 16 section 3.6: "Add note" attaches a sticky to the card by a dashed
+    // edge, with the quote prefilled. Doc 01 section 4.5's table has existed
+    // since the first migration with nothing writing to it, so `note.added.v1`
+    // was in the vocabulary and had never been emitted by anything.
+    let provider = repeating_mock();
+    let mut core = core_with(Arc::clone(&provider));
+    let router = build_router();
+
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+    let card_id: String = core
+        .store
+        .conn()
+        .query_row("SELECT id FROM card WHERE board_id = ?1", [&board_id], |r| {
+            r.get(0)
+        })
+        .expect("card id");
+
+    let made = call(
+        &router,
+        &mut core,
+        "note.create",
+        json!({
+            "board_id": board_id,
+            "card_id": card_id,
+            "text": "predict how a situation will change",
+            "position": { "x": 600, "y": 120, "w": 220, "h": 140 }
+        }),
+    );
+    let note_id = made["note_id"].as_str().expect("a note id").to_string();
+
+    // The board carries it, with the card it quotes, which is what the dashed
+    // edge is drawn from.
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    let notes = board["notes"].as_array().expect("notes");
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["card_id"], card_id.as_str());
+    assert_eq!(notes[0]["text"], "predict how a situation will change");
+    assert_eq!(notes[0]["position"]["x"], 600);
+
+    // The event exists at last, and it names the card so the trail reads.
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(types.contains(&"note.added.v1".to_string()), "{types:?}");
+
+    // Doc 09 section 5: every verb has an undo, and this is Add note's.
+    call(&router, &mut core, "note.remove", json!({ "note_id": note_id }));
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert!(board["notes"].as_array().expect("notes").is_empty());
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    // The log is append only, so the removal is a fact in it rather than the
+    // absence of one.
+    assert!(types.contains(&"note.removed.v1".to_string()), "{types:?}");
+}
+
+#[test]
+fn a_sticky_with_nothing_written_on_it_is_refused() {
+    let mut core = core_with(repeating_mock());
+    let router = build_router();
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+
+    let refused = router
+        .dispatch(
+            &mut core,
+            Request::new("note.create", json!({ "board_id": board_id, "text": "   " }), 1),
+        )
+        .expect("a request gets a reply");
+    assert_eq!(
+        refused.error.expect("an error").data.expect("data")["kind"],
+        "empty_note"
+    );
+}
+
+#[test]
+fn a_sticky_outlives_the_card_it_quoted() {
+    // Doc 01 section 4.5 gives a Note a board, not a card. The words are the
+    // person's own, so removing the card they were written beside takes the
+    // attachment and leaves the sticky.
+    let provider = repeating_mock();
+    let mut core = core_with(Arc::clone(&provider));
+    let router = build_router();
+
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+    let card_id: String = core
+        .store
+        .conn()
+        .query_row("SELECT id FROM card WHERE board_id = ?1", [&board_id], |r| {
+            r.get(0)
+        })
+        .expect("card id");
+
+    call(
+        &router,
+        &mut core,
+        "note.create",
+        json!({ "board_id": board_id, "card_id": card_id, "text": "worth checking" }),
+    );
+    core.store
+        .conn()
+        .execute("DELETE FROM card WHERE id = ?1", [&card_id])
+        .expect("remove the card");
+
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    let notes = board["notes"].as_array().expect("notes");
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0]["card_id"].is_null(), "{notes:?}");
+}

@@ -68,6 +68,14 @@ body {
   stroke-dasharray: 3 4;
 }
 
+/* Doc 16 section 3.6: a sticky made from a quote is attached by a dashed edge.
+   Lighter than a branch, because a sticky is a remark rather than a question
+   the board went and answered. */
+.edge.quoted {
+  stroke: var(--line);
+  stroke-dasharray: 2 5;
+}
+
 /* ---- card ---- */
 
 .card {
@@ -471,6 +479,66 @@ table.cmp td {
 .vis .steps .clk span {
   font-size: 11px;
   opacity: 0.8;
+}
+
+/* Doc 01 section 4.5's sticky, doc 16 section 3.6's "Add note". A person's own
+   words on the board: no citation, no verdict, nothing to verify. */
+#stickies {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sticky {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: auto;
+  padding: var(--s3);
+  border-radius: var(--r-node);
+  background: var(--amber);
+  color: var(--amber-ink);
+  box-shadow: 0 2px 6px oklch(0 0 0 / 0.08);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sticky[data-colour='olive'] {
+  background: var(--olive);
+  color: var(--olive-ink);
+}
+
+.sticky[data-colour='slate'] {
+  background: var(--slate);
+  color: var(--slate-ink);
+}
+
+.sticky[data-colour='rust'] {
+  background: var(--rust);
+  color: var(--rust-ink);
+}
+
+.sticky p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.sticky .unstick {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: var(--s1);
+}
+
+.sticky .unstick:hover {
+  opacity: 1;
 }
 
 /* Doc 16 section 3.5: a small layered layout, with every edge named below it. */

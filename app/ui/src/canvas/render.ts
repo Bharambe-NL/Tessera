@@ -10,7 +10,7 @@
 
 import { COPY } from '../strings.js';
 import { CARD_W, DEFAULT_CARD_H } from './layout.js';
-import type { Card, Citation, FlagSummary } from './types.js';
+import type { Card, Citation, FlagSummary, Sticky } from './types.js';
 import { citeMarkers, esc, visualHTML } from './visual.js';
 
 /**
@@ -222,6 +222,48 @@ export interface RenderTargets {
 }
 
 /**
+ * Reconcile the sticky layer. Doc 01 section 4.5, doc 16 section 7 point 1's
+ * word for it.
+ *
+ * The same diff the cards get, for the same reason: a sticky is dragged and
+ * rewritten, and rebuilding its markup under a pan would put the 200 card gate
+ * back where it was before the prototype's render diff was ported.
+ */
+export function renderNotes(notes: Sticky[], host: HTMLElement): void {
+  const seen = new Set<string>();
+
+  for (const n of notes) {
+    const id = `note-${n.id}`;
+    seen.add(id);
+    let el = document.getElementById(id) as HTMLElement | null;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'sticky';
+      el.dataset.noteId = n.id;
+      host.appendChild(el);
+    }
+
+    const sig = JSON.stringify([n.text, n.colour, n.card_id, n.position.w, n.position.h]);
+    if (el.dataset.rendered !== sig) {
+      el.innerHTML =
+        `<p>${esc(n.text)}</p>` +
+        `<button class="unstick" data-act="unstick" data-no-pan ` +
+        `aria-label="${COPY.removeSticky}" title="${COPY.removeSticky}">✕</button>`;
+      el.dataset.rendered = sig;
+      el.dataset.colour = n.colour;
+      el.style.width = `${n.position.w}px`;
+      el.style.minHeight = `${n.position.h}px`;
+    }
+    el.style.transform = `translate3d(${n.position.x}px, ${n.position.y}px, 0)`;
+  }
+
+  for (const el of Array.from(host.children)) {
+    if (!seen.has(el.id)) el.remove();
+  }
+}
+
+/**
  * Reconcile the card layer against the board. Markup is rebuilt only for cards
  * whose signature changed; every card gets its transform written.
  */
@@ -273,10 +315,16 @@ export function measureHeights(cards: Card[]): Map<string, number> {
  * Draw parent to child edges. Follow-ups get an orthogonal drop; branches get a
  * cubic curve to the right. One path element per edge, one write per render.
  */
-export function drawEdges(cards: Card[], edges: SVGElement, heightOf: HeightLookup): void {
+export function drawEdges(
+  cards: Card[],
+  edges: SVGElement,
+  heightOf: HeightLookup,
+  notes: Sticky[] = [],
+): void {
   const byId = new Map(cards.map((c) => [c.id, c]));
   const follow: string[] = [];
   const branch: string[] = [];
+  const quoted: string[] = [];
 
   for (const c of cards) {
     if (c.parent_card_id === null) continue;
@@ -301,7 +349,22 @@ export function drawEdges(cards: Card[], edges: SVGElement, heightOf: HeightLook
     }
   }
 
+  // Doc 16 section 3.6: a sticky made from a quote is "attached by a dashed
+  // edge to the card". A sticky about nothing in particular has no card to
+  // attach to and gets no line, which is what makes the line mean something.
+  for (const n of notes) {
+    if (!n.card_id) continue;
+    const c = byId.get(n.card_id);
+    if (!c) continue;
+    const x1 = c.position.x + CARD_W;
+    const y1 = c.position.y + Math.min(heightOf(c.id) * 0.5, 180);
+    const x2 = n.position.x;
+    const y2 = n.position.y + Math.min(n.position.h, 120) / 2;
+    quoted.push(`M${x1},${y1} L${x2},${y2}`);
+  }
+
   edges.innerHTML =
     `<path class="edge follow" d="${follow.join(' ')}"/>` +
-    `<path class="edge branch" d="${branch.join(' ')}"/>`;
+    `<path class="edge branch" d="${branch.join(' ')}"/>` +
+    `<path class="edge quoted" d="${quoted.join(' ')}"/>`;
 }

@@ -303,6 +303,28 @@ export class Rpc {
   }
 
   /**
+   * Doc 16 section 3.6's "Add note": a sticky carrying the quote it was made
+   * from, and the card it was written beside.
+   */
+  createNote(
+    boardId: string,
+    text: string,
+    options: { cardId?: string; position?: { x: number; y: number; w: number; h: number } } = {},
+  ) {
+    return this.call<{ note_id: string; board_id: string }>('note.create', {
+      board_id: boardId,
+      text,
+      ...(options.cardId ? { card_id: options.cardId } : {}),
+      ...(options.position ? { position: options.position } : {}),
+    });
+  }
+
+  /** The undo Add note has. Doc 09 section 5: every verb has one. */
+  removeNote(noteId: string) {
+    return this.call<{ note_id: string }>('note.remove', { note_id: noteId });
+  }
+
+  /**
    * Doc 09 section 5's Branch verb, in its three forms. With no anchor at all
    * the card is a root; with a parent alone it is a follow-up; with a parent and
    * either anchor it is a branch. The core rejects an anchor with no parent,
