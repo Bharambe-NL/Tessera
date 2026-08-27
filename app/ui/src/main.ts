@@ -125,6 +125,19 @@ const router = new Router(
       await router.go('board');
     },
     ask: (question) => void submit(question),
+    // Doc 17 section 6's node verbs. The panel state lives here, so the Map
+    // asks for a lesson rather than starting one: a router that called
+    // `learn.start` itself would leave the shell showing a board with a session
+    // it does not know about.
+    startLesson: async (topic, check) => {
+      const { board_id } = await rpc.createBoard(topic);
+      boardId = board_id;
+      lastEventIndex = 0;
+      await reload();
+      await router.go('board');
+      await startLearning(topic);
+      if (check) await tutorTurn(() => rpc.askCheck(board_id));
+    },
     toast: (message, level) => toast(message, level),
     finishSetup: async () => {
       // A board to land on. Setup runs on a profile with none, and arriving at

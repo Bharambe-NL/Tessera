@@ -260,6 +260,37 @@ export class Rpc {
     );
   }
 
+  // --------------------------------------------------------------- map --
+  // Doc 17 section 6's Map view, over the concept rows and the edges between
+  // them. The depth and the frontier come from the core, because both are rules
+  // the product owns and a second answer drawn here would be a second product.
+
+  readMap() {
+    return this.call<MapRead>('map.read');
+  }
+
+  /** Doc 17 section 6's node panel, read when a node opens rather than always. */
+  mapConcept(conceptId: string) {
+    return this.call<{ cards: ConceptCard[]; pages: ConceptPage[] }>('map.concept', {
+      concept_id: conceptId,
+    });
+  }
+
+  /** Doc 17 section 2.1: a rating is a claim, and the learner makes it. */
+  rateConcept(conceptId: string, rating: number) {
+    return this.call<{ concept_id: string; rating: number }>('concept.rate', {
+      concept_id: conceptId,
+      rating,
+    });
+  }
+
+  /** Doc 17 section 7: agents propose an edge, the learner confirms it. */
+  confirmEdge(edgeId: string) {
+    return this.call<{ edge_id: string; confirmed: boolean }>('concept.confirm_edge', {
+      edge_id: edgeId,
+    });
+  }
+
   // ------------------------------------------------------------- pages --
   // Doc 16 section 3.7's rail item, over the five verbs the core registers.
 
@@ -509,6 +540,61 @@ export interface ConceptRow {
   definition_card_id: string | null;
   updated_at: string;
   links: number;
+}
+
+/** One concept on the map. Doc 17 sections 2.1 and 6. */
+export interface MapConcept {
+  concept_id: string;
+  term: string;
+  /** Doc 17 section 2.3's six states, or null for a concept nothing has touched. */
+  learning_state:
+    | 'unseen'
+    | 'exposed'
+    | 'rated'
+    | 'checked'
+    | 'mastered'
+    | 'decayed'
+    | null;
+  self_rating: number | null;
+  mastery: number | null;
+  difficulty_level: number | null;
+  last_evidence_at: string | null;
+  path_ids: string[];
+  linked_cards: number;
+  /** How deep in the prerequisite order, counting from zero. The core's rule. */
+  depth: number;
+}
+
+/** One prerequisite edge. Doc 17 section 2.1. */
+export interface MapEdge {
+  edge_id: string;
+  from_concept_id: string;
+  to_concept_id: string;
+  relation: string;
+  status: 'proposed' | 'confirmed' | 'rejected';
+  weight: number;
+}
+
+export interface MapRead {
+  board_id: string;
+  concepts: MapConcept[];
+  edges: MapEdge[];
+  /** Doc 17 section 3: where the learner stands, decided by the core. */
+  frontier: string[];
+  mission: { mission_id: string; statement: string; target_concept_ids: string[] } | null;
+  mastered_at: number;
+}
+
+export interface ConceptCard {
+  card_id: string;
+  board_id: string;
+  question: string;
+  board_title: string;
+}
+
+export interface ConceptPage {
+  page_id: string;
+  title: string;
 }
 
 /**

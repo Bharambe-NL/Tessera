@@ -2870,6 +2870,54 @@ pub fn read_map(store: &Store, profile_id: &str) -> Result<(Vec<Value>, Vec<Valu
     Ok((concepts, edges))
 }
 
+/// What one concept on the map is linked to. Doc 17 section 6's node panel.
+///
+/// Cards and pages, both through `concept_link`, which is where a Librarian
+/// proposal and a learner's confirmation both land. Rejected links are left
+/// out: the learner said no, and a panel that still listed them would be
+/// showing a decision it did not honour.
+pub fn concept_links(store: &Store, concept_id: &str) -> Result<(Vec<Value>, Vec<Value>)> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.board_id, c.question, b.title
+         FROM concept_link l
+         JOIN card c ON c.id = l.target_ref
+         JOIN board b ON b.id = c.board_id
+         WHERE l.concept_id = ?1 AND l.target_type = 'card' AND l.status != 'rejected'
+         ORDER BY c.created_at",
+    )?;
+    let cards = stmt
+        .query_map(params![concept_id], |r| {
+            Ok(json!({
+                "card_id": r.get::<_, String>(0)?,
+                "board_id": r.get::<_, String>(1)?,
+                "question": r.get::<_, String>(2)?,
+                "board_title": r.get::<_, String>(3)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    // Doc 16 section 3.1's wikilink to a concept, read from the other end: the
+    // pages that name this concept are the pages a learner wrote about it.
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT p.id, p.title
+         FROM page_link l
+         JOIN page p ON p.id = l.from_page_id
+         WHERE l.target_kind = 'concept' AND l.target_id = ?1
+         ORDER BY p.title",
+    )?;
+    let pages = stmt
+        .query_map(params![concept_id], |r| {
+            Ok(json!({
+                "page_id": r.get::<_, String>(0)?,
+                "title": r.get::<_, String>(1)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok((cards, pages))
+}
+
 /// A concept by term, created if this profile has none. Doc 17 section 2.1:
 /// loading a path "creates or links the concepts".
 pub fn ensure_concept(

@@ -1363,12 +1363,51 @@ pub fn build_router() -> Router<Core> {
         let (concepts, edges) = repo::read_map(&core.store, &core.profile_id).map_err(store_error)?;
         let mission = repo::active_mission(&core.store, &core.profile_id).map_err(store_error)?;
         let board_id = core.map_board().map_err(core_error)?;
+        let mastered_at = core
+            .packs
+            .get(&core.pack_code)
+            .map(|p| p.learning_templates.mastered_at)
+            .unwrap_or(0.8);
+
+        // Doc 17 section 6: the map is "layered by prerequisite depth, never
+        // hand arranged", and the frontier is a band across it. Both are rules
+        // the product already owns, so the view is told the answer rather than
+        // deriving a second one from the edges it was handed.
+        let rules = tessera_agents::learning::concepts_from(&concepts);
+        let edge_rules = tessera_agents::learning::edges_from(&edges);
+        let depths = tessera_agents::learning::depths(&rules, &edge_rules);
+        let frontier = tessera_agents::learning::frontier(&rules, &edge_rules, mastered_at);
+        let concepts: Vec<Value> = concepts
+            .into_iter()
+            .map(|mut c| {
+                let id = c["concept_id"].as_str().unwrap_or_default().to_string();
+                c["depth"] = json!(depths.get(&id).copied().unwrap_or(0));
+                c
+            })
+            .collect();
+
         Ok(json!({
             "board_id": board_id,
             "concepts": concepts,
             "edges": edges,
+            "frontier": frontier,
             "mission": mission,
+            "mastered_at": mastered_at,
         }))
+    });
+
+    // Doc 17 section 6's node panel: what this concept is linked to, read when
+    // a node is opened rather than carried on every map read. A map of two
+    // hundred concepts would otherwise ship every card on every one of them to
+    // draw twenty circles.
+    r.register("map.concept", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Which {
+            concept_id: String,
+        }
+        let p: Which = params(p)?;
+        let (cards, pages) = repo::concept_links(&core.store, &p.concept_id).map_err(store_error)?;
+        Ok(json!({ "cards": cards, "pages": pages }))
     });
 
     // Doc 17 section 2.1: loading a path creates or links the concepts, creates
