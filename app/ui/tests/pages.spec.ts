@@ -150,15 +150,29 @@ test('bulk dismiss asks twice and bulk accept does not', async ({ page }) => {
   await expect(page.locator('#rail-flags')).toBeHidden();
 });
 
-test('library shows both tabs and says what is missing', async ({ page }) => {
+test('library shows both tabs, and a concept is proposed then confirmed', async ({ page }) => {
   await askOne(page);
   await page.locator('#rail [data-view="library"]').click();
 
-  // A fast card retrieves nothing, so both tabs are honestly empty and say what
-  // would put something in them.
+  // A fast card retrieves nothing, so Sources is honestly empty and says what
+  // would put something in it.
   await expect(page.locator('.page-empty')).toContainText('No sources yet');
+
+  // Concepts is not empty, because the Router named an entity and doc 01
+  // section 4.10's write path now turns that into a proposal. Before M9 step 4
+  // this tab could never have had a row: nothing wrote a Concept.
   await page.locator('[data-library-tab="concepts"]').click();
-  await expect(page.locator('.page-empty')).toContainText('No concepts yet');
+  const row = page.locator('.lib-row[data-concept]');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('.title')).toHaveText('world model');
+  await expect(row.locator('.chip.status-proposed')).toHaveText('proposed');
+
+  // "Agents propose; the user confirms." Confirming is the user's half.
+  await row.locator('[data-concept-act="accept"]').click();
+  await expect(page.locator('.chip.status-confirmed')).toHaveText('confirmed');
+  // A confirmed concept has no decision left to make, so it offers none.
+  await expect(page.locator('[data-concept-act="accept"]')).toHaveCount(0);
+
   await page.locator('[data-library-tab="sources"]').click();
   await expect(page.locator('[data-library-tab="sources"]')).toHaveClass(/on/);
 });

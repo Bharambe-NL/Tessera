@@ -211,6 +211,16 @@ export class Router {
         return;
       }
 
+      const conceptVerb = target.closest<HTMLElement>('[data-concept-act]');
+      if (conceptVerb) {
+        const id = conceptVerb.closest<HTMLElement>('[data-concept]')?.dataset.concept;
+        const verb = conceptVerb.dataset.conceptAct;
+        if (id && (verb === 'accept' || verb === 'dismiss')) {
+          void this.decideConcept(id, verb === 'accept');
+        }
+        return;
+      }
+
       // ---- Profile
       const profTab = target.closest<HTMLElement>('[data-profile-tab]')?.dataset.profileTab;
       if (profTab) {
@@ -222,6 +232,47 @@ export class Router {
       if (keyVerb) {
         void this.setKey(keyVerb.closest<HTMLElement>('[data-key-ref]')?.dataset.keyRef ?? '');
       }
+    });
+
+    // Doc 09 section 14: flag rows navigable with arrows. Up and down move
+    // between rows; Home and End go to the ends; Space picks the row for a bulk
+    // decision without reaching for its checkbox.
+    this.hosts.page.addEventListener('keydown', (e) => {
+      const row = (e.target as HTMLElement | null)?.closest<HTMLElement>('.flag-row');
+      if (!row) return;
+
+      const rows = [...this.hosts.body.querySelectorAll<HTMLElement>('.flag-row')];
+      const at = rows.indexOf(row);
+      if (at < 0) return;
+
+      let next = at;
+      switch (e.key) {
+        case 'ArrowDown':
+          next = Math.min(at + 1, rows.length - 1);
+          break;
+        case 'ArrowUp':
+          next = Math.max(at - 1, 0);
+          break;
+        case 'Home':
+          next = 0;
+          break;
+        case 'End':
+          next = rows.length - 1;
+          break;
+        case ' ': {
+          const box = row.querySelector<HTMLInputElement>('.pick');
+          if (!box) return;
+          e.preventDefault();
+          box.checked = !box.checked;
+          box.dispatchEvent(new Event('change', { bubbles: true }));
+          return;
+        }
+        default:
+          return;
+      }
+      // Off the end, focus stays where it is rather than wrapping into nothing.
+      e.preventDefault();
+      rows[next]?.focus();
     });
 
     // Row selection, which is a change rather than a click.
@@ -299,6 +350,15 @@ export class Router {
         this.picked.clear();
         this.confirmingDismiss = false;
         await this.render();
+    }
+  }
+
+  private async decideConcept(conceptId: string, accept: boolean): Promise<void> {
+    try {
+      await this.rpc.decideConcept(conceptId, accept);
+      await this.render();
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.conceptFailed, 'error');
     }
   }
 

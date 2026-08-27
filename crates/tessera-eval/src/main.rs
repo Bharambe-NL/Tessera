@@ -1099,6 +1099,21 @@ fn routed() -> Value {
             "needs_current_information": false,
             "needs_internal_documents": true,
             "needs_structured_data": false,
+            // Empty, and stated as a limit rather than left as an oversight.
+            //
+            // The M9 Concept write path turns these into proposals, so an empty
+            // array means the grounded sweep never enters it. Naming entities is
+            // a judgment: this corpus asks "what is the model validation
+            // interval for a systemically important institution", which carries
+            // no proper noun at all, so a capitalisation pass returns "What" and
+            // a template pass returns whatever the templates were written with.
+            // Either would put a term in the Library that nothing observed, and
+            // a mock that answers plausibly is worse than one that answers
+            // nothing.
+            //
+            // So the graph is measured by the end to end tests, where the mock
+            // Router names an entity because the test wrote one, and at scale it
+            // needs a real provider. BN-067 carries it with the other four.
             "entities": [],
             "is_follow_up_of_context": false
         }
@@ -1730,3 +1745,5 @@ fn write_records(
     )?;
     Ok(())
 }
+
+

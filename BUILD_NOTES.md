@@ -825,6 +825,11 @@ schema need resolving together rather than one being bent to the other.
 **Re-visualising on a review edit** (B3). Nothing removes a block from a summary yet, so there is
 nothing to rerun on.
 
+**Entity naming, added at M9** (03 section 5). The grounded mock's Router answers `entities: []`, so
+the Concept write path built at M9 runs on every card in a sweep and proposes nothing. Naming the
+entities in a question is judgment, and this corpus carries no proper noun in any of its 400
+questions, so no heuristic can stand in for it. See BN-075.
+
 **Reason** Each is a place where the honest measurement needs a real provider. Recording them here,
 with what is already in place for each, is worth more than a half implementation that a mock would
 score as working.
@@ -1049,6 +1054,124 @@ they think happened happened, and a green tick summarising six numbers hides the
 
 **Reason** This is the surface that retires the `tessera-keys` CLI, and it is the surface where the
 standing constraint is easiest to break by accident.
+
+### BN-075 The Concept graph writes, and the Planner packet stops carrying an empty array
+
+**Spec** 01 sections 4.10 and 4.11, 04 section 4, 09 section 9.
+
+**Decision** A card that answers proposes the entities its Router named as Concepts, links each to the
+card with `mentions`, and reuses a term the profile already holds rather than duplicating it.
+
+**What this closes.** Doc 04 section 4 gives the Planner a `concepts` array. It has been `[]` on
+every run since M5, with a comment saying so, and entity resolution degraded to literals marked
+`unknown` exactly as doc 04 says it should when the graph is empty. The Router has returned entities
+since M4 and they reached the log and nothing else. Both halves existed and nothing joined them.
+
+**Reuse is the point, not an optimisation.** Doc 01 section 4.11: "two boards that both cite the same
+Concept share it, which is the mechanism behind when two boards touch PSD3 they touch the same node".
+Matching is case insensitive on the canonical spelling. An alias pass belongs with the Concept editor,
+not with a write path that runs on every card.
+
+**A failure here is not the card's failure.** The answer is written and verified before this runs, so
+a graph that missed a term is a Library with one fewer row rather than a card the reader loses. The
+Planner's read degrades the same way, to the empty array it carried before.
+
+**No `concept.rejected.v1` was invented.** The vocabulary has proposed, confirmed and linked. A
+rejection sets the link rows to `rejected`, which is the status doc 01 section 4.11 already gives
+them, and `concept.linked.v1` already said those links existed.
+
+**A correction to an earlier note.** `builds_on` on `concept_link.relation` and the `learn_session`
+table both already exist: the first landed in migration 0002 and the second in 0001. Two earlier
+readings called them missing, both because the search stopped at Rust or at the initial migration.
+
+**The grounded sweep does not exercise this, and that is recorded rather than papered over.** The
+sweep ran clean after the change, 28 of 36 with nothing below threshold, and that number means
+nothing about this path: the grounded mock's Router answers `entities: []`, so 400 cards proposed
+nothing and "unchanged" was a report about code the run never entered.
+
+The first fix attempted was a capitalisation pass over the question. It produced "What" and "How",
+because this corpus asks "what is the model validation interval for a systemically important
+institution" and carries no proper noun anywhere in its 400 questions. A template pass would have
+returned whatever the generator's templates were written with, which measures the template. Either
+would have put terms in the Library that nothing observed, and a mock that answers plausibly is worse
+than one that answers nothing.
+
+So it stays `[]` with a comment saying why. Naming entities is judgment, which is the one thing the
+grounded mock's own doc comment says it cannot measure, alongside phrasing and conflict resolution.
+The graph is measured by the end to end tests and needs a live provider at scale. It joins the five
+in BN-067.
+
+**Reason** The Library's Concepts tab reads a table nothing wrote, and a tab that can only ever be
+empty is a screen that lies about what the product does.
+
+---
+
+### BN-076 Contrast is measured from what the renderer painted, not from the palette
+
+**Spec** 09 section 14, 11 section 10.
+
+**Decision** The contrast check walks every text bearing element on screen, reads its computed colour
+and the first opaque background behind it, and computes the ratio. It runs over the board and over all
+four pages, at 4.5:1 for text and 3:1 for large.
+
+**Why not read the tokens.** The palette is OKLCH and the WCAG ratio is defined on sRGB relative
+luminance. A number computed from the tokens would be a colour space conversion this repository got
+right or wrong with nothing to check it against, and a contrast check that is itself unchecked is the
+kind of green tick this project has been burned by. `getComputedStyle` asks the renderer that will
+actually paint it.
+
+Every element passes today, so the check reports a pass it earned. It will earn a failure the first
+time a token moves.
+
+**The rest of doc 09 section 14, and what each needed.** Keyboard reach is measured by tabbing from
+the top of the document and collecting what receives focus, rather than by asserting that a button
+exists. Flag rows are their own focus stop with arrow, Home, End and Space, so a reader moves between
+rows instead of tabbing through four verbs to reach the next one. Reduced motion is checked by
+opening a context that asks for it and reading `animationName` and `transitionDuration` back.
+
+**Reason** Doc 12 phase 8's acceptance names keyboard reachability and contrast checks by name, and
+both are the kind of claim that is easy to assert and hard to earn.
+
+---
+
+### BN-077 The canvas has a document, and a third z-index collision
+
+**Spec** 11 section 10.
+
+**Decision** The board renders as a document from the same `Card[]` the canvas does, so the two
+cannot disagree. Parents before children, the anchor a branch came from stated rather than drawn, and
+the visual described by type and block labels rather than drawn at all.
+
+**One copy in the accessibility tree, not two.** The canvas is `aria-hidden` while the document is
+open and the document is hidden while the canvas is. Rendering both would put every card in the tree
+twice, which is worse for a screen reader than either alone.
+
+**The third z-index collision this milestone.** `#reading` sat at `--z-sticky` alongside the title
+bar, so it covered the control that opens it and there was no way back to the board. The rail and the
+page layer had the same collision in step 3. Three occurrences is a pattern rather than three
+mistakes: this shell has four fixed layers and one token, and the next one to be added should be
+given its own level rather than borrowing `--z-sticky` because the neighbour did.
+
+**Reason** Doc 11 section 10 asks for a list view alternative reachable from the title. A canvas is a
+spatial arrangement and a screen reader has no way to convey one.
+
+---
+
+### BN-078 IBM Plex is bundled, and the CSP needed no widening
+
+**Spec** 11 section 2, 10 section 8's no remote resource rule.
+
+**Decision** Four faces are declared in `app/ui/src/styles/fonts.css` and their files come from
+`@fontsource` in node_modules. Vite rewrites each `url()` into a fingerprinted asset served from the
+app's own origin, so `default-src 'self'` already covers them and no `font-src` was added.
+
+Four faces rather than the package's full set: Sans 400 and 600, Sans 400 latin extended for the
+European issuer names doc 02 plants in the corpus, and Mono 400 for rule ids and locators. That is 77
+KB. `font-display: swap`, so a cold start shows text in the fallback rather than showing nothing.
+
+**Reason** `index.html` has carried a comment since M2 saying the fonts arrive at M9. Until now the
+stack fell through to the system sans, so the prototype's typography was approximated rather than
+shown.
 
 ---
 

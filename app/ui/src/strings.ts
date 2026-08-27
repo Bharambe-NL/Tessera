@@ -105,6 +105,18 @@ export const COPY = {
   modeWorking: 'Working',
   modeOffline: 'Offline',
 
+  // --------------------------------- the board as a document, doc 11 section 10 --
+
+  readingOpen: 'Read as a document',
+  readingClose: 'Back to the board',
+  readingEmpty: 'This board has no cards yet.',
+  readingNoAnswer: 'This card has not answered yet.',
+  readingFollowUp: 'a follow-up',
+  readingBranchFrom: 'branched from',
+  readingBranchFromBlock: 'branched from the block at',
+  readingVisualType: 'The visual is a',
+  readingFlags: 'Flags',
+
   // ------------------------------------------------- the rail, doc 11 section 5 --
 
   railHome: 'Home',
@@ -219,4 +231,5 @@ export const COPY = {
   renameFailed: 'That board could not be renamed.',
   boardVerbFailed: 'That board could not be changed.',
   pageUnread: 'That page could not be read.',
+  conceptFailed: 'That concept could not be decided.',
 } as const;

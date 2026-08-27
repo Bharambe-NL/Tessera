@@ -19,7 +19,11 @@ import { ago, emptyState, evidenceLine, severityChip } from './shared.js';
 function row(flag: FlagRow, selected: boolean): string {
   const evidence = evidenceLine(flag.evidence);
   return (
-    `<li class="flag-row" data-flag="${esc(flag.id)}" data-rule="${esc(flag.rule_id)}">` +
+    // Doc 09 section 14: "flag rows navigable with arrows". The row itself is
+    // the stop, so a reader moves between rows and tabs into one when they mean
+    // to act on it, rather than tabbing through four verbs per row to reach the
+    // next one.
+    `<li class="flag-row" tabindex="0" data-flag="${esc(flag.id)}" data-rule="${esc(flag.rule_id)}">` +
     `<input type="checkbox" class="pick" ${selected ? 'checked' : ''} ` +
     `aria-label="${COPY.flagsSelectRow}" />` +
     `<div class="what">` +

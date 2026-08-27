@@ -121,6 +121,14 @@ export class Rpc {
     });
   }
 
+  /** Doc 01 section 4.10: agents propose, the user confirms. */
+  decideConcept(conceptId: string, accept: boolean) {
+    return this.call<{ concept_id: string; term: string }>('concept.decide', {
+      concept_id: conceptId,
+      accept,
+    });
+  }
+
   sources(limit?: number) {
     return this.call<{ sources: SourceRow[] }>('library.sources', limit === undefined ? {} : { limit });
   }
