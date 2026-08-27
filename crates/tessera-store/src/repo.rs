@@ -1007,6 +1007,31 @@ pub fn ensure_pack(store: &Store, pack: &Value) -> Result<String> {
     Ok(id)
 }
 
+/// Give a board a name the user chose.
+///
+/// `named_by_user` is what stops the next question overwriting it: doc 01
+/// section 4.1 lets the first question title an unnamed board, and once a person
+/// has typed a title that inference has to stop.
+pub fn rename_board(store: &mut Store, board_id: &str, title: &str) -> Result<()> {
+    let (id, name, now) = (board_id.to_string(), title.to_string(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "board.renamed.v1",
+            json!({ "board_id": board_id, "title": title }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "UPDATE board SET title = ?1, named_by_user = 1, updated_at = ?2 WHERE id = ?3",
+                params![name, now, id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
 /// Bump a board's last activity, which is what the Home grid sorts on.
 pub fn touch_board(store: &Store, board_id: &str) -> Result<()> {
     store.conn().execute(

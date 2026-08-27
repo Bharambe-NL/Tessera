@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tessera_core::Core;
+use tessera_core::{Anchor, Core};
 use tessera_providers::{
     AnthropicProvider, KeyStore, MockProvider, MockResponse, ModelPolicy, ModelProvider,
     OpenAiCompatProvider, OsKeychain, endpoint_for,
@@ -532,7 +532,7 @@ fn run_one(
         &board_id,
         &q.text,
         Some(&q.depth_expected),
-        parent.map(|p| p.card_id.as_str()),
+        parent.map_or_else(Anchor::default, |p| Anchor::on(&p.card_id)),
     );
 
     let plan: Option<Value> = core
@@ -892,7 +892,7 @@ fn follow_up_on_stale(
         record.provider = "mock".to_string();
         record.leg = "verify".to_string();
 
-        match core.ask_on(&board_id, FOLLOW_UP, Some("deep"), Some(&card_id)) {
+        match core.ask_on(&board_id, FOLLOW_UP, Some("deep"), Anchor::on(&card_id)) {
             Ok(outcome) => {
                 record.ok = true;
                 record.card_id = Some(outcome.card_id);

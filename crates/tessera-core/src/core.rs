@@ -20,6 +20,46 @@ use crate::rpc::{Router, RpcError, params};
 /// fails before any retrieval rather than discovering a missing key halfway.
 const CARD_STAGES: &[&str] = &["route", "plan", "retrieve", "synthesize", "visualize", "verify"];
 
+/// Where a new card hangs from. Doc 01 section 4.4.
+///
+/// A struct rather than three parameters because the three are one decision:
+/// they select the card's kind between them, and passing them separately let
+/// `ask_on` be called with an anchor and no parent, which names a span on no
+/// card.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Anchor<'a> {
+    pub parent_card_id: Option<&'a str>,
+    /// The highlighted span, for doc 09's highlight to branch verb.
+    pub anchor_text: Option<&'a str>,
+    /// A JSON pointer into the parent visual's payload, for block investigate.
+    pub anchor_block_ref: Option<&'a str>,
+}
+
+impl<'a> Anchor<'a> {
+    /// A plain follow-up: the parent's chain is the context, nothing is anchored.
+    pub fn on(parent_card_id: &'a str) -> Self {
+        Self {
+            parent_card_id: Some(parent_card_id),
+            ..Self::default()
+        }
+    }
+
+    fn anchored(&self) -> bool {
+        self.anchor_text.is_some() || self.anchor_block_ref.is_some()
+    }
+
+    /// Doc 01 section 4.4's card kinds, as the anchor decides them.
+    fn kind(&self) -> &'static str {
+        match (self.parent_card_id.is_some(), self.anchored()) {
+            (true, true) => "branch",
+            (true, false) => "follow",
+            // An anchor without a parent names a span on no card, which the RPC
+            // boundary rejects before this is reached.
+            (false, _) => "root",
+        }
+    }
+}
+
 pub struct Core {
     pub store: Store,
     pub registry: Registry,
@@ -205,15 +245,9 @@ impl Core {
         question: &str,
         depth_override: Option<&str>,
     ) -> Result<pipeline::CardOutcome, CoreError> {
-        self.ask_on(board_id, question, depth_override, None)
+        self.ask_on(board_id, question, depth_override, Anchor::default())
     }
 
-    /// Ask a follow-up on an existing card.
-    ///
-    /// Doc 01 section 4.4's `parent_card_id` is what makes "which article says
-    /// so?" answerable: on its own it names no subject, and the pipeline reads
-    /// the parent's question and answer back out of this chain. Asked without a
-    /// parent, such a question retrieves nothing, correctly and uselessly.
     /// Re-verify a card already on a board, against the corpus as it stands now.
     ///
     /// Doc 07 section B3 batches these when a source goes stale. Nothing is
@@ -254,12 +288,23 @@ impl Core {
         }
     }
 
+    /// Ask a follow-up on an existing card.
+    ///
+    /// Doc 01 section 4.4's `parent_card_id` is what makes "which article says
+    /// so?" answerable: on its own it names no subject, and the pipeline reads
+    /// the parent's question and answer back out of this chain. Asked without a
+    /// parent, such a question retrieves nothing, correctly and uselessly.
+    ///
+    /// The anchor is what separates doc 09's two branch verbs from a plain
+    /// follow-up. A highlight carries the selected span, a block investigation
+    /// carries the JSON pointer into the visual's payload, and either one makes
+    /// the card a `branch` rather than a `follow`.
     pub fn ask_on(
         &mut self,
         board_id: &str,
         question: &str,
         depth_override: Option<&str>,
-        parent_card_id: Option<&str>,
+        anchor: Anchor<'_>,
     ) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
         let board_depth: String = self
@@ -276,15 +321,15 @@ impl Core {
             &mut self.store,
             repo::NewCard {
                 board_id,
-                parent_card_id,
-                // Doc 01 section 4.4's card kinds. A card with a parent is a
-                // follow; the schema's `branch` and `read_follow` need an
-                // anchor, which arrives with the UI's highlight verb at M9.
-                kind: if parent_card_id.is_some() { "follow" } else { "root" },
+                parent_card_id: anchor.parent_card_id,
+                // Doc 01 section 4.4's card kinds. A card with a parent and an
+                // anchor is a branch, one with a parent alone is a follow, and
+                // one with neither is a root.
+                kind: anchor.kind(),
                 question,
                 depth: depth_override.unwrap_or(&board_depth),
-                anchor_text: None,
-                anchor_block_ref: None,
+                anchor_text: anchor.anchor_text,
+                anchor_block_ref: anchor.anchor_block_ref,
                 audience_id: None,
             },
         )?;
@@ -360,6 +405,20 @@ struct Ask {
     question: String,
     #[serde(default)]
     depth: Option<String>,
+    /// Doc 09 section 5's Branch verb, in its three forms: absent for a root
+    /// card, present alone for a follow-up, present with an anchor for a branch.
+    #[serde(default)]
+    parent_card_id: Option<String>,
+    #[serde(default)]
+    anchor_text: Option<String>,
+    #[serde(default)]
+    anchor_block_ref: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CardRef {
+    board_id: String,
+    card_id: String,
 }
 
 /// Register every method the shell may call. Doc 10 section 2's boundary.
@@ -393,6 +452,26 @@ pub fn build_router() -> Router<Core> {
         }
     });
 
+    // Doc 09 section 5's Edit verb on a board. Renaming is what turns off the
+    // inference that titles an unnamed board from its first question.
+    r.register("board.rename", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Rename {
+            board_id: String,
+            title: String,
+        }
+        let p: Rename = params(p)?;
+        let title = p.title.trim();
+        if title.is_empty() {
+            return Err(RpcError::core(
+                "empty_title",
+                "Type a title, or leave the one the first question gave it.",
+            ));
+        }
+        repo::rename_board(&mut core.store, &p.board_id, title).map_err(store_error)?;
+        Ok(json!({ "board_id": p.board_id, "title": title }))
+    });
+
     // Doc 09 section 12: board history, rendered from events.
     r.register("board.history", |core: &mut Core, p| {
         let p: BoardRef = params(p)?;
@@ -405,8 +484,39 @@ pub fn build_router() -> Router<Core> {
         if p.question.trim().is_empty() {
             return Err(RpcError::core("empty_question", "Type a question first."));
         }
+        let anchor = Anchor {
+            parent_card_id: p.parent_card_id.as_deref(),
+            anchor_text: p.anchor_text.as_deref(),
+            anchor_block_ref: p.anchor_block_ref.as_deref(),
+        };
+        // An anchor names a span on a card, so without the card it names
+        // nothing. Refuse here rather than storing a root card carrying a
+        // pointer into a visual it has no parent to read.
+        if anchor.parent_card_id.is_none() && anchor.anchored() {
+            return Err(RpcError::core(
+                "anchor_without_parent",
+                "Branching from a highlight needs the card it was highlighted on.",
+            ));
+        }
         let outcome = core
-            .ask(&p.board_id, p.question.trim(), p.depth.as_deref())
+            .ask_on(&p.board_id, p.question.trim(), p.depth.as_deref(), anchor)
+            .map_err(core_error)?;
+        Ok(json!({
+            "card_id": outcome.card_id,
+            "run_id": outcome.run_id,
+            "status": outcome.status,
+            "confidence": outcome.confidence,
+            "flags": outcome.flags
+        }))
+    });
+
+    // Doc 09 section 5's Rerun verb on a card. Nothing is retrieved and no
+    // answer is rewritten: the card is checked again against the corpus as it
+    // stands, which is what a stale flag asks the reader to do.
+    r.register("card.verify", |core: &mut Core, p| {
+        let p: CardRef = params(p)?;
+        let outcome = core
+            .verify_card(&p.board_id, &p.card_id)
             .map_err(core_error)?;
         Ok(json!({
             "card_id": outcome.card_id,

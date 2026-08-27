@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use tessera_core::{Core, build_router, rpc::Request};
+use tessera_core::{Anchor, Core, build_router, rpc::Request};
 use tessera_providers::{MockProvider, MockResponse};
 
 fn router_output(run_id_free: bool) -> Value {
@@ -384,6 +384,203 @@ fn the_shell_can_drive_a_whole_board_through_the_rpc_surface() {
         !kinds.contains(&"model_call"),
         "the log's detail stays in the log"
     );
+}
+
+#[test]
+fn naming_a_board_stops_the_next_question_renaming_it() {
+    // Doc 01 section 4.1's `named_by_user`. The first question titles an unnamed
+    // board, which is right until someone has typed a title, and then it is a
+    // silent overwrite of the only thing on the board they chose themselves.
+    let router = build_router();
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Untitled board", "fast").expect("board");
+
+    call(
+        &router,
+        &mut core,
+        "board.rename",
+        json!({ "board_id": board_id, "title": "  Capital rules  " }),
+    );
+
+    call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what are world models?" }),
+    );
+
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert_eq!(board["title"], "Capital rules", "the title is trimmed and kept");
+    assert_eq!(board["named_by_user"], true);
+
+    // Every verb emits a user event, which is what puts the rename in history.
+    let history = call(
+        &router,
+        &mut core,
+        "board.history",
+        json!({ "board_id": board_id }),
+    );
+    let renamed = history["events"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .find(|e| e["type"] == "board.renamed.v1")
+        .expect("the rename is in board history");
+    assert_eq!(renamed["actor_type"], "user");
+
+    let response = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "board.rename",
+                json!({ "board_id": board_id, "title": "   " }),
+                1,
+            ),
+        )
+        .expect("reply");
+    assert_eq!(
+        response.error.expect("an error").data.expect("data")["kind"],
+        "empty_title"
+    );
+}
+
+#[test]
+fn the_shell_can_branch_from_a_highlight_and_from_a_block() {
+    // Doc 09 section 5's Branch verb. Until M9 the RPC could not express it:
+    // `card.ask` dropped the parent on the floor and `Core::ask_on` had no way
+    // to carry an anchor, so the highlight and block popovers had nothing to
+    // call. These are the two shapes the popovers send.
+    let router = build_router();
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+
+    let parent = call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what is the capital conservation buffer?", "depth": "deep" }),
+    );
+    let parent_id = parent["card_id"].as_str().expect("card id").to_string();
+
+    call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({
+            "board_id": board_id,
+            "question": "what does this span mean?",
+            "depth": "deep",
+            "parent_card_id": parent_id,
+            "anchor_text": "the capital conservation buffer",
+        }),
+    );
+    call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({
+            "board_id": board_id,
+            "question": "investigate this row",
+            "depth": "deep",
+            "parent_card_id": parent_id,
+            "anchor_block_ref": "/rows/0",
+        }),
+    );
+    // A parent with no anchor stays a plain follow-up.
+    call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({
+            "board_id": board_id,
+            "question": "which article says so?",
+            "depth": "deep",
+            "parent_card_id": parent_id,
+        }),
+    );
+
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    let cards = board["cards"].as_array().expect("cards");
+    let kinds: Vec<&str> = cards.iter().filter_map(|c| c["kind"].as_str()).collect();
+    assert_eq!(kinds.iter().filter(|k| **k == "branch").count(), 2, "{kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| **k == "follow").count(), 1, "{kinds:?}");
+
+    // The anchor is stored, because it is what the branch card's header shows
+    // and what the Router reads back as the subject.
+    let anchored: Vec<&str> = cards
+        .iter()
+        .filter_map(|c| c["anchor_text"].as_str())
+        .collect();
+    assert_eq!(anchored, vec!["the capital conservation buffer"]);
+    let blocks: Vec<&str> = cards
+        .iter()
+        .filter_map(|c| c["anchor_block_ref"].as_str())
+        .collect();
+    assert_eq!(blocks, vec!["/rows/0"]);
+}
+
+#[test]
+fn an_anchor_without_a_parent_is_refused_rather_than_stored() {
+    // An anchor names a span on a card. Without the card it names nothing, and
+    // a root card carrying a pointer into a visual it cannot read is worse than
+    // a refusal, because nothing downstream would report it.
+    let router = build_router();
+    let mut core = core_with(mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+
+    let response = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "card.ask",
+                json!({
+                    "board_id": board_id,
+                    "question": "what does this mean?",
+                    "anchor_text": "a span with no card",
+                }),
+                1,
+            ),
+        )
+        .expect("reply");
+    let error = response.error.expect("an error");
+    assert_eq!(error.data.expect("data")["kind"], "anchor_without_parent");
+}
+
+#[test]
+fn the_shell_can_rerun_a_card_through_the_rpc_surface() {
+    // Doc 09 section 5's Rerun verb. `Core::verify_card` was built in M6 for the
+    // stale source path and had no door on it until now.
+    let router = build_router();
+    let mut core = core_with(mock());
+    core.use_pack("finance-eu-synthetic").expect("pack");
+    let board_id = core.create_board("Board", "deep").expect("board");
+
+    let asked = call(
+        &router,
+        &mut core,
+        "card.ask",
+        json!({ "board_id": board_id, "question": "what is the capital conservation buffer?", "depth": "deep" }),
+    );
+    let card_id = asked["card_id"].as_str().expect("card id").to_string();
+
+    let reverified = call(
+        &router,
+        &mut core,
+        "card.verify",
+        json!({ "board_id": board_id, "card_id": card_id }),
+    );
+    assert_eq!(
+        reverified["card_id"].as_str(),
+        Some(card_id.as_str()),
+        "a rerun checks the card again rather than writing a new one"
+    );
+    assert!(reverified["run_id"].as_str().is_some());
+
+    // Nothing was retrieved and no answer was rewritten, so the board still
+    // holds one card.
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    assert_eq!(board["cards"].as_array().map(Vec::len), Some(1));
 }
 
 #[test]
@@ -855,8 +1052,13 @@ fn a_follow_up_carries_its_parent_into_the_router_packet() {
         .ask(&board_id, "what are world models?", Some("deep"))
         .expect("parent runs");
 
-    core.ask_on(&board_id, "which article says so?", Some("deep"), Some(&parent.card_id))
-        .expect("follow up runs");
+    core.ask_on(
+        &board_id,
+        "which article says so?",
+        Some("deep"),
+        Anchor::on(&parent.card_id),
+    )
+    .expect("follow up runs");
 
     let packet = packet_for(&core, &board_id, "router");
     assert_eq!(packet["request"]["kind"], "follow", "a follow-up was routed as a root");
@@ -880,7 +1082,12 @@ fn a_follow_up_carries_its_ancestors_into_the_planner_packet() {
         .ask(&board_id, "what are world models?", Some("research"))
         .expect("parent runs");
 
-    core.ask_on(&board_id, "which article says so?", Some("research"), Some(&parent.card_id))
+    core.ask_on(
+        &board_id,
+        "which article says so?",
+        Some("research"),
+        Anchor::on(&parent.card_id),
+    )
         .expect("follow up runs");
 
     let packet = packet_for(&core, &board_id, "planner");
@@ -923,7 +1130,12 @@ fn the_ancestor_chain_stops_at_three() {
         .card_id;
     for i in 0..4 {
         previous = core
-            .ask_on(&board_id, &format!("and what about {i}?"), Some("research"), Some(&previous))
+            .ask_on(
+                &board_id,
+                &format!("and what about {i}?"),
+                Some("research"),
+                Anchor::on(&previous),
+            )
             .expect("follow up")
             .card_id;
     }
