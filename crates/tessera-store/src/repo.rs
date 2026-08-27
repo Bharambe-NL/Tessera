@@ -2577,6 +2577,260 @@ pub fn read_notes(store: &Store, board_id: &str) -> Result<Vec<NoteView>> {
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
+// --------------------------------------------------------------- learning ---
+//
+// Doc 17 sections 2.1 and 2.2. Rows here are content: a prerequisite somebody
+// drew and a reason somebody wrote. What the log decides about them is their
+// status, which is why these writers carry an event and the projection is what
+// moves it.
+
+/// One prerequisite edge as it is drawn. Doc 17 section 2.1.
+pub struct NewEdge<'a> {
+    pub from_concept_id: &'a str,
+    pub to_concept_id: &'a str,
+    /// `prerequisite_of`, `part_of` or `contrasts_with`.
+    pub relation: &'a str,
+    pub proposed_by: &'a str,
+    /// `proposed` for an agent's guess, `confirmed` for a shipped path or a
+    /// person's own. Doc 01 section 4.10.
+    pub status: &'a str,
+    pub weight: f64,
+}
+
+/// Draw an edge, or return the one already there.
+///
+/// The pair plus the relation is unique, so proposing the same prerequisite
+/// twice proposes it once, and a path loaded twice does not double its map.
+pub fn propose_edge(store: &mut Store, e: NewEdge<'_>) -> Result<String> {
+    if let Some(existing) = store
+        .conn()
+        .query_row(
+            "SELECT id FROM concept_edge
+             WHERE from_concept_id = ?1 AND to_concept_id = ?2 AND relation = ?3",
+            params![e.from_concept_id, e.to_concept_id, e.relation],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return Ok(existing);
+    }
+
+    let id = new_id();
+    let now = now_iso8601();
+    let (row, from, to, relation, by, status, weight, at) = (
+        id.clone(),
+        e.from_concept_id.to_string(),
+        e.to_concept_id.to_string(),
+        e.relation.to_string(),
+        e.proposed_by.to_string(),
+        e.status.to_string(),
+        e.weight,
+        now,
+    );
+
+    store.append_with(
+        NewEvent::new(
+            "concept.edge_proposed.v1",
+            json!({
+                "edge_id": id,
+                "from_concept_id": e.from_concept_id,
+                "to_concept_id": e.to_concept_id,
+                "relation": e.relation,
+                // The status the edge was created with rides on the event, so a
+                // replay does not demote a path's own edges to proposals.
+                "status": e.status,
+                "proposed_by": e.proposed_by,
+            }),
+            Provenance::user(),
+        ),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO concept_edge (id, from_concept_id, to_concept_id, relation,
+                     proposed_by, status, weight, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                params![row, from, to, relation, by, status, weight, at],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(id)
+}
+
+/// Doc 01 section 4.10: the person confirms.
+pub fn confirm_edge(store: &mut Store, edge_id: &str) -> Result<()> {
+    store.append(NewEvent::new(
+        "concept.edge_confirmed.v1",
+        json!({ "edge_id": edge_id }),
+        Provenance::user(),
+    ))?;
+    Ok(())
+}
+
+/// Doc 17 section 2.1: a rating is a claim, never evidence. The row moves
+/// through the projection, so the claim is on the log before it is on the map.
+pub fn rate_concept(store: &mut Store, concept_id: &str, rating: i64) -> Result<()> {
+    store.append(NewEvent::new(
+        "concept.rated.v1",
+        json!({ "concept_id": concept_id, "rating": rating.clamp(0, 3) }),
+        Provenance::user(),
+    ))?;
+    Ok(())
+}
+
+/// Doc 17 section 2.1's Mission: why the learner wants this.
+pub fn create_mission(
+    store: &mut Store,
+    profile_id: &str,
+    statement: &str,
+    target_concept_ids: &[String],
+) -> Result<String> {
+    let id = new_id();
+    let now = now_iso8601();
+    let (row, profile, text, targets, at) = (
+        id.clone(),
+        profile_id.to_string(),
+        statement.trim().to_string(),
+        serde_json::to_string(target_concept_ids)?,
+        now,
+    );
+
+    store.append_with(
+        NewEvent::new(
+            "mission.created.v1",
+            json!({
+                "mission_id": id,
+                "statement": statement.trim(),
+                "target_concept_ids": target_concept_ids,
+            }),
+            Provenance::user(),
+        ),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO mission (id, profile_id, statement, target_concept_ids,
+                     status, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?5)",
+                params![row, profile, text, targets, at],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(id)
+}
+
+/// The mission a lesson is planned against, or none. Doc 17 section 2.1: "every
+/// lesson is planned against an active mission so difficulty and examples fit
+/// the reason". None is not an error: a learner who has not said why is planned
+/// for by the map alone.
+pub fn active_mission(store: &Store, profile_id: &str) -> Result<Value> {
+    Ok(store
+        .conn()
+        .query_row(
+            "SELECT id, statement, target_concept_ids, audience_id FROM mission
+             WHERE profile_id = ?1 AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+            params![profile_id],
+            |r| {
+                Ok(json!({
+                    "mission_id": r.get::<_, String>(0)?,
+                    "statement": r.get::<_, String>(1)?,
+                    "target_concept_ids": serde_json::from_str::<Value>(&r.get::<_, String>(2)?)
+                        .unwrap_or_else(|_| json!([])),
+                    "audience_id": r.get::<_, Option<String>>(3)?,
+                }))
+            },
+        )
+        .optional()?
+        .unwrap_or(Value::Null))
+}
+
+/// The map as the Learning Planner and the Map view read it. Doc 17 section 6.
+pub fn read_map(store: &Store, profile_id: &str) -> Result<(Vec<Value>, Vec<Value>)> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.term, c.learning_state, c.self_rating, c.mastery, c.difficulty_level,
+                c.last_evidence_at, c.path_ids,
+                (SELECT COUNT(*) FROM concept_link l
+                 WHERE l.concept_id = c.id AND l.target_type = 'card') AS linked
+         FROM concept c WHERE c.profile_id = ?1 ORDER BY c.term",
+    )?;
+    let concepts = stmt
+        .query_map(params![profile_id], |r| {
+            Ok(json!({
+                "concept_id": r.get::<_, String>(0)?,
+                "term": r.get::<_, String>(1)?,
+                "learning_state": r.get::<_, Option<String>>(2)?,
+                "self_rating": r.get::<_, Option<i64>>(3)?,
+                "mastery": r.get::<_, Option<f64>>(4)?,
+                "difficulty_level": r.get::<_, Option<i64>>(5)?,
+                "last_evidence_at": r.get::<_, Option<String>>(6)?,
+                "path_ids": r.get::<_, Option<String>>(7)?
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                    .unwrap_or_else(|| json!([])),
+                "linked_cards": r.get::<_, i64>(8)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.from_concept_id, e.to_concept_id, e.relation, e.status, e.weight
+         FROM concept_edge e
+         JOIN concept c ON c.id = e.from_concept_id
+         WHERE c.profile_id = ?1 ORDER BY e.created_at, e.id",
+    )?;
+    let edges = stmt
+        .query_map(params![profile_id], |r| {
+            Ok(json!({
+                "edge_id": r.get::<_, String>(0)?,
+                "from_concept_id": r.get::<_, String>(1)?,
+                "to_concept_id": r.get::<_, String>(2)?,
+                "relation": r.get::<_, String>(3)?,
+                "status": r.get::<_, String>(4)?,
+                "weight": r.get::<_, f64>(5)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok((concepts, edges))
+}
+
+/// A concept by term, created if this profile has none. Doc 17 section 2.1:
+/// loading a path "creates or links the concepts".
+pub fn ensure_concept(
+    store: &mut Store,
+    profile_id: &str,
+    doctrine_pack_id: &str,
+    term: &str,
+) -> Result<String> {
+    if let Some(existing) = concept_by_term_or_alias(store, profile_id, term)? {
+        return Ok(existing);
+    }
+    let id = new_id();
+    let now = now_iso8601();
+    let (row, profile, text, pack, at) = (
+        id.clone(),
+        profile_id.to_string(),
+        term.trim().to_string(),
+        doctrine_pack_id.to_string(),
+        now,
+    );
+    store.append_with(
+        NewEvent::new(
+            "concept.proposed.v1",
+            json!({ "concept_id": id, "term": term.trim(), "proposed_by": "path" }),
+            Provenance::user(),
+        ),
+        move |tx| {
+            tx.execute(
+                "INSERT INTO concept (id, profile_id, term, doctrine_pack_id, status,
+                     created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'confirmed', ?5, ?5)",
+                params![row, profile, text, pack, at],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(id)
+}
+
 // ------------------------------------------------------------------ vault ---
 
 /// A page as it is written. Doc 16 section 3.1.

@@ -3381,6 +3381,38 @@ and the bundle round trip whole.
 
 ---
 
+### BN-134 The map gets a write path, and a path's edges arrive already agreed
+
+**Spec** 17 sections 2.1, 3, 6 and 7.
+
+**Built** 2026-08-27, M16 13-eval leg A, second half.
+
+**A board, because doc 17 says so and because it is cheaper.** The Map is a board of mode `map`,
+one per profile, created the first time anything asks for it. Viewport, events and export come free,
+and the Planner has somewhere to record `frontier.computed.v1`: a run needs a board and the Planner
+is asked about a profile, so without this it would have had nowhere to run.
+
+**The one place an edge starts confirmed.** Doc 01 section 4.10 has an agent propose and a person
+confirm, and every edge the Learning Planner draws is a proposal. A path is different: it is
+doctrine somebody wrote down, so its edges arrive confirmed and asking the learner to agree to them
+would be asking them to check the pack author's work. Loading the same path twice does not double
+the map, because the pair plus the relation is unique in the table rather than in the loader.
+
+**A mission is offered, not started.** Doc 17 section 2.1 says a path "offers a mission", and the
+statement it ships is a template. A mission created without the learner saying why would plan every
+lesson against a reason nobody has, which is the difference doc 17 draws between this and a course.
+
+**What the placement test asserts.** A three concept path, a learner who claims the top and the
+bottom of it and has been checked on neither, and the Planner puts them at the bottom: the ratio
+sits on the assets, so the assets come first. The lesson opens at recall, nothing was invented, and
+the concept the learner rated 3 sits at exactly 0.5 with a state of `rated`, which is doc 17 section
+2.4's honesty rule where a reader can see it.
+
+**Verified** Full battery green, 64 end to end tests, the workspace tests, clippy at `-D warnings`,
+65 Playwright tests and the bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings

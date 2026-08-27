@@ -3900,3 +3900,141 @@ fn a_sticky_outlives_the_card_it_quoted() {
     assert_eq!(notes.len(), 1);
     assert!(notes[0]["card_id"].is_null(), "{notes:?}");
 }
+
+// ---------------------------------------------------------------- learning ---
+
+#[test]
+fn a_path_becomes_a_map_and_the_planner_places_the_learner_on_it() {
+    // Doc 17 sections 2.1, 3 and 7, through the RPC surface a shell would use.
+    let mut core = core_with(repeating_mock());
+    let router = build_router();
+
+    let loaded = call(
+        &router,
+        &mut core,
+        "path.load",
+        json!({
+            "path": {
+                "code": "liquidity",
+                "title": "Liquidity from the ground up",
+                "mission_template": "I sign off liquidity policies.",
+                "concepts": [
+                    { "concept_term": "high quality liquid assets" },
+                    { "concept_term": "net outflows", "prerequisite_terms": ["high quality liquid assets"] },
+                    { "concept_term": "liquidity coverage ratio",
+                      "prerequisite_terms": ["high quality liquid assets", "net outflows"] }
+                ]
+            }
+        }),
+    );
+    assert_eq!(loaded["concepts"], 3);
+    assert_eq!(loaded["edges"], 3);
+    assert_eq!(loaded["mission_offered"], "I sign off liquidity policies.");
+
+    // Doc 17 section 2.1: a path's edges arrive confirmed. Nobody has to check
+    // the pack author's work.
+    let map = call(&router, &mut core, "map.read", json!({}));
+    let edges = map["edges"].as_array().expect("edges");
+    assert_eq!(edges.len(), 3);
+    assert!(edges.iter().all(|e| e["status"] == "confirmed"));
+
+    // Loading it twice does not double the map.
+    call(
+        &router,
+        &mut core,
+        "path.load",
+        json!({ "path": {
+            "code": "liquidity", "title": "Liquidity from the ground up",
+            "concepts": [
+                { "concept_term": "high quality liquid assets" },
+                { "concept_term": "net outflows", "prerequisite_terms": ["high quality liquid assets"] }
+            ]
+        }}),
+    );
+    let map = call(&router, &mut core, "map.read", json!({}));
+    assert_eq!(map["concepts"].as_array().expect("concepts").len(), 3);
+    assert_eq!(map["edges"].as_array().expect("edges").len(), 3);
+
+    // The learner says they can explain the top of the path and nothing else,
+    // which is doc 17 section 3's overconfident case in miniature.
+    let ids: std::collections::BTreeMap<String, String> = map["concepts"]
+        .as_array()
+        .expect("concepts")
+        .iter()
+        .map(|c| {
+            (
+                c["term"].as_str().unwrap_or_default().to_string(),
+                c["concept_id"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    for term in ["high quality liquid assets", "liquidity coverage ratio"] {
+        call(
+            &router,
+            &mut core,
+            "concept.rate",
+            json!({ "concept_id": ids[term], "rating": 3 }),
+        );
+    }
+
+    let plan = call(
+        &router,
+        &mut core,
+        "learning.plan",
+        json!({ "reason": "path_loaded" }),
+    );
+    // Doc 17 section 3: the lowest thing they claim, not the one they named
+    // last. The ratio sits on top of the assets, so the assets come first.
+    assert_eq!(
+        plan["frontier"],
+        json!([ids["high quality liquid assets"]]),
+        "the Planner placed the learner above what they have not been checked on"
+    );
+    assert_eq!(plan["lesson"]["level"], 1, "a first lesson opens at recall");
+    assert_eq!(plan["proposed_concepts"], json!([]), "nothing was invented");
+
+    // Doc 17 section 9: the frontier is on the map board's log.
+    let board_id = map["board_id"].as_str().expect("board").to_string();
+    let types: Vec<String> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .map(|e| e.event_type)
+        .collect();
+    assert!(types.contains(&"frontier.computed.v1".to_string()), "{types:?}");
+
+    // And a rating is a claim: doc 17 section 2.4 caps what one can do to the
+    // score, so the concept is rated and not checked.
+    let (state, mastery): (Option<String>, Option<f64>) = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT learning_state, mastery FROM concept WHERE id = ?1",
+            rusqlite::params![ids["liquidity coverage ratio"]],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("concept");
+    assert_eq!(state.as_deref(), Some("rated"));
+    assert_eq!(mastery, Some(0.5));
+}
+
+#[test]
+fn a_rating_outside_the_four_the_map_offers_is_refused() {
+    let mut core = core_with(repeating_mock());
+    let router = build_router();
+    let refused = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "concept.rate",
+                json!({ "concept_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "rating": 7 }),
+                1,
+            ),
+        )
+        .expect("a request gets a reply");
+    assert_eq!(
+        refused.error.expect("an error").data.expect("data")["kind"],
+        "rating_out_of_range"
+    );
+}
