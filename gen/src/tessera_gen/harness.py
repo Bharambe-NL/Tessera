@@ -54,6 +54,16 @@ THRESHOLDS: dict[str, float] = {
     # that being a strategy.
     "fact_precision": 0.90,
     "reader_structure_recovery_f1": 0.80,
+    # Doc 08 section 12 and doc 12 phase 9 both say "exercise traceability
+    # 1.00". It computed with no entry here from the day it was written, so the
+    # day `exercise_enabled` flipped it would have produced a number with no
+    # gate behind it. Every item that ships has to trace to a card, because an
+    # item that does not is a question with no right answer.
+    "exercise_traceability": 1.00,
+    # Doc 08 section 12's second gate: "distractor truth leakage 0". A
+    # distractor that is a true statement from another card in scope is a
+    # second right answer, and a reader who knows the material has to guess.
+    "exercise_distractor_leakage": 0.0,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
     # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
     # taxonomy that fed it. stakes_accuracy replaces it as the classification
@@ -77,6 +87,7 @@ LOWER_IS_BETTER = {
     "forbidden_fact_rate",
     "flag_false_positive_rate",
     "own_card_sole_support_rate",
+    "exercise_distractor_leakage",
 }
 
 #: Metrics whose subject is a model's judgment, and which therefore describe
@@ -115,12 +126,33 @@ MOCKED: dict[str, str] = {
 #: unverified by design.
 NO_THRESHOLD = {
     "fact_recall_fast",
-    "reader_structure_recovery_mess_f1",
     # Doc 15 section 5: "answer length reduction when prior context exists
     # (should shorten, reported)". Reported, because a shorter answer is the
     # expectation and not a promise: a question that genuinely needs more said
     # should say more, and a threshold here would reward terseness over sense.
     "answer_length_with_prior_context",
+}
+
+#: Numbers that describe a run rather than judging it.
+#:
+#: This set exists so the classification is total: every metric is gated
+#: (`THRESHOLDS`), deliberately ungated (`NO_THRESHOLD`), or a readout (here),
+#: and a guard test in `gen/tests/test_corpus.py` fails on any metric in none of
+#: the three. Without it a metric could be added with no gate and nothing would
+#: say so, which is what happened to `exercise_traceability`: doc 08 section 12
+#: sets it at 1.00, it computed from the day it was written, and it had no entry
+#: in `THRESHOLDS` for four milestones.
+READOUTS: dict[str, str] = {
+    "cards_produced": "how many questions became cards, which the failure count already gates",
+    "tokens_per_question": "cost, reported so a policy change is visible",
+    "latency_p95_ms": "doc 02 section 10.3 reports latency and sets no target",
+    "planner_latency_p95_ms": "doc 04 section 12 names a target in prose; the gate is the run's own",
+    "planner_tokens_mean": "as above",
+    "flag_recall": "the denominator is the corpus's planted flags, not a promise about a rule",
+    "domain_label_precision": "BN-036 retired the domain gate with the taxonomy that fed it",
+    "audience_detection": "the corpus does not phrase an audience into a question yet",
+    "no_source_honesty": "doc 06 section A10 is a behaviour the end to end tests assert directly",
+    "source_hierarchy_compliance": "reported until the corpus plants enough disagreements to gate on",
 }
 
 
@@ -222,6 +254,90 @@ def load_runs(results: Path) -> tuple[list[dict], dict]:
         json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     )
     return runs, manifest
+
+
+def load_exercises(results: Path) -> list[dict]:
+    """The exercises a run produced, with the cards each item may draw from.
+
+    Absent on every run before M10 and on every run that did not ask for one,
+    which is why the metrics below report n/a rather than 0 when it is missing.
+    """
+    path = results / "exercises.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _flatten(text: str) -> str:
+    """Lowercase, punctuation to spaces, runs of space collapsed.
+
+    Doc 08 section 5 checks the correct option "normalised", because a model
+    that writes `2.5%` where the card wrote `2.5 per cent` has still taken the
+    answer from the card.
+    """
+    lowered = "".join(c.lower() if c.isalnum() else " " for c in text)
+    return " ".join(lowered.split())
+
+
+def _card_text(card: dict) -> str:
+    parts = [card.get("question") or "", card.get("answer") or ""]
+    # Doc 06 section A7's shape: text plus the ordinals supporting it.
+    parts.extend(str((f or {}).get("text") or "") for f in card.get("findings") or [])
+    visual = card.get("visual") or {}
+    for block in (visual.get("block_index") or []):
+        parts.append(str(block.get("label") or ""))
+    for citation in card.get("citations") or []:
+        parts.append(str(citation.get("source_title") or ""))
+    return _flatten(" ".join(parts))
+
+
+def traces(item: dict, cards: dict[str, dict]) -> bool:
+    """Doc 08 section 5's traceability rule, re-checked from the stored items.
+
+    Deliberately a second implementation. The agent runs this check and drops
+    what fails, so measuring its own output against its own check would be a
+    tautology: it would report 1.00 whatever the check did. This one reads the
+    persisted exercise and the persisted cards, so a bug in the agent's rule
+    shows up here as a number below the gate.
+    """
+    card = cards.get(item.get("source_card_id") or "")
+    if card is None:
+        return False
+
+    answer_id = item.get("answer_id")
+    answer = next(
+        (o.get("text", "") for o in item.get("options") or [] if o.get("id") == answer_id),
+        None,
+    )
+    if not answer:
+        return False
+    if _flatten(answer) not in _card_text(card):
+        return False
+
+    have = {c.get("n") for c in card.get("citations") or []}
+    return all(n in have for n in item.get("citation_ordinals") or [])
+
+
+def leaks(item: dict, cards: dict[str, dict]) -> bool:
+    """Doc 08 section 5's distractor rule, re-checked the same way."""
+    answer_id = item.get("answer_id")
+    source = item.get("source_card_id")
+    others = [_card_text(c) for cid, c in cards.items() if cid != source]
+
+    for option in item.get("options") or []:
+        if option.get("id") == answer_id:
+            continue
+        text = _flatten(option.get("text", ""))
+        # A one word distractor is a word, not a statement.
+        if len(text.split()) < 3:
+            continue
+        if any(text in other for other in others):
+            return True
+    return False
 
 
 def load_facts(corpus: Path) -> dict[str, dict]:
@@ -838,17 +954,40 @@ def score(results: Path, corpus: Path) -> Report:
             "the Reader arrives at M10; set reader_enabled when it does",
         )
     )
-    report.metrics.append(
-        _ratio("exercise_traceability", 0, 0)
-        if exercise
-        else Metric(
-            "exercise_traceability",
-            None,
-            0,
-            0,
-            "the Exercise agent arrives at M10; set exercise_enabled when it does",
+    exercises = load_exercises(results) if exercise else []
+    items = [
+        (item, {c["card_id"]: c for c in ex.get("cards") or []})
+        for ex in exercises
+        for item in ex.get("items") or []
+    ]
+    if not exercise:
+        note = "the Exercise agent arrives at M10; set exercise_enabled when it does"
+        report.metrics.append(Metric("exercise_traceability", None, 0, 0, note))
+        report.metrics.append(Metric("exercise_distractor_leakage", None, 0, 0, note))
+    elif not items:
+        # The flag is on and no exercise produced an item. That is a run that
+        # asked for none or a board with nothing eligible, and both are an
+        # absence rather than a failing gate.
+        note = "no exercise in this run produced an item"
+        report.metrics.append(Metric("exercise_traceability", None, 0, 0, note))
+        report.metrics.append(Metric("exercise_distractor_leakage", None, 0, 0, note))
+    else:
+        report.metrics.append(
+            _ratio(
+                "exercise_traceability",
+                sum(1 for item, cards in items if traces(item, cards)),
+                len(items),
+                "items whose correct answer is stated in the card they name",
+            )
         )
-    )
+        report.metrics.append(
+            _ratio(
+                "exercise_distractor_leakage",
+                sum(1 for item, cards in items if leaks(item, cards)),
+                len(items),
+                "items with a distractor that is true on another card in scope",
+            )
+        )
 
     # ---------------------------------------------------- cost and latency --
     # Over the questions the run was asked to answer. The verify leg's questions

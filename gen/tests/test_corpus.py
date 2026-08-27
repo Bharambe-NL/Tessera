@@ -1148,6 +1148,128 @@ def test_every_threshold_belongs_to_a_metric_that_exists(corpus: Path, tmp_path:
     assert not orphans, f"thresholds with no metric: {orphans}"
 
 
+def test_the_traceability_check_can_fail() -> None:
+    """Doc 08 section 5, re-checked here rather than trusted from the agent.
+
+    The agent runs this rule and drops what fails, so scoring its output with
+    its own check would report 1.00 whatever the check did. This is a second
+    implementation, and a second implementation that cannot fail is the first
+    one wearing a hat.
+    """
+    cards = {
+        "c1": {
+            "question": "what is the buffer?",
+            "answer": "The buffer is 2.5 per cent.",
+            "findings": [],
+            "citations": [{"n": 1, "source_title": "CRR"}],
+        },
+        "c2": {
+            "question": "what is the ratio?",
+            "answer": "The leverage ratio is 3 per cent.",
+            "findings": [],
+            "citations": [{"n": 1, "source_title": "CRR"}],
+        },
+    }
+
+    def item(**over):
+        base = {
+            "source_card_id": "c1",
+            "answer_id": "a",
+            "options": [
+                {"id": "a", "text": "2.5 per cent"},
+                {"id": "b", "text": "a distractor about nothing at all"},
+            ],
+        }
+        base.update(over)
+        return base
+
+    assert harness.traces(item(), cards)
+    # An answer the card does not state.
+    assert not harness.traces(
+        item(options=[{"id": "a", "text": "seven per cent"}, {"id": "b", "text": "no"}]), cards
+    )
+    # A card that is not in the exercise at all.
+    assert not harness.traces(item(source_card_id="c9"), cards)
+    # A citation ordinal the card does not have.
+    assert not harness.traces(item(citation_ordinals=[1, 9]), cards)
+    # Punctuation and case are spelling, not evidence.
+    assert harness.traces(
+        item(options=[{"id": "a", "text": "The Buffer is 2.5, per cent!"}, {"id": "b", "text": "no"}]),
+        cards,
+    )
+
+
+def test_the_distractor_check_catches_a_second_right_answer() -> None:
+    """Doc 08 section 12: "distractor truth leakage 0"."""
+    cards = {
+        "c1": {"question": "q", "answer": "The buffer is 2.5 per cent.", "findings": [], "citations": []},
+        "c2": {"question": "q", "answer": "The leverage ratio is 3 per cent.", "findings": [], "citations": []},
+    }
+    leaky = {
+        "source_card_id": "c1",
+        "answer_id": "a",
+        "options": [
+            {"id": "a", "text": "2.5 per cent"},
+            {"id": "b", "text": "the leverage ratio is 3 per cent"},
+        ],
+    }
+    assert harness.leaks(leaky, cards)
+
+    clean = dict(leaky, options=[{"id": "a", "text": "2.5 per cent"}, {"id": "b", "text": "the buffer was withdrawn"}])
+    assert not harness.leaks(clean, cards)
+
+    # A one word distractor is a word, not a statement. Checking it against
+    # every other card would drop "no" from any board that contains the word.
+    short = dict(leaky, options=[{"id": "a", "text": "2.5 per cent"}, {"id": "b", "text": "no"}])
+    assert not harness.leaks(short, cards)
+
+
+def test_every_metric_is_gated_exempted_or_named_a_readout(corpus: Path, tmp_path: Path) -> None:
+    """The classification is total, so a metric cannot land ungated in silence.
+
+    This is the guard `exercise_traceability` needed and did not have. Doc 08
+    section 12 and doc 12 phase 9 both set it at 1.00, it computed from the day
+    it was written, and it had no entry in THRESHOLDS for four milestones. The
+    number would have appeared the moment the Exercise agent landed, looked
+    measured, and been gated by nothing.
+
+    A metric is one of three things: gated, deliberately ungated with a reason,
+    or a readout with a reason. Anything else is a number nobody decided about.
+    """
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+    classified = set(harness.THRESHOLDS) | set(harness.NO_THRESHOLD) | set(harness.READOUTS)
+    unclassified = sorted({m.name for m in report.metrics} - classified)
+    assert not unclassified, (
+        "these metrics are neither gated, exempted nor named a readout, so nothing "
+        f"decided whether they are a promise: {unclassified}"
+    )
+
+
+def test_no_metric_is_classified_two_ways(corpus: Path, tmp_path: Path) -> None:
+    """A metric in two of the three sets has two answers to one question."""
+    overlaps = (
+        (set(harness.THRESHOLDS) & set(harness.NO_THRESHOLD))
+        | (set(harness.THRESHOLDS) & set(harness.READOUTS))
+        | (set(harness.NO_THRESHOLD) & set(harness.READOUTS))
+    )
+    assert not overlaps, f"classified twice: {sorted(overlaps)}"
+
+
+def test_every_exemption_and_readout_belongs_to_a_metric_that_exists(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """The inverse of the threshold guard, for the other two sets.
+
+    `reader_structure_recovery_mess_f1` sat in NO_THRESHOLD with nothing
+    producing it, which reads as a degraded scan path that is covered and
+    reported. It is removed until the Reader writes one.
+    """
+    report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})
+    produced = {m.name for m in report.metrics}
+    orphans = sorted((set(harness.NO_THRESHOLD) | set(harness.READOUTS)) - produced)
+    assert not orphans, f"exempted or reported names with no metric: {orphans}"
+
+
 def test_metric_names_are_unique(corpus: Path, tmp_path: Path) -> None:
     """Two metrics with one name means one of them is never read."""
     report = _empty_report(tmp_path, corpus, {"provider": "mock", "snapshot": "T1"})

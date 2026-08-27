@@ -154,6 +154,17 @@ struct Args {
     #[arg(long)]
     verify_only: bool,
 
+    /// Generate an exercise on each imported board after the sweep. Doc 08.
+    ///
+    /// The Exercise agent reads cards that exist and never retrieves, so it
+    /// costs one call per board and measures for nothing on the grounded mock.
+    /// It also writes `exercises.jsonl` beside the runs, which is what the
+    /// scorer re-checks doc 08 section 5's two rules against: measuring the
+    /// agent's output with the agent's own check would report 1.00 whatever the
+    /// check did.
+    #[arg(long)]
+    exercise: bool,
+
     /// The corpus as it stood when those boards were written, usually the T1
     /// tree. Without it a document that was quietly edited cannot be told from
     /// one that was not, and the run reports that it could not tell rather than
@@ -241,7 +252,7 @@ struct RunRecord {
     provider: String,
     /// `reference` or `bulk`.
     leg: String,
-    /// `card` for a question this run asked, `verify_only` for a card it read
+/// `card` for a question this run asked, `verify_only` for a card it read
     /// back. The scorer keeps the two apart: a re-verification answers nothing,
     /// so counting it among the answers would dilute every recall metric with
     /// rows that were never asked a question.
@@ -252,6 +263,58 @@ struct RunRecord {
     /// alone would compare a pipeline ulid against a synthetic card id and
     /// silently never match, which is why the chain is matched on this.
     card_ref: Option<String>,
+}
+
+/// One exercise a run generated, with the cards its items may draw from.
+///
+/// The cards travel with it so the scorer can re-check doc 08 section 5's two
+/// rules independently. Measuring the agent's output with the agent's own check
+/// would report 1.00 whatever the check did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExerciseRecord {
+    board_id: String,
+    exercise_id: Option<String>,
+    items: Value,
+    cards: Value,
+    dropped: usize,
+}
+
+/// How many boards one worker generates an exercise on.
+///
+/// Every board would be a call per board and the sweep has hundreds. Five is
+/// enough for the two gates to have a denominator worth reading, and the run
+/// says out loud when it sampled rather than covered.
+const EXERCISE_BOARDS_PER_WORKER: usize = 5;
+
+/// Read back what the exercise wrote, so the scorer measures the stored rows.
+fn exercise_record(
+    core: &Core,
+    board_id: &str,
+    outcome: &tessera_core::ExerciseOutcome,
+) -> ExerciseRecord {
+    let items = outcome
+        .exercise_id
+        .as_deref()
+        .and_then(|id| {
+            core.store
+                .conn()
+                .query_row(
+                    "SELECT items FROM exercise WHERE id = ?1",
+                    rusqlite::params![id],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+        })
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or_else(|| json!([]));
+
+    ExerciseRecord {
+        board_id: board_id.to_string(),
+        exercise_id: outcome.exercise_id.clone(),
+        items,
+        cards: json!(tessera_store::repo::cards_for_exercise(&core.store, board_id, 8).unwrap_or_default()),
+        dropped: outcome.dropped,
+    }
 }
 
 fn main() -> std::process::ExitCode {
@@ -299,7 +362,7 @@ fn main() -> std::process::ExitCode {
             .join(corpus_name(&args.corpus))
             .join(&args.policy)
             .join(stamp());
-        if let Err(e) = write_records(&dir, &records, &args, &pack, records.len(), failures) {
+        if let Err(e) = write_records(&dir, &records, &[], &args, &pack, records.len(), failures) {
             eprintln!("could not write the results: {e}");
             return std::process::ExitCode::from(2);
         }
@@ -322,6 +385,7 @@ fn main() -> std::process::ExitCode {
     let queue = Arc::new(Mutex::new(families(&questions, total)));
     let done = Arc::new(AtomicUsize::new(0));
     let collected: Arc<Mutex<Vec<RunRecord>>> = Arc::new(Mutex::new(Vec::with_capacity(total)));
+    let exercises: Arc<Mutex<Vec<ExerciseRecord>>> = Arc::new(Mutex::new(Vec::new()));
     let plan = Arc::new(plan);
 
     std::thread::scope(|scope| {
@@ -329,6 +393,7 @@ fn main() -> std::process::ExitCode {
             let queue = Arc::clone(&queue);
             let done = Arc::clone(&done);
             let collected = Arc::clone(&collected);
+            let exercises = Arc::clone(&exercises);
             let plan = Arc::clone(&plan);
             let args = &args;
             let pack = &pack;
@@ -380,6 +445,7 @@ fn main() -> std::process::ExitCode {
 
                 let mut current = String::new();
                 let mut local_failures = 0usize;
+                let mut boards_seen: std::collections::BTreeSet<String> = Default::default();
 
                 while let Some(family) = queue.lock().ok().and_then(|mut q| q.pop_front()) {
                     // Where each question in this family was answered, so its
@@ -402,6 +468,7 @@ fn main() -> std::process::ExitCode {
                         if let (Some(card_id), Some(board_id)) =
                             (record.card_id.clone(), record.board_id.clone())
                         {
+                            boards_seen.insert(board_id.clone());
                             answered.insert(q.q_id.clone(), Answered { board_id, card_id });
                         }
 
@@ -411,6 +478,35 @@ fn main() -> std::process::ExitCode {
                         }
                         if let Ok(mut out) = collected.lock() {
                             out.push(record);
+                        }
+                    }
+                }
+
+                // Doc 08 section 3: on demand from a board. Every board this
+                // worker filled is a board with cards worth testing, so this is
+                // the widest sample the run can take for free.
+                if args.exercise {
+                    let taken: Vec<String> =
+                        boards_seen.iter().take(EXERCISE_BOARDS_PER_WORKER).cloned().collect();
+                    if boards_seen.len() > taken.len() {
+                        // No silent caps: a run that sampled 5 of 40 boards
+                        // says so, because "traceability 1.00" over five boards
+                        // and over forty are different claims.
+                        println!(
+                            "  exercise: sampling {} of this worker's {} boards",
+                            taken.len(),
+                            boards_seen.len()
+                        );
+                    }
+                    for board_id in taken {
+                        match core.make_exercise(&board_id, None) {
+                            Ok(outcome) => {
+                                let record = exercise_record(&core, &board_id, &outcome);
+                                if let Ok(mut out) = exercises.lock() {
+                                    out.push(record);
+                                }
+                            }
+                            Err(e) => eprintln!("  exercise on {board_id} failed: {e}"),
                         }
                     }
                 }
@@ -432,7 +528,11 @@ fn main() -> std::process::ExitCode {
         .join(corpus_name(&args.corpus))
         .join(&args.policy)
         .join(stamp());
-    if let Err(e) = write_records(&dir, &records, &args, &pack, total, failures) {
+    let exercises = exercises
+        .lock()
+        .map(|mut e| std::mem::take(&mut *e))
+        .unwrap_or_default();
+    if let Err(e) = write_records(&dir, &records, &exercises, &args, &pack, total, failures) {
         eprintln!("could not write the results: {e}");
         return std::process::ExitCode::from(2);
     }
@@ -1081,6 +1181,7 @@ fn grounded_mock() -> Arc<dyn ModelProvider> {
                 "synthesize" => MockResponse::Json(synthesized(request)),
                 "visualize" => MockResponse::Json(visualised(request)),
                 "verify" => MockResponse::Json(support_judged(request)),
+                "exercise" => MockResponse::Json(exercised(request)),
                 // Anything else is not scripted, and failing closed is the
                 // right default for a stage nobody thought about.
                 _ => MockResponse::Garbage,
@@ -1381,6 +1482,66 @@ fn visualised(request: &CompletionRequest) -> Value {
         },
         "caveats": []
     })
+}
+
+/// An exercise built from the cards in the prompt, quoting them.
+///
+/// The same contract as `synthesized`: it invents nothing and it judges nothing.
+/// The correct option is a sentence lifted from the card, so doc 08 section 5's
+/// traceability rule passes for a reason rather than by luck, and the
+/// distractors are statements about absence, which cannot be true on another
+/// card because no card says them.
+///
+/// What this cannot measure is whether a real model writes a question worth
+/// answering: doc 08 section 12's fourth line, "answerable from the source card
+/// by a second model", needs two real models. That is on the spend list.
+fn exercised(request: &CompletionRequest) -> Value {
+    let prompt = prompt_of(request);
+    let mut items: Vec<Value> = Vec::new();
+
+    let mut card_id: Option<String> = None;
+    let mut question: Option<String> = None;
+    for line in prompt.lines() {
+        let line = line.trim();
+        if let Some(id) = line.strip_prefix("card_id: ") {
+            card_id = Some(id.to_string());
+            question = None;
+        } else if let Some(q) = line.strip_prefix("question: ") {
+            question = Some(q.to_string());
+        } else if let Some(answer) = line.strip_prefix("answer: ")
+            && let (Some(id), Some(q)) = (card_id.clone(), question.clone())
+        {
+            // The first sentence, which is what a recall item asks for and what
+            // the traceability check will look for in the card.
+            let claim = answer
+                .split_once(". ")
+                .map(|(first, _)| first.to_string())
+                .unwrap_or_else(|| answer.to_string());
+            let claim = claim.trim().trim_end_matches('.').to_string();
+            if claim.split_whitespace().count() < 3 {
+                continue;
+            }
+            items.push(json!({
+                "id": format!("i{}", items.len() + 1),
+                "kind": "recall",
+                "prompt": format!("According to this card, {}", q.trim_end_matches('?')),
+                "options": [
+                    { "id": "a", "text": claim },
+                    { "id": "b", "text": "This card does not say." },
+                    { "id": "c", "text": "The card gives a range rather than a figure." },
+                    { "id": "d", "text": "The card defers to a later regulation." },
+                ],
+                "answer_id": "a",
+                "explanation": "The card states it in its opening sentence.",
+                "source_card_id": id,
+            }));
+        }
+        if items.len() >= 8 {
+            break;
+        }
+    }
+
+    json!({ "items": items })
 }
 
 fn prompt_of(request: &CompletionRequest) -> String {
@@ -1687,6 +1848,7 @@ fn doctrine_exclusions(core: &Core) -> Vec<String> {
 fn write_records(
     dir: &Path,
     records: &[RunRecord],
+    exercises: &[ExerciseRecord],
     args: &Args,
     pack: &str,
     total: usize,
@@ -1697,6 +1859,16 @@ fn write_records(
     let mut file = std::fs::File::create(dir.join("runs.jsonl"))?;
     for r in records {
         writeln!(file, "{}", serde_json::to_string(r).unwrap_or_default())?;
+    }
+
+    // Written only when there is one. An empty file would have the scorer read
+    // zero items and report a ratio over nothing, and doc 08's two gates say
+    // n/a when no exercise ran rather than 0.
+    if !exercises.is_empty() {
+        let mut file = std::fs::File::create(dir.join("exercises.jsonl"))?;
+        for e in exercises {
+            writeln!(file, "{}", serde_json::to_string(e).unwrap_or_default())?;
+        }
     }
 
     let manifest = json!({
@@ -1727,6 +1899,10 @@ fn write_records(
         // reaches 0.90, which is what `verifier_agreement` measures; the flag
         // says the verdicts are real, not that the gate has been passed.
         "support_check_enabled": true,
+        // Doc 08 section 12's two gates report n/a until this is true, because
+        // a run that generated no exercise has nothing to say about items that
+        // do not exist.
+        "exercise_enabled": args.exercise,
         "retrievers_enabled": !args.no_retrievers,
         // Doc 15 section 5's four metrics report n/a until this is true.
         // Reporting a clean zero for own_card sole support while no card has
