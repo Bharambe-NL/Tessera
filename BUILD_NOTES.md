@@ -961,6 +961,95 @@ events once per card.
 sentence in it that overstates is worse than an empty disclosure, because an empty one does not
 mislead.
 
+### BN-072 The rail, the four pages, and the two verbs that needed no migration
+
+**Spec** 09 sections 3, 5, 6 and 9, 11 sections 5 and 6.
+
+**Decision** A left rail over a page layer that covers the canvas rather than replacing it, so the
+board keeps its camera, its cards and any in flight run while a page is open.
+
+**Trash and purge needed no schema change.** `board` already had `status` with an `active` or
+`trashed` check and a `trashed_at` column, and `list_boards` already took a status. Doc 09 open
+question 1, adopted by doc 11, makes Trash a filter on Home rather than a rail item, so it is the
+same grid read with a different word. `board.trashed.v1`, `board.restored.v1` and `board.purged.v1`
+were all in the vocabulary with nothing emitting them.
+
+**A purge keeps the events.** The event log is append only and the database enforces it with a
+trigger, so deleting a board removes the entities and leaves the trail that says they existed. That
+is what makes `board.purged.v1` readable afterwards rather than a claim about rows nobody can check.
+The RPC also refuses a purge on a live board: it is two steps, so it is never one click from a board
+in use.
+
+**The Flags queue needed no schema change either.** The `flag_open` index in the initial migration
+was written for exactly this query, severity then age across every board, and had never been used.
+`read_flags` stays as it was: it is per card and feeds the chip. `review.decided.v1` had a projection
+handler since M2 and nothing emitting it.
+
+**One event per card, not one per decision.** A bulk decision can span several cards, and the
+projection that reopens or closes a card reads the card from the event, so a single event would
+recompute one card and leave the rest wrong.
+
+**Rerun and edit leave the flag open.** Only accept and dismiss close it. A rerun that has not
+written its new card yet would otherwise take its row out of the queue and leave nothing to come
+back to.
+
+**Reason** Doc 12 phase 8's acceptance is every verb in doc 09 section 5 working. Home, Flags,
+Library and Profile are where the verbs that do not act on a card live, and none of them existed.
+
+---
+
+### BN-073 A covered element is visible and clickable, so sixteen tests passed over a broken layout
+
+**Spec** 11 section 5.
+
+**Decision** The rail width is one custom property on `body`, read by the rail, by the board's left
+padding and by the page's left edge.
+
+**What broke.** Doc 11 section 5 says the rail is 56px collapsed and 240px open. The rail knew that;
+the page did not, and started at a hardcoded 56px. Opening the rail put 184px of it on top of every
+row on the Flags queue: the checkbox, the severity chip, the rule name and the board heading were all
+underneath it.
+
+Sixteen Playwright tests passed. Every one of them was written against visibility and text, and a
+covered element is visible, has its text, and is clickable to a driver that scrolls it into view.
+The screenshot showed it in a second.
+
+The test that catches it now reads geometry: the row's left edge against the rail's right edge, with
+the rail open. That is the assertion shape this class of bug needs, and it is the same lesson as the
+build trail two steps ago in a different costume. A rendered screen is not a working one, and now:
+a visible element is not an uncovered one.
+
+**A second one from the same run.** `#page` and `#rail` both sat at `--z-sticky`, so the page won on
+DOM order and swallowed every rail click after the first. That one a test did catch, because a click
+that lands on the wrong element times out.
+
+**Reason** Recording it because the fix is one line and the lesson is not. Two of the four defects
+this milestone has surfaced were found by looking at a screenshot after a green suite.
+
+---
+
+### BN-074 What the Profile page can say about a key
+
+**Spec** 10 section 8, 11 section 6.
+
+**Decision** `profile.get` reports, per model alias, which `key_ref` it wants and whether the
+keychain has it. It cannot report what the key is, because it never reads one.
+
+`profile.set_key` is the other direction and the only one a secret travels: the value goes to
+`KeyStore::set` and nothing writes it to the store, logs it, or echoes it back. The reply is the
+key_ref and a boolean. The UI asks for it with `window.prompt`, which is the one input in the product
+whose value must not survive anywhere: no element holds it and no state keeps it.
+
+A test asserts the leak rather than the feature: it opens a core whose keystore holds a known secret,
+reads the whole profile, and fails if that string appears anywhere in the response. The Playwright
+suite does the same against the rendered page.
+
+**Diagnostics is counts, not a verdict.** What the page is for is telling a person whether the thing
+they think happened happened, and a green tick summarising six numbers hides the one that is wrong.
+
+**Reason** This is the surface that retires the `tessera-keys` CLI, and it is the surface where the
+standing constraint is easiest to break by accident.
+
 ---
 
 ## Measured findings
