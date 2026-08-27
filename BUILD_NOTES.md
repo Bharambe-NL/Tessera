@@ -1931,6 +1931,47 @@ way until the sweep runs somewhere that can reach one.
 
 ---
 
+### BN-103 Three schema keywords the structured output endpoint refuses, found on the first live run
+
+**Spec** 12 operating principle 1, 10 section 10.
+
+**Found** by the first sweep that reached a real provider. Twelve of twelve
+questions failed, all with the same shape of error, and none of them cost a
+token: the API rejects the request before generating, and a rejected request is
+not billed.
+
+**Three refusals, one after another**, each hidden behind the one before it.
+
+1. `output_config.format.schema: For 'array' type, property 'maxItems' is not
+   supported`.
+2. `For 'object' type, 'additionalProperties: object' is not supported. Please
+   set 'additionalProperties' to false`.
+3. `For 'object' type, 'additionalProperties' must be explicitly set to false`,
+   which is the same rule reaching a nested object three levels down that a hand
+   written schema had not bothered to close.
+
+**Decision** The Anthropic client sends a copy of the schema with the count
+keywords stripped and every object closed. Ten keywords go: the ones that say
+how much rather than what shape. Shape is what a model needs, and `type`,
+`properties`, `required`, `items` and `enum` all survive.
+
+**This loosens what is asked for and not what is checked.** Doc 12 principle 1
+validates every agent output against the full schema on the way back in, and
+that pass reads the original. A model that returns seven items where the schema
+allows five still fails the guard exactly as it did before. What changed is only
+the copy handed over as a generation hint, because the provider refuses the
+request outright rather than ignoring a keyword it does not know.
+
+**A pre-existing test asserted the schema was passed through verbatim**, and it
+broke, correctly. Passing it through verbatim is what refused the run.
+
+**Reason** This is the whole argument for a live run, in one finding. The mock
+accepts any schema, because a fixture answers in the shape it was asked for.
+Nothing short of a real provider could have found it, and the twelve questions
+that found it were free.
+
+---
+
 ---
 
 ## Measured findings

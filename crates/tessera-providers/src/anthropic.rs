@@ -20,6 +20,67 @@ use crate::model::{Completion, CompletionRequest, ContentBlock, ModelProvider, R
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
+/// Validation keywords the structured output subset rejects.
+///
+/// The API answers `output_config.format.schema: For 'array' type, property
+/// 'maxItems' is not supported` and refuses the whole request, so one keyword
+/// in one schema stops every call that carries it. Twelve of twelve questions
+/// failed this way on the first live run.
+///
+/// The list is what a schema uses to say how much rather than what shape. Shape
+/// is what the model needs: `type`, `properties`, `required`, `items`, `enum`
+/// and the rest all survive.
+const NOT_IN_STRUCTURED_OUTPUT: [&str; 10] = [
+    "maxItems",
+    "minItems",
+    "maxLength",
+    "minLength",
+    "maximum",
+    "minimum",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
+    "multipleOf",
+    "uniqueItems",
+];
+
+/// A schema the structured output endpoint will accept.
+///
+/// **This loosens what is asked for and not what is checked.** Doc 12 operating
+/// principle 1 validates every agent output against the full schema on the way
+/// back in, and that pass is untouched: a model that returns seven items where
+/// the schema allows five still fails the guard exactly as before. What changes
+/// is only the copy handed to the provider as a generation hint, because the
+/// provider refuses the request outright rather than ignoring the keyword.
+fn for_structured_output(schema: &Value) -> Value {
+    match schema {
+        Value::Object(map) => {
+            let mut out: serde_json::Map<String, Value> = map
+                .iter()
+                .filter(|(key, _)| !NOT_IN_STRUCTURED_OUTPUT.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), for_structured_output(value)))
+                .collect();
+
+            // Every object has to say `additionalProperties: false`, and it has
+            // to be the literal false: the endpoint rejects both a missing key
+            // and the map form `additionalProperties: {schema}`. A schema
+            // written by hand says it at the top and forgets it three levels
+            // down, which is what refused the second probe.
+            //
+            // A `properties` key or a `"type": "object"` is what makes a node an
+            // object worth saying it about. A `$defs` entry or a description is
+            // not.
+            let is_object =
+                out.contains_key("properties") || out.get("type").and_then(Value::as_str) == Some("object");
+            if is_object {
+                out.insert("additionalProperties".into(), Value::Bool(false));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(for_structured_output).collect()),
+        other => other.clone(),
+    }
+}
+
 /// Model families that accept adaptive thinking and `output_config.effort`.
 ///
 /// Both parameters arrived with the 4.6 generation. Sending either to an older
@@ -106,7 +167,7 @@ impl AnthropicProvider {
         if let Some(schema) = &req.output_schema {
             output_config.insert(
                 "format".into(),
-                json!({ "type": "json_schema", "schema": schema }),
+                json!({ "type": "json_schema", "schema": for_structured_output(schema) }),
             );
         }
 
@@ -368,6 +429,106 @@ mod tests {
     }
 
     #[test]
+    fn a_count_keyword_is_stripped_from_the_request_and_nowhere_else() {
+        // The first live run failed all twelve questions on this: the API
+        // answers "For 'array' type, property 'maxItems' is not supported" and
+        // refuses the request rather than ignoring the keyword.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "minItems": 1,
+                    "items": { "type": "string", "maxLength": 200 }
+                },
+                "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            },
+            "required": ["findings"]
+        });
+        let sent = for_structured_output(&schema);
+        let text = sent.to_string();
+
+        for gone in ["maxItems", "minItems", "maxLength", "minimum", "maximum"] {
+            assert!(!text.contains(gone), "{gone} still in the request: {text}");
+        }
+        // Shape survives, which is the half the model actually needs.
+        assert_eq!(sent["type"], "object");
+        assert_eq!(sent["required"][0], "findings");
+        assert_eq!(sent["properties"]["findings"]["type"], "array");
+        assert_eq!(sent["properties"]["findings"]["items"]["type"], "string");
+        assert_eq!(sent["properties"]["confidence"]["type"], "number");
+
+        // And the schema itself is untouched, because the guard on the way back
+        // in validates against this one. Stripping it here would turn a
+        // generation hint into a hole in the check.
+        assert_eq!(schema["properties"]["findings"]["maxItems"], 5);
+    }
+
+    #[test]
+    fn a_map_shaped_object_loses_the_key_rather_than_being_told_to_be_empty() {
+        // Doc 03's `model_resolution` maps an alias to what it resolved to. The
+        // endpoint refuses `additionalProperties: {schema}` and asks for
+        // `false`, which would say the object must be empty: a router that
+        // resolved nothing. Dropping the key says "an object" and leaves the
+        // keys open, which is what a map is.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "model_resolution": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                },
+                "closed": { "type": "object", "additionalProperties": false }
+            }
+        });
+        let sent = for_structured_output(&schema);
+        // The endpoint takes the literal false and nothing else, so the map
+        // form becomes it too. That does narrow what the model is asked for,
+        // and the guard on the way back in is unchanged, so a map that does
+        // arrive is still validated against the schema this was copied from.
+        assert_eq!(
+            sent["properties"]["model_resolution"]["additionalProperties"],
+            false
+        );
+        assert_eq!(sent["properties"]["closed"]["additionalProperties"], false);
+    }
+
+    #[test]
+    fn every_object_says_it_is_closed_including_the_nested_ones() {
+        // A schema written by hand says it at the top and forgets it three
+        // levels down. That refused a whole live run rather than one call.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "check": {
+                    "type": "object",
+                    "properties": {
+                        "item": {
+                            "type": "object",
+                            "properties": { "id": { "type": "string" } }
+                        }
+                    }
+                },
+                "list": {
+                    "type": "array",
+                    "items": { "type": "object", "properties": { "n": { "type": "integer" } } }
+                }
+            }
+        });
+        let sent = for_structured_output(&schema);
+        assert_eq!(sent["additionalProperties"], false);
+        assert_eq!(sent["properties"]["check"]["additionalProperties"], false);
+        assert_eq!(
+            sent["properties"]["check"]["properties"]["item"]["additionalProperties"],
+            false
+        );
+        assert_eq!(sent["properties"]["list"]["items"]["additionalProperties"], false);
+        // An array is not an object and does not get the key.
+        assert!(sent["properties"]["list"].get("additionalProperties").is_none());
+    }
+
+    #[test]
     fn a_schema_becomes_a_json_schema_format() {
         let p = AnthropicProvider::new("k").expect("provider");
         let schema = json!({ "type": "object", "properties": { "a": { "type": "string" } } });
@@ -377,7 +538,15 @@ mod tests {
                 .expecting(schema.clone()),
         );
         assert_eq!(body["output_config"]["format"]["type"], "json_schema");
-        assert_eq!(body["output_config"]["format"]["schema"], schema);
+        // Shape survives. The schema is not passed through verbatim any more,
+        // because the endpoint refuses several keywords a schema may carry and
+        // refuses an object that does not close itself; `for_structured_output`
+        // is what makes it acceptable, and the guard on the way back in still
+        // reads the original.
+        let sent = &body["output_config"]["format"]["schema"];
+        assert_eq!(sent["type"], schema["type"]);
+        assert_eq!(sent["properties"], schema["properties"]);
+        assert_eq!(sent["additionalProperties"], false);
     }
 
     #[test]
