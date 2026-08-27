@@ -191,7 +191,9 @@ def test_the_vault_holds_forty_pages_of_three_kinds(corpus: Path) -> None:
         if line
     ]
     assert len(rows) == 40
-    kinds = {k: sum(1 for r in rows if r["kind"] == k) for k in ("saved", "documented", "page_only")}
+    kinds = {
+        k: sum(1 for r in rows if r["kind"] == k) for k in ("saved", "documented", "page_only")
+    }
     assert kinds == {"saved": 24, "documented": 8, "page_only": 8}
 
     # Doc 16 section 3.2: a page saved from a card carries the card's citations
@@ -1363,9 +1365,7 @@ def test_backlink_completeness_counts_the_links_that_never_arrived(
 
     # One link is dropped on the floor. The gate has to notice, and it can only
     # notice because it counts against the corpus.
-    short = _named(
-        _vault_report(tmp_path / "short", corpus, planted[:-1]), "backlink_completeness"
-    )
+    short = _named(_vault_report(tmp_path / "short", corpus, planted[:-1]), "backlink_completeness")
     assert short.value is not None and short.value < 1.0
     assert short.denominator == len(planted)
     assert "took" in short.note
@@ -1379,9 +1379,7 @@ def test_backlink_completeness_counts_the_links_that_never_arrived(
     assert lost.denominator == len(planted)
 
 
-def test_a_run_with_no_backlink_check_says_what_it_waits_for(
-    corpus: Path, tmp_path: Path
-) -> None:
+def test_a_run_with_no_backlink_check_says_what_it_waits_for(corpus: Path, tmp_path: Path) -> None:
     report = _vault_report(tmp_path, corpus, [])
     metric = _named(report, "backlink_completeness")
     assert metric.value is None
@@ -1427,9 +1425,7 @@ def _notebook_row(case: str, state: str, passages: int, **rest) -> dict:
     return row
 
 
-def test_the_notebook_metrics_measure_what_the_core_recorded(
-    corpus: Path, tmp_path: Path
-) -> None:
+def test_the_notebook_metrics_measure_what_the_core_recorded(corpus: Path, tmp_path: Path) -> None:
     """Doc 16 section 5's two gates and doc 16 phase 12d's acceptance sentence.
 
     The state and the passage count come off the same event the core wrote, so
@@ -1448,7 +1444,12 @@ def test_the_notebook_metrics_measure_what_the_core_recorded(
     # A card that says it found nothing while holding four passages is the
     # silent fallback doc 16 phase 12d forbids, and it is caught.
     lying = [_notebook_row("no_vault_match", "ungrounded", 4)]
-    assert _named(_notebook_report(tmp_path / "lying", corpus, lying), "ungrounded_is_no_passages").value == 0.0
+    assert (
+        _named(
+            _notebook_report(tmp_path / "lying", corpus, lying), "ungrounded_is_no_passages"
+        ).value
+        == 0.0
+    )
 
     # A figure resting on a page alone, with nothing blocking it, is doc 05
     # v0.2 line 106's failure and doc 16 section 5's gate at 0.
@@ -1462,7 +1463,12 @@ def test_the_notebook_metrics_measure_what_the_core_recorded(
             flags=[{"rule_id": "unsupported_claim", "severity": "warn"}],
         )
     ]
-    assert _named(_notebook_report(tmp_path / "through", corpus, through), "page_sole_support_rate").value == 1.0
+    assert (
+        _named(
+            _notebook_report(tmp_path / "through", corpus, through), "page_sole_support_rate"
+        ).value
+        == 1.0
+    )
 
     # The same answer with the block flag the Verifier raises for it is not a
     # failure: the reader never saw it unmarked.
@@ -1476,7 +1482,12 @@ def test_the_notebook_metrics_measure_what_the_core_recorded(
             flags=[{"rule_id": "own_card_sole_support", "severity": "block"}],
         )
     ]
-    assert _named(_notebook_report(tmp_path / "stopped", corpus, stopped), "page_sole_support_rate").value == 0.0
+    assert (
+        _named(
+            _notebook_report(tmp_path / "stopped", corpus, stopped), "page_sole_support_rate"
+        ).value
+        == 0.0
+    )
 
     # And a definition restated from the reader's own note states no figure, so
     # it is not what the rule is about.
@@ -1490,7 +1501,79 @@ def test_the_notebook_metrics_measure_what_the_core_recorded(
             flags=[{"rule_id": "unsupported_claim", "severity": "warn"}],
         )
     ]
-    assert _named(_notebook_report(tmp_path / "prose", corpus, prose), "page_sole_support_rate").value == 0.0
+    assert (
+        _named(_notebook_report(tmp_path / "prose", corpus, prose), "page_sole_support_rate").value
+        == 0.0
+    )
+
+
+def _learner_report(tmp_path: Path, corpus: Path, sessions: list[dict] | None) -> object:
+    results = tmp_path / "learner"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text("", encoding="utf-8")
+    (results / "manifest.json").write_text(
+        json.dumps(
+            {"provider": "mock", "snapshot": "T1", "learning_enabled": sessions is not None}
+        ),
+        encoding="utf-8",
+    )
+    if sessions is not None:
+        (results / "learn_sessions.jsonl").write_text(
+            "\n".join(json.dumps(s) for s in sessions), encoding="utf-8"
+        )
+    return harness.score(results, corpus)
+
+
+def test_the_learning_metrics_wait_for_a_learner_and_then_measure_one(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 17 section 10's first three. A frontier correctness of 1.000 over
+    nobody would say the placement rule holds when nothing has walked it."""
+    names = ("frontier_correctness", "proposals_never_applied", "mastery_honesty")
+    waiting = _learner_report(tmp_path / "waiting", corpus, None)
+    for name in names:
+        metric = _named(waiting, name)
+        assert metric.value is None
+        assert "--learner" in metric.note
+
+    placed = [
+        {
+            "learner_id": "always-right",
+            "frontier": ["LC-01"],
+            "expected_frontier": ["LC-01"],
+            "confirmed_edges_not_from_the_path": 0,
+            "rated_only": [{"term": "a", "self_rating": 3, "mastery": 0.5}],
+        },
+        {
+            "learner_id": "overconfident",
+            # Placed one level above where the path says they stand.
+            "frontier": ["LC-09"],
+            "expected_frontier": ["LC-01"],
+            "confirmed_edges_not_from_the_path": 0,
+            "rated_only": [{"term": "b", "self_rating": 3, "mastery": 0.5}],
+        },
+    ]
+    report = _learner_report(tmp_path / "placed", corpus, placed)
+    assert _named(report, "frontier_correctness").value == 0.5
+    assert _named(report, "proposals_never_applied").value == 1.0
+    assert _named(report, "mastery_honesty").value == 1.0
+
+    # Doc 17 section 7: a proposal written as agreed is the failure, whatever
+    # the Planner's own output claimed.
+    applied = [dict(placed[0], confirmed_edges_not_from_the_path=1)]
+    assert (
+        _named(
+            _learner_report(tmp_path / "applied", corpus, applied), "proposals_never_applied"
+        ).value
+        == 0.0
+    )
+
+    # Doc 17 section 2.4: a rating that moved a score past a half.
+    dishonest = [dict(placed[0], rated_only=[{"term": "a", "self_rating": 3, "mastery": 0.72}])]
+    assert (
+        _named(_learner_report(tmp_path / "dishonest", corpus, dishonest), "mastery_honesty").value
+        == 0.0
+    )
 
 
 def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:
@@ -1507,9 +1590,9 @@ def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: P
             continue
         # A metric may legitimately report on an empty run only when its
         # denominator is genuinely zero-meaning, like a count.
-        assert (
-            metric.denominator > 0 or metric.numerator > 0
-        ), f"{metric.name} reported {metric.value} from no data at all"
+        assert metric.denominator > 0 or metric.numerator > 0, (
+            f"{metric.name} reported {metric.value} from no data at all"
+        )
 
 
 def test_every_metric_that_cannot_measure_says_what_it_waits_for(
@@ -1613,7 +1696,9 @@ def test_the_traceability_check_can_fail() -> None:
     assert not harness.traces(item(citation_ordinals=[1, 9]), cards)
     # Punctuation and case are spelling, not evidence.
     assert harness.traces(
-        item(options=[{"id": "a", "text": "The Buffer is 2.5, per cent!"}, {"id": "b", "text": "no"}]),
+        item(
+            options=[{"id": "a", "text": "The Buffer is 2.5, per cent!"}, {"id": "b", "text": "no"}]
+        ),
         cards,
     )
 
@@ -1621,8 +1706,18 @@ def test_the_traceability_check_can_fail() -> None:
 def test_the_distractor_check_catches_a_second_right_answer() -> None:
     """Doc 08 section 12: "distractor truth leakage 0"."""
     cards = {
-        "c1": {"question": "q", "answer": "The buffer is 2.5 per cent.", "findings": [], "citations": []},
-        "c2": {"question": "q", "answer": "The leverage ratio is 3 per cent.", "findings": [], "citations": []},
+        "c1": {
+            "question": "q",
+            "answer": "The buffer is 2.5 per cent.",
+            "findings": [],
+            "citations": [],
+        },
+        "c2": {
+            "question": "q",
+            "answer": "The leverage ratio is 3 per cent.",
+            "findings": [],
+            "citations": [],
+        },
     }
     leaky = {
         "source_card_id": "c1",
@@ -1634,7 +1729,13 @@ def test_the_distractor_check_catches_a_second_right_answer() -> None:
     }
     assert harness.leaks(leaky, cards)
 
-    clean = dict(leaky, options=[{"id": "a", "text": "2.5 per cent"}, {"id": "b", "text": "the buffer was withdrawn"}])
+    clean = dict(
+        leaky,
+        options=[
+            {"id": "a", "text": "2.5 per cent"},
+            {"id": "b", "text": "the buffer was withdrawn"},
+        ],
+    )
     assert not harness.leaks(clean, cards)
 
     # A one word distractor is a word, not a statement. Checking it against
@@ -1802,9 +1903,9 @@ def test_a_mock_run_still_gates_what_the_mock_does_not_decide(corpus: Path, tmp_
 
     exempt = set(harness.MOCKED)
     gateable = {m.name for m in report.metrics if m.name in harness.THRESHOLDS} - exempt
-    assert (
-        len(gateable) >= 8
-    ), f"only {len(gateable)} metrics can still fail a mock run: {sorted(gateable)}"
+    assert len(gateable) >= 8, (
+        f"only {len(gateable)} metrics can still fail a mock run: {sorted(gateable)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1871,7 +1972,7 @@ def test_a_planted_case_is_judged_however_few_the_corpus_planted() -> None:
 def test_every_planted_case_metric_is_one_that_exists_and_is_gated() -> None:
     # The same totality the other classifications carry. A name here that no
     # metric answers to would be an exemption protecting nothing.
-    assert harness.PLANTED_CASES <= set(harness.THRESHOLDS)
+    assert set(harness.THRESHOLDS) >= harness.PLANTED_CASES
     for name in harness.PLANTED_CASES:
         assert harness.THRESHOLDS[name] not in (0.0, 1.0), (
             f"{name} is already exempt by being absolute, so listing it says nothing"

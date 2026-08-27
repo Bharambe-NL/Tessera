@@ -42,6 +42,14 @@ THRESHOLDS: dict[str, float] = {
     # nobody can trust to tell them what refers to what.
     "backlink_completeness": 1.0,
     # Doc 16 section 5's other two, measured by the `--notebook` leg.
+    # Doc 17 section 10's first three. Frontier correctness is a rule against
+    # ground truth, so 0.90 leaves room for a path whose shape makes two
+    # placements defensible; the other two are absolute, because a proposal
+    # applied without asking and a rating that moved a score past a half are
+    # each one thing going wrong rather than a number drifting.
+    "frontier_correctness": 0.90,
+    "proposals_never_applied": 1.0,
+    "mastery_honesty": 1.0,
     "grounding_state_accuracy": 0.95,
     # Doc 16 phase 12d's acceptance in as many words: "the ungrounded state
     # appears whenever no_passages; never a silent fallback". The state and the
@@ -164,13 +172,16 @@ MOCKED: dict[str, str] = {
     # every notebook answer reads as partly grounded whatever the vault did. The
     # same artefact `flag_false_positive_rate` is exempted for.
     "grounding_state_accuracy": (
-        "the mock's prose leaves sentences the Verifier cannot bind, so every answer is partly grounded"
+        "the mock's prose leaves sentences the Verifier cannot bind, so every answer reads "
+        "as partly grounded"
     ),
     # Doc 07 section A12 sets this at 0.80 on clean rasters. A mock cannot see,
     # and a fixture that returns the structure the corpus recorded would be
     # scoring this repository against itself. Listed here so that the day a run
     # sets `reader_enabled` on a mock the number is reported rather than gated.
-    "reader_structure_recovery_f1": "a mock has no eyes, so what it recovers is what the fixture wrote",
+    "reader_structure_recovery_f1": (
+        "a mock has no eyes, so what it recovers is what the fixture wrote"
+    ),
 }
 
 #: Doc 02 section 10.3: fast is reported with no threshold, because fast mode is
@@ -430,6 +441,81 @@ def _page_sole_support(run: dict) -> bool:
     return not any(f.get("severity") == "block" for f in run.get("flags") or [])
 
 
+def load_learn_sessions(results: Path) -> list[dict]:
+    """What the learner leg recorded. Doc 17 section 10."""
+    path = results / "learn_sessions.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _learning_metrics(results: Path, manifest: dict) -> list[Metric]:
+    """Doc 17 section 10's first three.
+
+    All three are re-derived from the rows the leg wrote rather than from
+    anything it concluded: the leg records the frontier it was given, the
+    proposals it saw and the score every rated concept ended at, and the
+    arithmetic happens here.
+    """
+    names = ("frontier_correctness", "proposals_never_applied", "mastery_honesty")
+    if not manifest.get("learning_enabled"):
+        waiting = "no learner walked the path; run the eval with --learner"
+        return [Metric(name, None, 0, 0, waiting) for name in names]
+
+    sessions = load_learn_sessions(results)
+    if not sessions:
+        waiting = "the learner leg ran and recorded no session"
+        return [Metric(name, None, 0, 0, waiting) for name in names]
+
+    out: list[Metric] = []
+
+    # Doc 17 section 3, as a comparison against the corpus's own answer. Sorted
+    # on both sides, because the frontier is a set: two concepts at one depth
+    # are one placement, not two orders.
+    out.append(
+        _ratio(
+            "frontier_correctness",
+            sum(
+                1
+                for s in sessions
+                if sorted(s.get("frontier") or []) == sorted(s.get("expected_frontier") or [])
+            ),
+            len(sessions),
+            "learners placed where the path says they stand",
+        )
+    )
+
+    # Doc 17 section 7: proposals are proposed, never applied. What would show
+    # otherwise is a confirmed edge the path did not draw, which is why the leg
+    # counts those rather than trusting the Planner's own output.
+    applied = sum(s.get("confirmed_edges_not_from_the_path", 0) or 0 for s in sessions)
+    out.append(
+        _ratio(
+            "proposals_never_applied",
+            len(sessions) if applied == 0 else 0,
+            len(sessions),
+            "sessions where nothing an agent proposed was written as agreed",
+        )
+    )
+
+    # Doc 17 section 2.4: "a rating can never move mastery above 0.5; only
+    # checks can". Every concept in a placement has been rated and checked on
+    # nothing, so every one of them is a row this applies to.
+    rated = [row for s in sessions for row in (s.get("rated_only") or [])]
+    honest = sum(1 for row in rated if (row.get("mastery") or 0.0) <= 0.5 + 1e-9)
+    out.append(
+        _ratio(
+            "mastery_honesty",
+            honest,
+            len(rated),
+            "rated concepts whose score stayed at or below a half",
+        )
+    )
+    return out
+
+
 def load_vault(corpus: Path) -> list[dict]:
     """The pages the corpus planted. Doc 16 section 5."""
     path = corpus / "vault.jsonl"
@@ -464,9 +550,7 @@ def load_exercises(results: Path) -> list[dict]:
     if not path.exists():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -486,7 +570,7 @@ def _card_text(card: dict) -> str:
     # Doc 06 section A7's shape: text plus the ordinals supporting it.
     parts.extend(str((f or {}).get("text") or "") for f in card.get("findings") or [])
     visual = card.get("visual") or {}
-    for block in (visual.get("block_index") or []):
+    for block in visual.get("block_index") or []:
         parts.append(str(block.get("label") or ""))
     for citation in card.get("citations") or []:
         parts.append(str(citation.get("source_title") or ""))
@@ -1077,9 +1161,7 @@ def score(results: Path, corpus: Path) -> Report:
     # says a quarter matched and nothing about which. A type at zero is either a
     # selection rule that is wrong or a summary shape the provider never writes,
     # and those want opposite fixes.
-    drawn = ", ".join(
-        f"{kind} {seen[0]}/{seen[1]}" for kind, seen in sorted(by_expected.items())
-    )
+    drawn = ", ".join(f"{kind} {seen[0]}/{seen[1]}" for kind, seen in sorted(by_expected.items()))
     report.metrics.append(
         _ratio(
             "visual_type_match",
@@ -1138,9 +1220,7 @@ def score(results: Path, corpus: Path) -> Report:
     # make the Flags queue something a user learns to ignore, and an average
     # across rules would hide it behind the well behaved ones.
     per_rule = {rule: wrongly.get(rule, 0) / count for rule, count in fired.items() if count}
-    report.per_rule_false_positives = dict(
-        sorted(per_rule.items(), key=lambda kv: (-kv[1], kv[0]))
-    )
+    report.per_rule_false_positives = dict(sorted(per_rule.items(), key=lambda kv: (-kv[1], kv[0])))
     if per_rule:
         # Ties broken by name, so scoring one run twice names the same rule.
         # Six rules sat at 1.0 on the grounded sweep and `max` over a dict
@@ -1302,7 +1382,9 @@ def score(results: Path, corpus: Path) -> Report:
         report.metrics.append(
             Metric(
                 "backlink_completeness",
-                len([r for r in resolvable if r.get("in_backlinks")]) / planted if planted else None,
+                len([r for r in resolvable if r.get("in_backlinks")]) / planted
+                if planted
+                else None,
                 len([r for r in resolvable if r.get("in_backlinks")]),
                 planted,
                 f"the corpus planted {planted} links between pages and the store took "
@@ -1365,6 +1447,9 @@ def score(results: Path, corpus: Path) -> Report:
                 "answers stating a figure on pages alone that carry no block flag",
             )
         )
+
+    # ---------------------------------------------------- learning ---------
+    report.metrics.extend(_learning_metrics(results, manifest))
 
     exercises = load_exercises(results) if exercise else []
     items = [
