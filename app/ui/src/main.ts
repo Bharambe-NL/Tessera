@@ -17,6 +17,7 @@ import { blockAnchor, selectionAnchor } from './canvas/anchor.js';
 import { trailFor, trailHTML } from './canvas/built.js';
 import { CARD_W, boundsOf, layout } from './canvas/layout.js';
 import { readingHTML } from './canvas/reading.js';
+import { attachHandles } from './canvas/handles.js';
 import { drawEdges, measureHeights, renderCards, renderNotes, toggleFlags } from './canvas/render.js';
 import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
@@ -42,6 +43,7 @@ const main = el<HTMLElement>('main');
 const world = el<HTMLElement>('world');
 const cardsEl = el<HTMLElement>('cards');
 const stickiesEl = el<HTMLElement>('stickies');
+const handlesEl = el<HTMLElement>('handles');
 const edgesEl = document.getElementById('edges') as unknown as SVGElement;
 const gateEl = el<HTMLPreElement>('gate');
 const composer = el<HTMLFormElement>('composer');
@@ -476,6 +478,24 @@ function wireBranching(): void {
     if (target?.closest('#anchor-pop')) return;
     if (target?.closest('.card .body')) return;
     popover.close();
+  });
+}
+
+/**
+ * Doc 16 section 3.6's edge handles, which put the cursor where the follow-up
+ * is typed.
+ *
+ * A Card carries a question and the store requires one, so there is no empty
+ * card for a handle to make. The prototype's footer input is what the handle
+ * points at, which is what doc 16 says the handle is for.
+ */
+function wireHandles(): void {
+  attachHandles({ cards: cardsEl, handles: handlesEl }, (cardId) => {
+    const input = document
+      .getElementById(`card-${cardId}`)
+      ?.querySelector<HTMLInputElement>('.followup');
+    if (!input || input.disabled) return;
+    input.focus();
   });
 }
 
@@ -1169,6 +1189,7 @@ async function boot(): Promise<void> {
   wireComposer();
   wireCardActions();
   wireStickies();
+  wireHandles();
   wireBranching();
   wireBuildTrail();
   wireTitle();

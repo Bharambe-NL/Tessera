@@ -268,6 +268,36 @@ test('a quote is kept as a sticky, attached to its card, and taken off again', a
   await expect(page.locator('#stickies .sticky')).toHaveCount(0);
 });
 
+test('hovering a card offers four handles, and one puts the cursor in the follow-up', async ({
+  page,
+}) => {
+  // Doc 16 section 3.6: four handles on hover, which do what the card's footer
+  // input does. A Card carries a question and the store requires one, so there
+  // is no empty card for a handle to make.
+  await askFirst(page);
+  const card = page.locator('#cards .card').first();
+  const handles = page.locator('#handles');
+
+  await expect(handles).toBeHidden();
+  await card.hover();
+  await expect(handles).toBeVisible();
+  await expect(handles.locator('button')).toHaveCount(4);
+
+  // The handles are not in the card's own markup, which is what doc 12 phase
+  // 0's pan gate depends on: a hover that rebuilt a card would put the render
+  // diff back where it was.
+  const markup = await card.innerHTML();
+  expect(markup).not.toContain('data-side');
+
+  await handles.locator('[data-side="right"]').click();
+  await expect(card.locator('.followup')).toBeFocused();
+
+  // And the follow-up it focuses is the one that works.
+  await card.locator('.followup').fill('which article says so?');
+  await card.locator('.followup').press('Enter');
+  await expect(page.locator('#cards .card')).toHaveCount(2, { timeout: 30_000 });
+});
+
 test('escape puts the popover away without asking anything', async ({ page }) => {
   await askFirst(page);
   const parent = page.locator('#cards .card').first();
