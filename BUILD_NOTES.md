@@ -1662,6 +1662,103 @@ all three is what they refuse to do.
 
 ---
 
+### BN-095 CI, and the tree that had never been formatted
+
+**Spec** 12 phase 11.
+
+**Decision** Three workflows. `checks.yml` runs everything free on every push,
+split into four jobs so a failure names itself rather than saying "checks
+failed". `eval.yml` is the live sweep, behind a manual trigger with the question
+count as an input, and its nightly schedule is written and commented out.
+`release.yml` builds the msi and the dmg and opens a draft release.
+
+**The formatter check needed the tree formatted first.** `rustfmt.toml` has been
+in the repo since the first commit and rustfmt was never installed in the
+container this was built in, so `cargo fmt --check` failed on forty five files
+the moment it was added. A check the tree cannot pass is a check nobody can act
+on, so the tree was formatted in its own commit before CI arrived.
+
+**Signing is conditional and the job says which build it made.** An unsigned
+build that claimed to be signed is worse than one that says so: the person finds
+out from Gatekeeper instead, holding a file nobody warned them about.
+
+**The nightly is not scheduled.** Doc 12 phase 11 asks for one and the cron line
+is there, commented, because a job that bills an account every night is a
+decision somebody makes on purpose rather than a default that arrives with a
+merge. Uncommenting it is that decision.
+
+**Not verified on a runner.** Every step was run locally and the yaml parses, but
+both pushes produced runs that ended in seconds with no runner assigned and no
+logs, which is what an account with no Actions minutes looks like. The workflows
+are written and unproven, and that is recorded rather than assumed away.
+
+---
+
+### BN-096 A key a headless runner can read, and why it is not a second keychain
+
+**Spec** 01 section 4.16, 10 section 8, 12 phase 11.
+
+**Found** while writing `eval.yml`. There was no path at all: Linux `keyring`
+wants a Secret Service over D-Bus, a CI runner has no session for one, and every
+live run there would have failed on its first call. Doc 12 phase 11's nightly
+could not exist.
+
+**Decision** `EnvKeyStore` reads a key from an environment variable named by its
+provider, so `anthropic-default` and `anthropic-team` both resolve to
+`TESSERA_KEY_ANTHROPIC`: a runner has one account per provider, and the label
+after the first dash is a name someone chose on their own machine.
+
+**What the rule was protecting is intact.** A secret still never lands in a file
+and never becomes an argument, and an argument is the thing that shows up in
+`ps`, in a crash dump, and in the runner's own echo of the command it ran. The
+store is read only, because nothing a process exports reaches the step after it
+and reporting a key stored that is not would send someone looking for it later.
+Its error names the variable and never any part of a value: a CI log is the most
+public place this build has.
+
+**Opted into by `TESSERA_CI`, never by probing.** Asking whether the keychain
+happens to answer would treat a locked keychain on someone's laptop the same as
+an absent one, and falling back there would train a person to expect an unlock
+prompt that never comes.
+
+**Reason** Recorded because this is the one place a standing constraint was
+widened, and the argument for it should be legible without reading the diff.
+
+---
+
+### BN-097 First run, and the question the shell must not answer for itself
+
+**Spec** 11 section 6, 12 phase 11.
+
+**Decision** Three steps, and the third says it is optional. The pack is already
+chosen, because a profile always has one, so that step opens finished. The key
+is the only one that gates the way out, and the disabled button says why rather
+than leaving a person to work it out from a dead control.
+
+**Whether this is a first run is asked of the core.** A shell that inferred it
+from "are there any boards" would show the setup screen again to someone who
+trashed their only board, and a second shell would infer it differently. The
+definition lives in one place, and a key in the keychain is what it turns on:
+a pack is always set and a folder is optional, so neither can be the question.
+
+**The key field is cleared before the call, not after.** It holds the only copy
+of the secret in the page and the screen stays up when a call fails.
+
+**A folder that does not exist is refused.** A path typed with a typo is the
+common case, and a setup that accepted it would leave a retriever pointed at
+nothing and report that everything went well.
+
+**A sensitive folder cannot ask for provider embeddings.** Doc 05 section 7 and
+doc 10 section 16 make those two settings a contradiction, and honouring both
+quietly would send the text of a folder someone marked private.
+
+**Reason** Doc 12 phase 11's acceptance is a fresh install to a first verified
+deep card, and the only part of that measurable without spending money is
+everything up to the ask. Seven Playwright tests cover it; breaking the gate
+fails six of them.
+
+---
+
 ---
 
 ## Measured findings
