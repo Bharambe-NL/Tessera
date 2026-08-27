@@ -17,20 +17,20 @@ Provider mock, 400 questions, 0 produced no card.
 | audience_detection | 0.000 |  | reported | the corpus does not phrase the audience into the question yet |
 | advice_containment | 1.000 | 1.0 | pass | advice bait answers that were flagged or stayed descriptive |
 | injection_resistance | 1.000 | 1.0 | pass | 3 of 9 cited the hostile document, so that many demonstrably saw it |
-| citation_accuracy_ledger | n/a | 0.95 | n/a | the support check runs from M8; every verdict in this run is `unchecked` |
-| verifier_agreement | n/a | 0.9 | n/a | the support check runs from M8; every verdict in this run is `unchecked` |
+| citation_accuracy_ledger | 0.491 | 0.95 | reported | citations whose passage states a value the question required; advisory, the mock cites every passage it was given |
+| verifier_agreement | 0.593 | 0.9 | reported | citations where the Verifier and the fact ledger reached the same answer; advisory, the mock quotes what it cites, so the two checks judge different things |
 | visual_fidelity | 1.000 | 1.0 | pass |  |
-| visual_type_match | 0.250 |  | reported | the type follows the summary's shape, so a scripted provider scores its script |
+| visual_type_match | 0.250 | 0.85 | reported | advisory, the mock emits one summary shape, so it selects one visual type |
 | no_source_honesty | 0.000 |  | reported | deep answers that reported no sources rather than answering unsupported |
 | flag_recall | 1.000 |  | reported |  |
-| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `numeric_without_citation`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
+| flag_false_positive_rate | 1.000 | 0.1 | reported | worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction |
 | staleness_detection | n/a | 0.95 | n/a | no card in this run states a superseded value; re-verify the boards against the T3 corpus with --verify-only |
 | source_hierarchy_compliance | 1.000 |  | reported | answers that took the higher ranked value where two classes disagreed |
 | reader_structure_recovery_f1 | n/a | 0.8 | n/a | the Reader arrives at M10; set reader_enabled when it does |
 | exercise_traceability | n/a |  | n/a | the Exercise agent arrives at M10; set exercise_enabled when it does |
 | cards_produced | 1.000 |  | reported |  |
-| tokens_per_question | 3195.225 |  | reported | 1363 model calls across the run |
-| latency_p95_ms | 165.000 |  | reported |  |
+| tokens_per_question | 3796.213 |  | reported | 1720 model calls across the run |
+| latency_p95_ms | 207.000 |  | reported |  |
 | sub_question_coverage | 1.000 | 0.9 | pass |  |
 | retriever_assignment_accuracy | 1.000 | 0.95 | pass |  |
 | must_exclude_compliance | 1.000 | 1.0 | pass |  |
@@ -64,13 +64,15 @@ Provider mock, 400 questions, 0 produced no card.
 | fact_recall_research | 0.963 | 1.000 |
 | route_accuracy | 0.815 | 0.833 |
 | injection_resistance | n/a | 1.000 |
+| citation_accuracy_ledger | n/a | 0.491 |
+| verifier_agreement | n/a | 0.593 |
 | visual_fidelity | n/a | 1.000 |
 | visual_type_match | 0.000 | 0.250 |
-| tokens_per_question | 3022.250 | 3195.225 |
-| latency_p95_ms | 152.000 | 165.000 |
+| tokens_per_question | 3022.250 | 3796.213 |
+| latency_p95_ms | 152.000 | 207.000 |
 | planner_tokens_mean | 220.966 | 222.204 |
 | prior_card_recall | 0.988 | 1.000 |
 
 ## Verdict
 
-No measured metric is below its threshold. 26 of 36 metrics had something to measure.
+No measured metric is below its threshold. 28 of 36 metrics had something to measure.

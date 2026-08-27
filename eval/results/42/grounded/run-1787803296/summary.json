@@ -24,7 +24,7 @@
     "retrievers_enabled": true,
     "sample_per_depth": 3,
     "snapshot": "T1",
-    "support_check_enabled": false,
+    "support_check_enabled": true,
     "verify_only": false
   },
   "matchers_version": "1.0",
@@ -152,22 +152,22 @@
     {
       "denominator": 2142,
       "name": "citation_accuracy_ledger",
-      "note": "the support check runs from M8; every verdict in this run is `unchecked`",
-      "numerator": 0,
-      "reported": "n/a",
-      "threshold": 0.95,
-      "value": null,
-      "verdict": "n/a"
+      "note": "citations whose passage states a value the question required; advisory, the mock cites every passage it was given",
+      "numerator": 1051,
+      "reported": "0.491",
+      "threshold": null,
+      "value": 0.4906629318394024,
+      "verdict": "reported"
     },
     {
-      "denominator": 0,
+      "denominator": 2142,
       "name": "verifier_agreement",
-      "note": "the support check runs from M8; every verdict in this run is `unchecked`",
-      "numerator": 0,
-      "reported": "n/a",
-      "threshold": 0.9,
-      "value": null,
-      "verdict": "n/a"
+      "note": "citations where the Verifier and the fact ledger reached the same answer; advisory, the mock quotes what it cites, so the two checks judge different things",
+      "numerator": 1271,
+      "reported": "0.593",
+      "threshold": null,
+      "value": 0.5933706816059757,
+      "verdict": "reported"
     },
     {
       "denominator": 2662,
@@ -182,7 +182,7 @@
     {
       "denominator": 260,
       "name": "visual_type_match",
-      "note": "the type follows the summary's shape, so a scripted provider scores its script",
+      "note": "advisory, the mock emits one summary shape, so it selects one visual type",
       "numerator": 65,
       "reported": "0.250",
       "threshold": null,
@@ -210,10 +210,10 @@
       "verdict": "reported"
     },
     {
-      "denominator": 115,
+      "denominator": 111,
       "name": "flag_false_positive_rate",
-      "note": "worst rule `numeric_without_citation`; over threshold: injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
-      "numerator": 115,
+      "note": "worst rule `citation_unsupported`; over threshold: citation_unsupported, citation_weak_numeric, injection_suspected, length_and_format, numeric_without_citation, unsupported_claim; advisory, the mock writes crudely and trips these by construction",
+      "numerator": 111,
       "reported": "1.000",
       "threshold": null,
       "value": 1.0,
@@ -272,11 +272,11 @@
     {
       "denominator": 400,
       "name": "tokens_per_question",
-      "note": "1363 model calls across the run",
-      "numerator": 1278090,
-      "reported": "3195.225",
+      "note": "1720 model calls across the run",
+      "numerator": 1518485,
+      "reported": "3796.213",
       "threshold": null,
-      "value": 3195.225,
+      "value": 3796.2125,
       "verdict": "reported"
     },
     {
@@ -284,9 +284,9 @@
       "name": "latency_p95_ms",
       "note": "",
       "numerator": 0,
-      "reported": "165.000",
+      "reported": "207.000",
       "threshold": null,
-      "value": 165.0,
+      "value": 207.0,
       "verdict": "reported"
     },
     {
@@ -451,12 +451,12 @@
       "cards": 400,
       "cards_produced": 1.0,
       "citations": 2142,
-      "flags": 2554,
+      "flags": 2845,
       "forbidden": 0,
-      "input_tokens": 1036589,
-      "latency_p50_ms": 116,
+      "input_tokens": 1227772,
+      "latency_p50_ms": 161,
       "leg": "bulk",
-      "output_tokens": 241501,
+      "output_tokens": 290713,
       "questions": 400,
       "recall": 0.824,
       "recalled": 313,
@@ -465,6 +465,8 @@
   },
   "per_rule_false_positives": {
     "advice_request": 0.0,
+    "citation_unsupported": 1.0,
+    "citation_weak_numeric": 1.0,
     "injection_suspected": 1.0,
     "length_and_format": 1.0,
     "numeric_without_citation": 1.0,

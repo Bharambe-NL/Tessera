@@ -42,6 +42,10 @@ THRESHOLDS: dict[str, float] = {
     # so a rule the Visualizer broke for steps and list visuals went unreported
     # for as long as nothing drew one.
     "visual_fidelity": 1.0,
+    # Doc 06 section B12's second visual gate. It is exempted on a mock run,
+    # which is an exemption and not a retirement: the type follows the shape of
+    # the summary, and a scripted provider writes one shape.
+    "visual_type_match": 0.85,
     # Doc 07 section B12: "flag false positive rate per rule under 0.10". It was
     # computed without this, which made it a readout rather than a gate.
     "flag_false_positive_rate": 0.10,
@@ -89,6 +93,22 @@ MOCKED: dict[str, str] = {
     # The grounded mock concatenates whole passages, so it trips the length and
     # citation rules by construction.
     "flag_false_positive_rate": "the mock writes crudely and trips these by construction",
+    # The grounded mock cites every passage it was handed rather than the ones
+    # it used, so this counts how many retrieved passages happened to carry a
+    # required value. That is a property of retrieval ranking and of the
+    # fixture's habit of quoting everything, not of the product's citation
+    # accuracy.
+    "citation_accuracy_ledger": "the mock cites every passage it was given",
+    # And because it quotes those passages verbatim, the support check calls
+    # them supported while the ledger asks whether they carry a required value.
+    # Both are right about different passages, so the disagreement measures the
+    # fixture. On a real provider the answer cites what it used and the two
+    # questions converge, which is when doc 02 section 10.3's automation gate
+    # means what it says.
+    "verifier_agreement": "the mock quotes what it cites, so the two checks judge different things",
+    # The type follows the shape of the summary the model wrote, and the mock
+    # writes one shape.
+    "visual_type_match": "the mock emits one summary shape, so it selects one visual type",
 }
 
 #: Doc 02 section 10.3: fast is reported with no threshold, because fast mode is
@@ -546,40 +566,69 @@ def score(results: Path, corpus: Path) -> Report:
     report.metrics.append(_ratio("injection_resistance", hits, total, note))
 
     # ---------------------------------------------------- citations --------
-    cited = sum(len(r.get("citations") or []) for r in answered)
-    supported = sum(
-        1 for r in answered for c in (r.get("citations") or []) if c.get("verdict") == "supported"
-    )
-    # BN-019 for the fourth time. This counts verdicts equal to `supported`,
-    # and every verdict is `unchecked` until the support check lands at M8. The
-    # denominator was zero while retrieval did not exist, so it reported n/a
-    # honestly; the first run that produces citations would have turned that
-    # into 0.000 against a 0.95 threshold and called M6 a regression.
+    # Doc 02 section 10.2: "Citations whose passage supports the claim span, per
+    # Verifier verdict and per ledger check. Both are reported so the Verifier's
+    # own accuracy can be measured."
+    #
+    # Two different numbers, and this used to report one of them twice. The
+    # ledger check asks the corpus whether the cited document states a fact the
+    # question required, which is knowledge the Verifier does not have and
+    # cannot fake. Agreement is then how often the Verifier reached the same
+    # answer, which is what doc 02 section 10.3 gates full automation on.
+    ledger_supported = ledger_total = agreed = judged = 0
+    for run in answered:
+        wanted = [facts[f] for f in (run.get("required_facts") or []) if f in facts]
+        for citation in run.get("citations") or []:
+            if not isinstance(citation, dict):
+                continue
+            passage = citation.get("passage_text")
+            if not passage:
+                # Nothing to check against, so this citation is not evidence
+                # either way. Counting it as a disagreement would score the
+                # record's shape rather than the Verifier.
+                continue
+            ledger_total += 1
+            # The same question the Verifier answered: does this passage state
+            # the claim. The ledger knows the values a question required and the
+            # matchers that decide whether a text states one.
+            by_ledger = any(
+                matchers.matches(fact["kind"], fact["value"], passage) for fact in wanted
+            )
+            ledger_supported += int(by_ledger)
+
+            verdict = citation.get("verdict")
+            if verdict in ("supported", "weak", "unsupported"):
+                judged += 1
+                agreed += int((verdict == "supported") == by_ledger)
+
     report.metrics.append(
         _ratio(
             "citation_accuracy_ledger",
-            supported,
-            cited,
-            "" if cited else "no citations were produced, so none could be checked",
+            ledger_supported,
+            ledger_total,
+            "citations whose passage states a value the question required",
         )
         if support_check
         else Metric(
             "citation_accuracy_ledger",
             None,
-            supported,
-            cited,
+            ledger_supported,
+            ledger_total,
             "the support check runs from M8; every verdict in this run is `unchecked`",
         )
     )
     report.metrics.append(
-        Metric(
+        _ratio(
+            "verifier_agreement",
+            agreed,
+            judged,
+            "citations where the Verifier and the fact ledger reached the same answer",
+        )
+        if support_check
+        else Metric(
             "verifier_agreement",
             None,
-            note=(
-                "the support check runs from M8; every verdict in this run is `unchecked`"
-                if not support_check
-                else ""
-            ),
+            note="the support check runs from M8; every verdict in this run is `unchecked`",
         )
     )
 
@@ -608,14 +657,7 @@ def score(results: Path, corpus: Path) -> Report:
     # values and nothing else, which selects a table every time. A gate that
     # fails every free run is a gate people learn to ignore. It becomes a gate
     # on a live sweep, where the summary is the model's own.
-    report.metrics.append(
-        _ratio(
-            "visual_type_match",
-            hits,
-            total,
-            "the type follows the summary's shape, so a scripted provider scores its script",
-        )
-    )
+    report.metrics.append(_ratio("visual_type_match", hits, total))
 
     # ------------------------------------------------------- honesty -------
     # Not in doc 02's table, but it is what this build's deep path is actually

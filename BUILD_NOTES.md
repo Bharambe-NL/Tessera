@@ -679,6 +679,46 @@ The metric's note now carries how many of those questions actually cited the hos
 because retrieval decides that and not the question set. On the first run it was 3 of 9: the gate
 reads 1.000 and the exposure behind it is three answers.
 
+### BN-060 The ledger check has to ask the Verifier's question, not a neighbouring one
+
+**Spec** 02 section 10.2: "Citations whose passage supports the claim span, per Verifier verdict and
+per ledger check. Both are reported so the Verifier's own accuracy can be measured."
+
+**Decision** `citation_accuracy_ledger` is the share of citations whose passage states a value the
+question required, decided by the same matchers the corpus was verified with.
+`verifier_agreement` is how often the Verifier reached that same answer. The run record carries the
+cited passage text so the scorer can ask the question at all.
+
+**Reason** The first implementation counted verdicts equal to `supported` and called it the ledger
+check, which reported the Verifier's own opinion twice and could never measure its accuracy. The
+second asked whether the cited *document* states a required fact, which is a different question from
+the one the Verifier answers, and scored the difference as disagreement: 0.609 where most of the gap
+was definitional. A gate at 0.90 that measures the wrong comparison is worse than one that reports
+n/a.
+
+### BN-061 The support check runs, and its two gates stay advisory on a mock
+
+**Spec** 07 section B8.2, and 02 section 10.3's 0.90 agreement gate.
+
+**Decision** The support check is live: one batched call on the verify stage, then the deterministic
+override, with unsupported and weak-numeric raising the flags B8.2 names and a provider failure
+falling to all weak plus a card flag. `support_check_enabled` is now true, so the verdicts in a run
+record are real. `citation_accuracy_ledger` and `verifier_agreement` join `route_accuracy` and
+`flag_false_positive_rate` in `MOCKED`.
+
+**Reason** The grounded mock cites every passage it was handed and quotes them verbatim. The support
+check therefore calls almost everything supported, while the ledger asks whether the passage carries
+a required value, and the two disagree on every passage that was retrieved but not needed. Both
+readings are correct about different passages; the disagreement is the fixture's. On a real provider
+the answer cites what it used and the two questions converge, which is the run where doc 02 section
+10.3's automation gate means what it says. Until that run happens
+`verifier_below_threshold` keeps firing on every deep card, which is doc 07 section B9's own
+fallback and the honest state.
+
+The exemption is an exemption and not a retirement: a guard test already refuses any name in
+`MOCKED` that has no threshold to be exempted from, which is how `visual_type_match` got its doc 06
+section B12 threshold back after being briefly left ungated.
+
 ---
 
 ## Measured findings

@@ -791,7 +791,7 @@ pub fn ancestor_chain(store: &Store, card_id: &str, limit: usize) -> Result<Vec<
 fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
     let conn = store.conn();
     let mut stmt = conn.prepare(
-        "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale
+        "SELECT c.ordinal, s.title, s.class, s.locator, c.verifier_verdict, s.stale, p.text
          FROM citation c JOIN passage p ON p.id = c.passage_id JOIN source s ON s.id = p.source_id
          WHERE c.card_id = ?1 ORDER BY c.ordinal ASC",
     )?;
@@ -804,6 +804,12 @@ fn read_citations(store: &Store, card_id: &str) -> Result<Vec<Value>> {
                 "locator": r.get::<_, String>(3)?,
                 "verdict": r.get::<_, String>(4)?,
                 "stale": r.get::<_, i64>(5)? != 0,
+                // Doc 02 section 10.2 reports citation accuracy per Verifier
+                // verdict *and* per ledger check, and the ledger check has to
+                // ask the same question the Verifier did. Without the passage
+                // the scorer could only ask a different one and call the gap
+                // disagreement.
+                "passage_text": r.get::<_, Option<String>>(6)?.unwrap_or_default(),
             }))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?)

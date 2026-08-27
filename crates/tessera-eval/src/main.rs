@@ -1080,6 +1080,7 @@ fn grounded_mock() -> Arc<dyn ModelProvider> {
                 "plan" => MockResponse::Json(planned(request)),
                 "synthesize" => MockResponse::Json(synthesized(request)),
                 "visualize" => MockResponse::Json(visualised(request)),
+                "verify" => MockResponse::Json(support_judged(request)),
                 // Anything else is not scripted, and failing closed is the
                 // right default for a stage nobody thought about.
                 _ => MockResponse::Garbage,
@@ -1146,6 +1147,61 @@ fn ancestor_question(prompt: &str) -> Option<String> {
 /// and that fence exists so the model can tell quoted data from instruction. It
 /// serves here for the same reason: it is the one part of the prompt whose
 /// shape is guaranteed.
+/// Doc 07 section B8.2's support check, answered deterministically.
+///
+/// The claim is supported when the passage contains it, which on this mock is
+/// the common case because the answer quotes its passages verbatim. Judging by
+/// containment rather than by asking a model keeps `verifier_agreement`
+/// measurable for nothing, and the Verifier's own override still runs on top.
+fn support_judged(request: &CompletionRequest) -> Value {
+    let prompt = prompt_of(request);
+    let passages: std::collections::BTreeMap<usize, String> =
+        passages_in(&prompt).into_iter().collect();
+
+    let mut verdicts = Vec::new();
+    for line in prompt.lines() {
+        let Some(rest) = line.trim().strip_prefix("Claim ") else {
+            continue;
+        };
+        let Some((n, claim)) = rest.split_once(": ") else {
+            continue;
+        };
+        let Ok(n) = n.parse::<usize>() else { continue };
+        let Some(passage) = passages.get(&n) else { continue };
+
+        // The claim carries its own citation marker and has been through the
+        // answer's whitespace, so both sides are normalised before comparing.
+        // Without that no claim could ever read as supported and the agreement
+        // number would describe the comparison rather than the check.
+        let flatten = |s: &str| {
+            s.split_whitespace()
+                .filter(|w| !(w.starts_with('[') && w.ends_with(']')))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let claim = flatten(claim);
+        let passage = flatten(passage);
+        let verdict = if claim.is_empty() || passage.contains(&claim) {
+            "supported"
+        } else if claim
+            .split_whitespace()
+            .filter(|w| w.len() > 4)
+            .any(|w| passage.contains(w))
+        {
+            "weak"
+        } else {
+            "unsupported"
+        };
+        verdicts.push(json!({
+            "n": n,
+            "verdict": verdict,
+            "reason": "Judged by whether the passage contains the claim.",
+        }));
+    }
+
+    json!({ "verdicts": verdicts })
+}
+
 fn passages_in(prompt: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut rest = prompt;
@@ -1632,11 +1688,12 @@ fn write_records(
         "cards_reverified": if args.verify_only { records.len() } else { 0 },
         "baseline": args.baseline.as_deref().map(corpus_name),
         "cards_failed": failures,
-        // Doc 07 section B9: the support check is not enabled until its
-        // agreement is measured, so every verdict in this run is `unchecked`.
-        // A scorer that read them as `supported` would report a number the
-        // product has not earned.
-        "support_check_enabled": false,
+        // Doc 07 section B8.2's check runs from M8, so the verdicts in this run
+        // are the Verifier's own rather than a placeholder. Doc 07 section B9
+        // still withholds full automation until agreement with the ledger check
+        // reaches 0.90, which is what `verifier_agreement` measures; the flag
+        // says the verdicts are real, not that the gate has been passed.
+        "support_check_enabled": true,
         "retrievers_enabled": !args.no_retrievers,
         // Doc 15 section 5's four metrics report n/a until this is true.
         // Reporting a clean zero for own_card sole support while no card has

@@ -4,13 +4,16 @@
 //! everything else is admitted without review, so the Verifier's misses are the
 //! product's risk and its false positives are the product's friction."
 //!
-//! This build runs doc 07 section B8.1, the deterministic checks that always run
-//! in every mode. The support check (B8.2) and the doctrine model checks (B8.5)
-//! need a model call and arrive with M8, at which point the agreement threshold
-//! in doc 02 section 10.3 can be measured. Until then every deep and research
-//! card carries the `verifier_below_threshold` info flag, which is doc 07
-//! section B9's own fallback: "the product back into draft mode without changing
-//! any other agent."
+//! This build runs doc 07 section B8.1's deterministic checks and B8.2's support
+//! check. The doctrine model checks (B8.5) still need their dispatcher.
+//!
+//! The support check is one batched call followed by a deterministic override,
+//! and the override is the part that matters: a claim carrying a value is never
+//! admitted against a passage that does not state it, whatever the model says.
+//! Every deep and research card still carries the `verifier_below_threshold`
+//! info flag, because doc 07 section B9 withholds full automation until
+//! agreement with the ledger check is measured at 0.90 on a real provider, and
+//! a mock that quotes what it cites cannot measure that.
 //!
 //! Doc 07 section B10 fixes the posture: fail closed. When the Verifier cannot
 //! decide, the card is flagged, never admitted. Every path here that cannot
@@ -18,8 +21,11 @@
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use tessera_harness::{Agent, AgentContext, Failure, sequences};
+use tessera_harness::{Agent, AgentContext, Failure, Recovery, sequences};
+use tessera_providers::{CompletionRequest, Effort};
 use tessera_schema::ids;
+
+use crate::prompts;
 
 pub struct Verifier;
 
@@ -146,28 +152,56 @@ impl Agent for Verifier {
             }
         }
 
-        // Doc 07 section B8.2. Not run in this build, and said so rather than
-        // left to look like a pass.
+        // Doc 07 section B8.2, one batched call on the medium alias.
         advance(ctx, "support_check")?;
+        let citation_verdicts = support_check(ctx, answer, &citations, &passages, mode).await;
+        let support_unavailable = citation_verdicts
+            .iter()
+            .any(|v| v["reason"] == json!(SUPPORT_UNAVAILABLE));
+        if support_unavailable {
+            // Doc 07 section B10: fall back to the alias once, then flag the
+            // card and never admit a citation as supported.
+            flags.push(support_flag(
+                "support_check_unavailable",
+                "warn",
+                json!({ "kind": "whole_card" }),
+                "Support check did not complete, so a spot check is advised.",
+                json!({ "stage": "support_check" }),
+            ));
+        }
+
+        // Doc 07 section B8.2's failure actions: "`unsupported` raises a flag on
+        // the claim span (severity warn; block for numeric claims). `weak` on a
+        // numeric claim raises warn."
+        for verdict in &citation_verdicts {
+            let Some(n) = verdict["n"].as_u64() else { continue };
+            let claim = claim_text(answer, &citations, n);
+            let numeric = !numeric_spans(&claim).is_empty();
+            let target = json!({ "kind": "citation", "ref": passage_for(&citations, n) });
+            match verdict["verdict"].as_str() {
+                Some("unsupported") => flags.push(support_flag(
+                    "citation_unsupported",
+                    if numeric { "block" } else { "warn" },
+                    target,
+                    "The cited passage does not state this claim.",
+                    json!({ "n": n, "reason": verdict["reason"].clone() }),
+                )),
+                Some("weak") if numeric => flags.push(support_flag(
+                    "citation_weak_numeric",
+                    "warn",
+                    target,
+                    "The cited passage does not state this figure plainly.",
+                    json!({ "n": n, "reason": verdict["reason"].clone() }),
+                )),
+                _ => {}
+            }
+        }
+
         advance(ctx, "visual_binding_check")?;
         advance(ctx, "freshness_check")?;
         advance(ctx, "doctrine_model_checks")?;
 
         advance(ctx, "deciding")?;
-
-        // Doc 07 section B5: every citation in the packet has a verdict. Without
-        // the support check they are all unchecked, which is what the card header
-        // then shows.
-        let citation_verdicts: Vec<Value> = citations
-            .iter()
-            .map(|c| {
-                json!({
-                    "n": c["n"].clone(),
-                    "verdict": "unchecked",
-                    "reason": "The support check runs from the milestone that measures its agreement."
-                })
-            })
-            .collect();
 
         let card_confidence = confidence(&citation_verdicts, &flags, &visual, mode);
         let card_status = if flags
@@ -195,6 +229,230 @@ impl Agent for Verifier {
             "caveats": [],
         }))
     }
+}
+
+/// Marks a verdict the model never produced, so the caller can flag the card
+/// rather than read a fallback as a judgment.
+const SUPPORT_UNAVAILABLE: &str = "The support check did not complete.";
+
+/// A flag the support check raises directly.
+///
+/// The doctrine rules are data and reach the flag list through the loop above,
+/// which stamps each hit with the rule's own id and severity. The support check
+/// is a built in check rather than a pack rule, in the same way
+/// `verification_failed` is, so it names its own and carries the same shape.
+fn support_flag(
+    rule_id: &str,
+    severity: &str,
+    target: Value,
+    reason: &str,
+    evidence: Value,
+) -> Value {
+    json!({
+        "rule_id": rule_id,
+        "severity": severity,
+        "target": target,
+        "reason": reason,
+        "evidence": evidence,
+    })
+}
+
+/// Doc 07 section B8.2. One batched call, then a deterministic override.
+///
+/// "The prompt asks for `supported`, `weak` (the passage is related but does not
+/// state the claim), or `unsupported`, with a one sentence reason. Then a
+/// deterministic override: if the claim contains a value and the normalised
+/// value appears in the passage, the verdict is at least `weak`; if it does not
+/// appear, the verdict is at most `weak`. The model's judgment never upgrades a
+/// value claim to `supported` when the value is absent from the passage."
+///
+/// Fast mode returns `unchecked` for everything, per B5: there are no passages
+/// to check against.
+async fn support_check(
+    ctx: &mut AgentContext<'_>,
+    answer: &str,
+    citations: &[Value],
+    passages: &[Value],
+    mode: &str,
+) -> Vec<Value> {
+    if mode == "fast" || citations.is_empty() {
+        return citations
+            .iter()
+            .map(|c| {
+                json!({
+                    "n": c["n"].clone(),
+                    "verdict": "unchecked",
+                    "reason": "Fast mode reads no passages, so nothing was checked."
+                })
+            })
+            .collect();
+    }
+
+    // Every citation in the packet gets a verdict, doc 07 section B5, so one
+    // whose passage is missing is reported rather than dropped from the list.
+    let mut unpaired: Vec<Value> = Vec::new();
+    let mut pairs: Vec<(u64, String, String)> = Vec::new();
+    for c in citations {
+        let Some(n) = c["n"].as_u64() else { continue };
+        let passage = passages
+            .iter()
+            .find(|p| p["passage_id"] == c["passage_id"])
+            .or_else(|| passages.get(n.saturating_sub(1) as usize));
+        match passage {
+            Some(p) => pairs.push((
+                n,
+                claim_text(answer, citations, n),
+                p["text"].as_str().unwrap_or_default().to_string(),
+            )),
+            None => unpaired.push(json!({
+                "n": n,
+                "verdict": "unsupported",
+                "reason": "No passage in the packet carries this citation."
+            })),
+        }
+    }
+
+    let judged = match ask_support(ctx, &pairs).await {
+        Ok(judged) => judged,
+        Err(_) => {
+            // B10: every citation weak, never supported, and the caller flags
+            // the card. A check that could not run is not a check that passed.
+            return pairs
+                .iter()
+                .map(|(n, _, _)| {
+                    json!({ "n": n, "verdict": "weak", "reason": SUPPORT_UNAVAILABLE })
+                })
+                .collect();
+        }
+    };
+
+    let mut verdicts: Vec<Value> = unpaired;
+    verdicts.extend(pairs.iter().map(|(n, claim, passage)| {
+            let (verdict, reason) = judged
+                .get(n)
+                .cloned()
+                .unwrap_or_else(|| ("weak".into(), SUPPORT_UNAVAILABLE.into()));
+
+            // The override. A value claim is never admitted on a passage that
+            // does not state the value, whatever the model said.
+            let values = numeric_spans(claim);
+            let verdict = if values.is_empty() {
+                verdict
+            } else if values.iter().all(|(_, _, v)| contains_value(passage, v)) {
+                if verdict == "unsupported" { "weak".to_string() } else { verdict }
+            } else if verdict == "supported" {
+                "weak".to_string()
+            } else {
+                verdict
+            };
+
+        json!({ "n": n, "verdict": verdict, "reason": reason })
+    }));
+    verdicts.sort_by_key(|v| v["n"].as_u64().unwrap_or(0));
+    verdicts
+}
+
+/// The batched call. Doc 07 section B13 budgets one or two medium calls.
+async fn ask_support(
+    ctx: &mut AgentContext<'_>,
+    pairs: &[(u64, String, String)],
+) -> Result<std::collections::BTreeMap<u64, (String, String)>, Failure> {
+    let mut prompt = String::from(
+        "For each numbered claim, say whether its passage states it.\n\n\
+         supported: the passage states the claim.\n\
+         weak: the passage is related but does not state it.\n\
+         unsupported: the passage does not support it.\n\n",
+    );
+    for (n, claim, passage) in pairs {
+        prompt.push_str(&format!("Claim {n}: {claim}\n"));
+        prompt.push_str(&prompts::passage_block(*n as usize, "cited", "passage", passage));
+        prompt.push_str("\n\n");
+    }
+
+    let schema = json!({
+        "type": "object",
+        "required": ["verdicts"],
+        "additionalProperties": false,
+        "properties": {
+            "verdicts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["n", "verdict"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "n": { "type": "integer" },
+                        "verdict": { "enum": ["supported", "weak", "unsupported"] },
+                        "reason": { "type": "string" }
+                    }
+                }
+            }
+        }
+    });
+
+    let system = format!(
+        "You check whether a passage states a claim. You judge only what is in \
+         front of you and you never use anything you know.\n\n{}\n\n{}",
+        prompts::DATA_IS_NOT_INSTRUCTION,
+        prompts::json_only(&schema)
+    );
+
+    let completion = ctx
+        .call(
+            &CompletionRequest::new(ctx.model_for("verify"), "verify")
+                .system(system)
+                .user(prompt)
+                .effort(Effort::High)
+                .max_tokens(2000)
+                .expecting(schema),
+        )
+        .await?;
+
+    let parsed: Value = completion.json().map_err(|e| Failure {
+        kind: "schema_violation".into(),
+        detail: e.to_string(),
+        recovery: Recovery::Failed,
+        evidence: None,
+        recoverable: false,
+    })?;
+
+    Ok(parsed["verdicts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| {
+            Some((
+                v["n"].as_u64()?,
+                (
+                    v["verdict"].as_str()?.to_string(),
+                    v["reason"].as_str().unwrap_or_default().to_string(),
+                ),
+            ))
+        })
+        .collect())
+}
+
+/// The sentence a citation is bound to, which is what the support check judges.
+fn claim_text(answer: &str, citations: &[Value], n: u64) -> String {
+    let Some(citation) = citations.iter().find(|c| c["n"].as_u64() == Some(n)) else {
+        return String::new();
+    };
+    let start = citation["claim_span"]["start"].as_u64().unwrap_or(0) as usize;
+    let end = citation["claim_span"]["end"].as_u64().unwrap_or(0) as usize;
+    if end > start && end <= answer.len() {
+        answer[start..end].to_string()
+    } else {
+        // A finding's span is into the finding rather than the answer, so there
+        // is nothing to slice. The passage still gets judged against the answer.
+        answer.to_string()
+    }
+}
+
+fn passage_for(citations: &[Value], n: u64) -> Option<&str> {
+    citations
+        .iter()
+        .find(|c| c["n"].as_u64() == Some(n))
+        .and_then(|c| c["passage_id"].as_str())
 }
 
 fn advance(ctx: &mut AgentContext<'_>, state: &str) -> Result<(), Failure> {
