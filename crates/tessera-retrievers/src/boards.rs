@@ -86,7 +86,12 @@ pub fn index_card(
         return Ok(false);
     };
 
-    let digest = digest(&question, answer.as_deref(), findings.as_deref(), &citations(conn, card_id)?);
+    let digest = digest(
+        &question,
+        answer.as_deref(),
+        findings.as_deref(),
+        &citations(conn, card_id)?,
+    );
 
     index::write_document(
         conn,
@@ -156,12 +161,7 @@ fn citations(conn: &Connection, card_id: &str) -> rusqlite::Result<Vec<String>> 
 /// passage, "which the boards passage carries in its digest". Without them the
 /// prior card is a dead end, and citing it would be the loop the whole memory
 /// rule exists to prevent.
-pub fn digest(
-    question: &str,
-    answer: Option<&str>,
-    findings: Option<&str>,
-    citations: &[String],
-) -> String {
+pub fn digest(question: &str, answer: Option<&str>, findings: Option<&str>, citations: &[String]) -> String {
     let mut out = String::new();
     out.push_str("Prior work on this profile's own board, for context only.\n");
     out.push_str("Question: ");
@@ -273,8 +273,14 @@ mod tests {
         let id = card(&mut store, &board, "deep", "done");
         assert!(index_card(store.conn(), &profile, &id, None).expect("index"));
 
-        let hits = index::search(store.conn(), &[BOARDS_FOLDER.into()], "capital conservation buffer", None, 5)
-            .expect("search");
+        let hits = index::search(
+            store.conn(),
+            &[BOARDS_FOLDER.into()],
+            "capital conservation buffer",
+            None,
+            5,
+        )
+        .expect("search");
         assert_eq!(hits.len(), 1);
         assert!(hits[0].document_ref.starts_with(&format!("{board}/{id}")));
     }
@@ -320,12 +326,21 @@ mod tests {
 
         store
             .conn()
-            .execute("UPDATE board SET status = 'trashed' WHERE id = ?1", params![board])
+            .execute(
+                "UPDATE board SET status = 'trashed' WHERE id = ?1",
+                params![board],
+            )
             .expect("trash");
         assert!(!index_card(store.conn(), &profile, &id, None).expect("reindex"));
 
-        let hits = index::search(store.conn(), &[BOARDS_FOLDER.into()], "capital conservation buffer", None, 5)
-            .expect("search");
+        let hits = index::search(
+            store.conn(),
+            &[BOARDS_FOLDER.into()],
+            "capital conservation buffer",
+            None,
+            5,
+        )
+        .expect("search");
         assert!(hits.is_empty(), "a trashed board still answered");
     }
 
@@ -342,7 +357,10 @@ mod tests {
             &["CAR3 v1 (reg-car3-v1.md)".to_string()],
         );
         assert!(text.contains("context only"), "{text}");
-        assert!(text.contains("CAR3 v1"), "the original citation is missing: {text}");
+        assert!(
+            text.contains("CAR3 v1"),
+            "the original citation is missing: {text}"
+        );
         assert!(text.contains("It applies from 2026."));
     }
 

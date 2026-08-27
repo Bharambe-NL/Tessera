@@ -367,7 +367,12 @@ fn handle(stream: &mut TcpStream, root: &Path, core: &mut Core, router: &tessera
     if method == "POST" && path == "/reset" {
         *core = Core::in_memory(mock()).expect("core comes up");
         core.use_pack("general").expect("pack");
-        respond(stream, "200 OK", "application/json; charset=utf-8", b"{\"reset\":true}");
+        respond(
+            stream,
+            "200 OK",
+            "application/json; charset=utf-8",
+            b"{\"reset\":true}",
+        );
         return;
     }
 
@@ -384,7 +389,12 @@ fn handle(stream: &mut TcpStream, root: &Path, core: &mut Core, router: &tessera
         let reply = router
             .dispatch_str(core, &raw)
             .unwrap_or_else(|| "{}".to_string());
-        respond(stream, "200 OK", "application/json; charset=utf-8", reply.as_bytes());
+        respond(
+            stream,
+            "200 OK",
+            "application/json; charset=utf-8",
+            reply.as_bytes(),
+        );
         return;
     }
 

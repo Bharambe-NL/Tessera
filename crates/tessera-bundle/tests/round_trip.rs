@@ -105,7 +105,11 @@ fn seeded(p: &mut Profile, source_class: &str, locator: &str) -> String {
 
     repo::write_answer(
         &mut p.store,
-        repo::CardRef { card_id: &card, board_id: &board, run_id: &run },
+        repo::CardRef {
+            card_id: &card,
+            board_id: &board,
+            run_id: &run,
+        },
         "The buffer is 2.5 per cent.",
         &json!([]),
         &json!({ "agent_id": "synthesizer" }),
@@ -116,7 +120,11 @@ fn seeded(p: &mut Profile, source_class: &str, locator: &str) -> String {
     repo::write_citation(
         &mut p.store,
         &p.profile,
-        repo::CardRef { card_id: &card, board_id: &board, run_id: &run },
+        repo::CardRef {
+            card_id: &card,
+            board_id: &board,
+            run_id: &run,
+        },
         repo::NewCitation {
             ordinal: 1,
             source_title: "The rule",
@@ -134,7 +142,11 @@ fn seeded(p: &mut Profile, source_class: &str, locator: &str) -> String {
 
     repo::finish_card(
         &mut p.store,
-        repo::CardRef { card_id: &card, board_id: &board, run_id: &run },
+        repo::CardRef {
+            card_id: &card,
+            board_id: &board,
+            run_id: &run,
+        },
         0.9,
         &[(1, "supported".to_string())],
         &json!({}),
@@ -166,7 +178,12 @@ fn seeded(p: &mut Profile, source_class: &str, locator: &str) -> String {
     board
 }
 
-fn round_trip(from: &mut Profile, board: &str, options: &ExportOptions, to: &mut Profile) -> (Value, tessera_bundle::ImportOutcome) {
+fn round_trip(
+    from: &mut Profile,
+    board: &str,
+    options: &ExportOptions,
+    to: &mut Profile,
+) -> (Value, tessera_bundle::ImportOutcome) {
     let mut archive = Cursor::new(Vec::new());
     let manifest = export(&mut from.store, &registry(), board, options, &mut archive).expect("export");
     archive.set_position(0);
@@ -184,7 +201,10 @@ fn a_board_arrives_whole_on_a_second_machine() {
     let board = seeded(&mut sender, "web", "https://example.test/rules");
     let mut receiver = profile("general");
 
-    let options = ExportOptions { exported_by: Some("A name".into()), ..Default::default() };
+    let options = ExportOptions {
+        exported_by: Some("A name".into()),
+        ..Default::default()
+    };
     let (manifest, outcome) = round_trip(&mut sender, &board, &options, &mut receiver);
 
     assert_eq!(manifest["format_version"], "1.0");
@@ -193,8 +213,22 @@ fn a_board_arrives_whole_on_a_second_machine() {
 
     // Doc 01 section 7: imported rows keep their ids, so the recipient's copy
     // is the same board rather than a lookalike.
-    assert_eq!(one(&receiver.store, "SELECT COUNT(*) FROM board WHERE id = ?1", &board), 1);
-    assert_eq!(one(&receiver.store, "SELECT COUNT(*) FROM card WHERE board_id = ?1", &board), 1);
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM board WHERE id = ?1",
+            &board
+        ),
+        1
+    );
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM card WHERE board_id = ?1",
+            &board
+        ),
+        1
+    );
 
     // And the citation resolves, which is the whole reason passages travel: the
     // recipient can audit the claim without retrieving anything again.
@@ -215,7 +249,11 @@ fn a_board_arrives_whole_on_a_second_machine() {
     let forked: String = receiver
         .store
         .conn()
-        .query_row("SELECT forked_from_bundle_id FROM board WHERE id = ?1", [&board], |r| r.get(0))
+        .query_row(
+            "SELECT forked_from_bundle_id FROM board WHERE id = ?1",
+            [&board],
+            |r| r.get(0),
+        )
         .expect("forked_from_bundle_id");
     assert_eq!(forked, manifest["bundle_id"].as_str().unwrap());
 }
@@ -230,20 +268,45 @@ fn importing_the_same_bundle_twice_changes_nothing() {
     let mut receiver = profile("general");
 
     let mut archive = Cursor::new(Vec::new());
-    export(&mut sender.store, &registry(), &board, &ExportOptions::default(), &mut archive).expect("export");
+    export(
+        &mut sender.store,
+        &registry(),
+        &board,
+        &ExportOptions::default(),
+        &mut archive,
+    )
+    .expect("export");
 
     for pass in 1..=2 {
         archive.set_position(0);
-        let outcome = import(&mut receiver.store, &receiver.profile.clone(), archive.clone())
-            .expect("import");
+        let outcome =
+            import(&mut receiver.store, &receiver.profile.clone(), archive.clone()).expect("import");
         if pass == 2 {
-            assert_eq!(outcome.written.get("cards.jsonl"), None, "the second import wrote cards");
+            assert_eq!(
+                outcome.written.get("cards.jsonl"),
+                None,
+                "the second import wrote cards"
+            );
             assert_eq!(outcome.skipped.get("cards.jsonl"), Some(&1));
         }
     }
 
-    assert_eq!(one(&receiver.store, "SELECT COUNT(*) FROM card WHERE board_id = ?1", &board), 1);
-    assert_eq!(one(&receiver.store, "SELECT COUNT(*) FROM citation WHERE card_id IN (SELECT id FROM card WHERE board_id = ?1)", &board), 1);
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM card WHERE board_id = ?1",
+            &board
+        ),
+        1
+    );
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM citation WHERE card_id IN (SELECT id FROM card WHERE board_id = ?1)",
+            &board
+        ),
+        1
+    );
 }
 
 #[test]
@@ -260,7 +323,11 @@ fn a_source_the_recipient_already_has_merges_by_dedupe_key() {
     let (_, outcome) = round_trip(&mut sender, &board, &ExportOptions::default(), &mut receiver);
     assert_eq!(outcome.sources_merged, 1);
     assert_eq!(
-        one(&receiver.store, "SELECT COUNT(*) FROM source WHERE profile_id = ?1", &receiver.profile),
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM source WHERE profile_id = ?1",
+            &receiver.profile
+        ),
         1,
         "the same page arrived as a second Source"
     );
@@ -332,7 +399,11 @@ fn a_concept_term_collision_keeps_both_and_links_them() {
 fn a_local_document_does_not_travel_unless_the_author_says_so() {
     // Doc 01 section 7's checklist. The default is that nothing local leaves.
     let mut sender = profile("general");
-    let board = seeded(&mut sender, "local_document", "/home/someone/Private/Risk/rules.pdf");
+    let board = seeded(
+        &mut sender,
+        "local_document",
+        "/home/someone/Private/Risk/rules.pdf",
+    );
 
     let check = preflight(&sender.store, &board).expect("preflight");
     assert_eq!(check.local_documents.len(), 1);
@@ -343,22 +414,41 @@ fn a_local_document_does_not_travel_unless_the_author_says_so() {
 
     assert_eq!(manifest["local_documents"][0]["included"], false);
     assert_eq!(
-        one(&receiver.store, "SELECT COUNT(*) FROM source WHERE profile_id = ?1", &receiver.profile),
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM source WHERE profile_id = ?1",
+            &receiver.profile
+        ),
         0,
         "a local document left without being cleared"
     );
     // The card still arrives; it just cites something the recipient cannot open.
-    assert_eq!(one(&receiver.store, "SELECT COUNT(*) FROM card WHERE board_id = ?1", &board), 1);
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM card WHERE board_id = ?1",
+            &board
+        ),
+        1
+    );
 }
 
 #[test]
 fn a_cleared_local_document_travels_without_its_folder() {
     let mut sender = profile("general");
-    let board = seeded(&mut sender, "local_document", "/home/someone/Private/Risk/rules.pdf");
+    let board = seeded(
+        &mut sender,
+        "local_document",
+        "/home/someone/Private/Risk/rules.pdf",
+    );
     let source: String = sender
         .store
         .conn()
-        .query_row("SELECT id FROM source WHERE profile_id = ?1", [&sender.profile], |r| r.get(0))
+        .query_row(
+            "SELECT id FROM source WHERE profile_id = ?1",
+            [&sender.profile],
+            |r| r.get(0),
+        )
         .expect("source");
 
     let mut receiver = profile("general");
@@ -371,9 +461,16 @@ fn a_cleared_local_document_travels_without_its_folder() {
     let locator: String = receiver
         .store
         .conn()
-        .query_row("SELECT locator FROM source WHERE profile_id = ?1", [&receiver.profile], |r| r.get(0))
+        .query_row(
+            "SELECT locator FROM source WHERE profile_id = ?1",
+            [&receiver.profile],
+            |r| r.get(0),
+        )
         .expect("source");
-    assert_eq!(locator, "rules.pdf", "the sender's folder travelled with the file");
+    assert_eq!(
+        locator, "rules.pdf",
+        "the sender's folder travelled with the file"
+    );
 }
 
 #[test]
@@ -383,13 +480,23 @@ fn export_without_history_carries_no_events() {
     let board = seeded(&mut sender, "web", "https://example.test/rules");
     let mut receiver = profile("general");
 
-    let options = ExportOptions { with_history: false, ..Default::default() };
+    let options = ExportOptions {
+        with_history: false,
+        ..Default::default()
+    };
     let (manifest, outcome) = round_trip(&mut sender, &board, &options, &mut receiver);
 
     assert_eq!(manifest["includes"]["events"], false);
     assert_eq!(outcome.written.get("events.jsonl"), Some(&0));
     // The board is still whole; only the account of how it was built is gone.
-    assert_eq!(one(&receiver.store, "SELECT COUNT(*) FROM card WHERE board_id = ?1", &board), 1);
+    assert_eq!(
+        one(
+            &receiver.store,
+            "SELECT COUNT(*) FROM card WHERE board_id = ?1",
+            &board
+        ),
+        1
+    );
 }
 
 #[test]
@@ -423,7 +530,10 @@ fn the_senders_history_arrives_as_a_replay_and_not_as_the_recipients_own() {
             |r| r.get(0),
         )
         .expect("count");
-    assert_eq!(live_card_events, 0, "imported history is claimed as this profile's own");
+    assert_eq!(
+        live_card_events, 0,
+        "imported history is claimed as this profile's own"
+    );
 }
 
 #[test]
@@ -433,7 +543,14 @@ fn a_bundle_never_carries_the_senders_profile_id() {
     let board = seeded(&mut sender, "web", "https://example.test/rules");
 
     let mut archive = Cursor::new(Vec::new());
-    export(&mut sender.store, &registry(), &board, &ExportOptions::default(), &mut archive).expect("export");
+    export(
+        &mut sender.store,
+        &registry(),
+        &board,
+        &ExportOptions::default(),
+        &mut archive,
+    )
+    .expect("export");
 
     let bytes = archive.into_inner();
     let text = String::from_utf8_lossy(&bytes);

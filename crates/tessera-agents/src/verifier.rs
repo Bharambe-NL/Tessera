@@ -311,13 +311,7 @@ const SUPPORT_UNAVAILABLE: &str = "The support check did not complete.";
 /// which stamps each hit with the rule's own id and severity. The support check
 /// is a built in check rather than a pack rule, in the same way
 /// `verification_failed` is, so it names its own and carries the same shape.
-fn support_flag(
-    rule_id: &str,
-    severity: &str,
-    target: Value,
-    reason: &str,
-    evidence: Value,
-) -> Value {
+fn support_flag(rule_id: &str, severity: &str, target: Value, reason: &str, evidence: Value) -> Value {
     json!({
         "rule_id": rule_id,
         "severity": severity,
@@ -389,32 +383,34 @@ async fn support_check(
             // the card. A check that could not run is not a check that passed.
             return pairs
                 .iter()
-                .map(|(n, _, _)| {
-                    json!({ "n": n, "verdict": "weak", "reason": SUPPORT_UNAVAILABLE })
-                })
+                .map(|(n, _, _)| json!({ "n": n, "verdict": "weak", "reason": SUPPORT_UNAVAILABLE }))
                 .collect();
         }
     };
 
     let mut verdicts: Vec<Value> = unpaired;
     verdicts.extend(pairs.iter().map(|(n, claim, passage)| {
-            let (verdict, reason) = judged
-                .get(n)
-                .cloned()
-                .unwrap_or_else(|| ("weak".into(), SUPPORT_UNAVAILABLE.into()));
+        let (verdict, reason) = judged
+            .get(n)
+            .cloned()
+            .unwrap_or_else(|| ("weak".into(), SUPPORT_UNAVAILABLE.into()));
 
-            // The override. A value claim is never admitted on a passage that
-            // does not state the value, whatever the model said.
-            let values = numeric_spans(claim);
-            let verdict = if values.is_empty() {
-                verdict
-            } else if values.iter().all(|(_, _, v)| contains_value(passage, v)) {
-                if verdict == "unsupported" { "weak".to_string() } else { verdict }
-            } else if verdict == "supported" {
+        // The override. A value claim is never admitted on a passage that
+        // does not state the value, whatever the model said.
+        let values = numeric_spans(claim);
+        let verdict = if values.is_empty() {
+            verdict
+        } else if values.iter().all(|(_, _, v)| contains_value(passage, v)) {
+            if verdict == "unsupported" {
                 "weak".to_string()
             } else {
                 verdict
-            };
+            }
+        } else if verdict == "supported" {
+            "weak".to_string()
+        } else {
+            verdict
+        };
 
         json!({ "n": n, "verdict": verdict, "reason": reason })
     }));
@@ -988,11 +984,7 @@ fn injection_suspected(passages: &[Value]) -> Option<Vec<Value>> {
 /// Doc 16 line 69 extends the same rule to `page` sources when the vault lands.
 /// Both classes are listed here rather than one, so that arrival is a pack edit
 /// rather than a code edit.
-fn own_card_sole_support(
-    answer: &str,
-    citations: &[Value],
-    passages: &[Value],
-) -> Option<Vec<Value>> {
+fn own_card_sole_support(answer: &str, citations: &[Value], passages: &[Value]) -> Option<Vec<Value>> {
     /// Classes that carry a claim but never support one.
     const CONTEXT_ONLY: [&str; 2] = ["own_card", "page"];
 
@@ -1009,10 +1001,8 @@ fn own_card_sole_support(
         let covering: Vec<&Value> = citations
             .iter()
             .filter(|c| {
-                let (Some(s), Some(e)) = (
-                    c["claim_span"]["start"].as_u64(),
-                    c["claim_span"]["end"].as_u64(),
-                ) else {
+                let (Some(s), Some(e)) = (c["claim_span"]["start"].as_u64(), c["claim_span"]["end"].as_u64())
+                else {
                     return false;
                 };
                 start >= s as usize && end <= e as usize
@@ -1392,12 +1382,8 @@ mod tests {
         #[test]
         fn a_figure_resting_only_on_a_prior_card_is_blocked() {
             let passages = passages(&[("p1", "own_card")]);
-            let hits = own_card_sole_support(
-                ANSWER,
-                &[cite("p1")],
-                passages.as_array().expect("a"),
-            )
-            .expect("ran");
+            let hits =
+                own_card_sole_support(ANSWER, &[cite("p1")], passages.as_array().expect("a")).expect("ran");
             assert_eq!(hits.len(), 1, "the rule did not fire: {hits:?}");
             assert_eq!(hits[0]["evidence"]["value"], "2.5 %");
         }
@@ -1410,12 +1396,8 @@ mod tests {
             let passages = passages(&[("p1", "own_card"), ("p2", "regulatory")]);
             let mut second = cite("p2");
             second["n"] = json!(2);
-            let hits = own_card_sole_support(
-                ANSWER,
-                &[cite("p1"), second],
-                passages.as_array().expect("a"),
-            )
-            .expect("ran");
+            let hits = own_card_sole_support(ANSWER, &[cite("p1"), second], passages.as_array().expect("a"))
+                .expect("ran");
             assert!(hits.is_empty(), "a well sourced figure was blocked: {hits:?}");
         }
 
@@ -1424,8 +1406,7 @@ mod tests {
             // `numeric_without_citation` owns that absence. Two rules firing on
             // one span would put two flags on one figure and read as two faults.
             let passages = passages(&[("p1", "own_card")]);
-            let hits =
-                own_card_sole_support(ANSWER, &[], passages.as_array().expect("a")).expect("ran");
+            let hits = own_card_sole_support(ANSWER, &[], passages.as_array().expect("a")).expect("ran");
             assert!(hits.is_empty());
             let missing = numeric_without_citation(ANSWER, &[]).expect("ran");
             assert_eq!(missing.len(), 1, "nothing claimed the uncited figure");
@@ -1454,12 +1435,8 @@ mod tests {
             // Doc 16 line 69 extends the same rule to `page`, and listing both
             // classes now makes that arrival a pack edit rather than a code one.
             let passages = passages(&[("p1", "page")]);
-            let hits = own_card_sole_support(
-                ANSWER,
-                &[cite("p1")],
-                passages.as_array().expect("a"),
-            )
-            .expect("ran");
+            let hits =
+                own_card_sole_support(ANSWER, &[cite("p1")], passages.as_array().expect("a")).expect("ran");
             assert_eq!(hits.len(), 1);
         }
     }

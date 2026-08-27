@@ -16,8 +16,8 @@ use tessera_bundle::{ExportOptions, export, import};
 use tessera_schema::Registry;
 use tessera_store::{Store, new_id, now_iso8601};
 
-use crate::boards::Board;
 use crate::boards;
+use crate::boards::Board;
 
 /// What one board's round trip found.
 pub struct Trip {
@@ -59,20 +59,14 @@ fn counts(store: &Store, board_id: &str) -> Counts {
     };
     Counts {
         cards: one("SELECT COUNT(*) FROM card WHERE board_id = ?1"),
-        citations: one(
-            "SELECT COUNT(*) FROM citation ci JOIN card c ON c.id = ci.card_id
-             WHERE c.board_id = ?1",
-        ),
-        sources: one(
-            "SELECT COUNT(DISTINCT p.source_id) FROM passage p
+        citations: one("SELECT COUNT(*) FROM citation ci JOIN card c ON c.id = ci.card_id
+             WHERE c.board_id = ?1"),
+        sources: one("SELECT COUNT(DISTINCT p.source_id) FROM passage p
              JOIN citation ci ON ci.passage_id = p.id
-             JOIN card c ON c.id = ci.card_id WHERE c.board_id = ?1",
-        ),
-        concepts: one(
-            "SELECT COUNT(DISTINCT l.concept_id) FROM concept_link l
+             JOIN card c ON c.id = ci.card_id WHERE c.board_id = ?1"),
+        concepts: one("SELECT COUNT(DISTINCT l.concept_id) FROM concept_link l
              JOIN card c ON c.id = l.target_ref
-             WHERE l.target_type = 'card' AND c.board_id = ?1",
-        ),
+             WHERE l.target_type = 'card' AND c.board_id = ?1"),
     }
 }
 
@@ -244,7 +238,11 @@ fn seeded(boards: &[Board], snapshot: &str) -> Result<(Profile, Ids), String> {
                     params![
                         card_id,
                         board_id,
-                        if card.kind.is_empty() { "root" } else { card.kind.as_str() },
+                        if card.kind.is_empty() {
+                            "root"
+                        } else {
+                            card.kind.as_str()
+                        },
                         card.question,
                         card.depth,
                         card.answer,
@@ -332,10 +330,7 @@ pub struct Ids(std::collections::BTreeMap<String, String>);
 
 impl Ids {
     fn of(&mut self, corpus_id: &str) -> String {
-        self.0
-            .entry(corpus_id.to_string())
-            .or_insert_with(new_id)
-            .clone()
+        self.0.entry(corpus_id.to_string()).or_insert_with(new_id).clone()
     }
 
     /// The id this run gave a corpus name, if it gave it one.

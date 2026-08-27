@@ -20,8 +20,8 @@ use tessera_harness::{Admission, Ledger};
 use tessera_retrievers::contract::Packet;
 use tessera_retrievers::embed::Embedder;
 use tessera_retrievers::{IndexedConfig, indexed};
-use tessera_store::repo::{self, NewPassage, RetrievalRef};
 use tessera_store::Store;
+use tessera_store::repo::{self, NewPassage, RetrievalRef};
 
 /// What this profile can retrieve from. Built once per run from the pack's
 /// enabled retrievers and the profile's watched folders.
@@ -49,7 +49,10 @@ impl RetrieverSet {
     }
 
     fn config(&self, retriever_id: &str) -> Option<&IndexedConfig> {
-        self.indexed.iter().find(|(id, _)| id == retriever_id).map(|(_, c)| c)
+        self.indexed
+            .iter()
+            .find(|(id, _)| id == retriever_id)
+            .map(|(_, c)| c)
     }
 }
 
@@ -79,7 +82,9 @@ fn assignments(plan: Option<&Value>, question: &str, set: &RetrieverSet) -> Vec<
         for sq in sub_questions {
             let sq_id = sq["sq_id"].as_str().map(str::to_string);
             for r in sq["retrievers"].as_array().into_iter().flatten() {
-                let Some(retriever_id) = r["id"].as_str() else { continue };
+                let Some(retriever_id) = r["id"].as_str() else {
+                    continue;
+                };
                 out.push(Assignment {
                     retriever_id: retriever_id.to_string(),
                     query: r["query"]
@@ -171,7 +176,10 @@ pub fn run(
             continue;
         };
 
-        let here = RetrievalRef { retriever_id: &assignment.retriever_id, ..at };
+        let here = RetrievalRef {
+            retriever_id: &assignment.retriever_id,
+            ..at
+        };
 
         // Doc 05 section 15's pre hooks, before anything is opened. A denial is
         // a hard stop for this assignment and nothing else.
@@ -258,9 +266,7 @@ pub fn run(
         // The stored passage id is what a citation will point at, so the
         // Synthesizer has to see that one and not the index entry id it was
         // found by.
-        let (ids, stale) = retained
-            .map(|r| (r.passage_ids, r.stale))
-            .unwrap_or_default();
+        let (ids, stale) = retained.map(|r| (r.passage_ids, r.stale)).unwrap_or_default();
         for (i, passage) in retrieved.passages.iter().enumerate() {
             // A prior card's locator is `board_id/card_id`, which is exactly
             // what doc 01 section 4.4 records and what doc 15's ground truth
@@ -354,7 +360,11 @@ fn order(passages: &mut [Value]) {
         let id = |v: &Value| v["passage_id"].as_str().unwrap_or_default().to_string();
         rank(a)
             .cmp(&rank(b))
-            .then_with(|| score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                score(b)
+                    .partial_cmp(&score(a))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| id(a).cmp(&id(b)))
     });
 }
@@ -385,7 +395,10 @@ mod tests {
 
     #[test]
     fn an_unranked_passage_sorts_last() {
-        let mut p = vec![json!({ "passage_id": "x", "score": 1.0, "source": {} }), passage(4, 0.1, "a")];
+        let mut p = vec![
+            json!({ "passage_id": "x", "score": 1.0, "source": {} }),
+            passage(4, 0.1, "a"),
+        ];
         order(&mut p);
         assert_eq!(p[0]["passage_id"], "a");
     }

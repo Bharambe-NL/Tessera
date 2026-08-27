@@ -151,8 +151,7 @@ impl Agent for Planner {
 
         // ---------------------------------- 8.4 retriever assignment -------
         step(ctx, "assigning_retrievers")?;
-        let mut sub_questions =
-            assign_retrievers(&draft, packet, &enabled, max_sq, depth, &stale);
+        let mut sub_questions = assign_retrievers(&draft, packet, &enabled, max_sq, depth, &stale);
         add_reverification(&mut sub_questions, &stale, &enabled);
 
         // ---------------------------------------------- 8.5 constraints ----
@@ -215,9 +214,11 @@ fn resolve_entities(packet: &Value) -> Vec<Value> {
             .iter()
             .filter(|c| {
                 c["term"].as_str().is_some_and(|t| t.to_lowercase() == lower)
-                    || c["aliases"]
-                        .as_array()
-                        .is_some_and(|a| a.iter().filter_map(Value::as_str).any(|a| a.to_lowercase() == lower))
+                    || c["aliases"].as_array().is_some_and(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .any(|a| a.to_lowercase() == lower)
+                    })
             })
             .collect();
 
@@ -299,14 +300,27 @@ async fn decompose(
     let max_sq = packet["effort_budget"]["max_sub_questions"].as_i64().unwrap_or(1);
 
     let mut prompt = String::new();
-    prompt.push_str(&format!("Request: {}\n", request["text"].as_str().unwrap_or_default()));
+    prompt.push_str(&format!(
+        "Request: {}\n",
+        request["text"].as_str().unwrap_or_default()
+    ));
     prompt.push_str(&format!("Depth: {depth}\n"));
     prompt.push_str(&format!(
         "Sub-questions to produce: {}\n",
-        if depth == "deep" { "exactly 1".to_string() } else { format!("2 to {max_sq}") }
+        if depth == "deep" {
+            "exactly 1".to_string()
+        } else {
+            format!("2 to {max_sq}")
+        }
     ));
-    prompt.push_str(&format!("Question type: {}\n", packet["routing"]["question_type"].as_str().unwrap_or("factual")));
-    prompt.push_str(&format!("Domain: {}\n", packet["routing"]["domain"].as_str().unwrap_or("unknown")));
+    prompt.push_str(&format!(
+        "Question type: {}\n",
+        packet["routing"]["question_type"].as_str().unwrap_or("factual")
+    ));
+    prompt.push_str(&format!(
+        "Domain: {}\n",
+        packet["routing"]["domain"].as_str().unwrap_or("unknown")
+    ));
 
     if let Some(anchor) = request["anchor_text"].as_str() {
         prompt.push_str(&format!("Highlighted phrase it came from: {anchor}\n"));
@@ -317,7 +331,12 @@ async fn decompose(
             block.get("label").and_then(Value::as_str).unwrap_or("")
         ));
     }
-    for ancestor in packet["context"]["ancestors"].as_array().into_iter().flatten().take(3) {
+    for ancestor in packet["context"]["ancestors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(3)
+    {
         prompt.push_str(&format!(
             "Ancestor question: {}\nAncestor answer, opening: {}\n",
             ancestor["question"].as_str().unwrap_or(""),
@@ -347,7 +366,9 @@ async fn decompose(
                         "- {literal} is ambiguous; both meanings apply until the request says otherwise:\n"
                     ));
                     for c in concepts.iter().filter(|c| {
-                        c["term"].as_str().is_some_and(|t| t.eq_ignore_ascii_case(literal))
+                        c["term"]
+                            .as_str()
+                            .is_some_and(|t| t.eq_ignore_ascii_case(literal))
                     }) {
                         prompt.push_str(&format!(
                             "    - {}\n",
@@ -456,7 +477,9 @@ fn assign_retrievers(
         wanted.push("boards");
     }
 
-    let per_sq_cap = packet["effort_budget"]["max_passages_total"].as_i64().unwrap_or(40)
+    let per_sq_cap = packet["effort_budget"]["max_passages_total"]
+        .as_i64()
+        .unwrap_or(40)
         / max_sq.max(1);
 
     let mut out = Vec::new();
@@ -638,7 +661,9 @@ fn constraints(packet: &Value, draft: &Value, structured_assigned: bool, stale: 
 /// Priority is packet order, because the decomposition prompt asks for the
 /// partition in importance order.
 fn budget(sub_questions: &mut Vec<Value>, packet: &Value, caveats: &mut Vec<String>) -> Value {
-    let cap = packet["effort_budget"]["max_passages_total"].as_i64().unwrap_or(40);
+    let cap = packet["effort_budget"]["max_passages_total"]
+        .as_i64()
+        .unwrap_or(40);
 
     let total = |sqs: &[Value]| -> i64 {
         sqs.iter()
@@ -681,9 +706,9 @@ fn confidence(resolved: &[Value], sub_questions: &[Value], stale: &[Value]) -> f
         score += 0.3;
     }
     let well_sourced = sub_questions.iter().all(|sq| {
-        sq["retrievers"].as_array().is_some_and(|rs| {
-            rs.len() >= 2 || rs.iter().any(|r| r["id"] == "regulatory")
-        })
+        sq["retrievers"]
+            .as_array()
+            .is_some_and(|rs| rs.len() >= 2 || rs.iter().any(|r| r["id"] == "regulatory"))
     });
     if !sub_questions.is_empty() && well_sourced {
         score += 0.2;
@@ -762,7 +787,14 @@ mod tests {
     fn a_disabled_retriever_is_never_assigned() {
         let p = packet();
         let draft = fallback_draft(&p);
-        let sqs = assign_retrievers(&draft, &p, &["regulatory".into(), "local".into(), "web".into()], 3, "research", &[]);
+        let sqs = assign_retrievers(
+            &draft,
+            &p,
+            &["regulatory".into(), "local".into(), "web".into()],
+            3,
+            "research",
+            &[],
+        );
         for sq in &sqs {
             for r in sq["retrievers"].as_array().unwrap() {
                 assert_ne!(r["id"], "structured", "structured is disabled in the packet");
@@ -774,10 +806,21 @@ mod tests {
     fn a_regulatory_domain_always_gets_the_regulatory_retriever() {
         let p = packet();
         let draft = fallback_draft(&p);
-        let sqs = assign_retrievers(&draft, &p, &["regulatory".into(), "web".into()], 3, "research", &[]);
+        let sqs = assign_retrievers(
+            &draft,
+            &p,
+            &["regulatory".into(), "web".into()],
+            3,
+            "research",
+            &[],
+        );
         for sq in &sqs {
             assert!(
-                sq["retrievers"].as_array().unwrap().iter().any(|r| r["id"] == "regulatory"),
+                sq["retrievers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["id"] == "regulatory"),
                 "doc 04 section 8 step 4"
             );
         }
@@ -806,7 +849,11 @@ mod tests {
         let sqs = assign_retrievers(&draft, &p, &enabled, 3, "research", &[]);
         for sq in &sqs {
             assert!(
-                sq["retrievers"].as_array().unwrap().iter().any(|r| r["id"] == "boards"),
+                sq["retrievers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["id"] == "boards"),
                 "memory is on, so the boards retriever joins"
             );
         }
@@ -826,10 +873,14 @@ mod tests {
     fn doctrine_exclusions_survive_whatever_the_model_says() {
         let p = packet();
         // A draft that tries to narrow the exclusions to nothing.
-        let draft = json!({ "sub_questions": [], "scope_limits": ["only the trading book"], "answer_scope": "x" });
+        let draft =
+            json!({ "sub_questions": [], "scope_limits": ["only the trading book"], "answer_scope": "x" });
         let c = constraints(&p, &draft, false, &[]);
         let excludes = string_vec(&c["must_exclude"]);
-        assert!(excludes.contains(&"Sensitive".to_string()), "the Planner may add, never remove");
+        assert!(
+            excludes.contains(&"Sensitive".to_string()),
+            "the Planner may add, never remove"
+        );
         assert!(excludes.contains(&"only the trading book".to_string()));
     }
 
@@ -865,7 +916,11 @@ mod tests {
         let mut sqs = assign_retrievers(&draft, &p, &["web".into()], 3, "research", &[]);
         let mut caveats = Vec::new();
         let b = budget(&mut sqs, &p, &mut caveats);
-        assert_eq!(sqs.len(), 2, "10 passages cannot feed three sub-questions four each");
+        assert_eq!(
+            sqs.len(),
+            2,
+            "10 passages cannot feed three sub-questions four each"
+        );
         assert_eq!(caveats.len(), 1);
         assert!(b["passages_total"].as_i64().unwrap() <= 10);
     }
@@ -875,6 +930,9 @@ mod tests {
         let resolved = vec![json!({ "literal": "x", "ambiguity": "none", "concept_id": "c" })];
         let sqs = vec![json!({ "retrievers": [{ "id": "regulatory" }] })];
         let c = confidence(&resolved, &sqs, &[]);
-        assert!((c - 0.7).abs() < 1e-9, "0.3 entities + 0.2 retrievers + 0.2 no stale = {c}");
+        assert!(
+            (c - 0.7).abs() < 1e-9,
+            "0.3 entities + 0.2 retrievers + 0.2 no stale = {c}"
+        );
     }
 }

@@ -109,16 +109,14 @@ pub fn sniff(path: &Path) -> Option<Format> {
 /// The signature wins over the extension when the two disagree, because the
 /// bytes are what has to be read either way.
 pub fn parse_file(path: &Path) -> Result<Vec<Chunk>, ParseError> {
-    let format = sniff(path)
-        .or_else(|| format_by_extension(path))
-        .ok_or_else(|| {
-            ParseError::UnsupportedFormat(
-                path.extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("no extension")
-                    .to_string(),
-            )
-        })?;
+    let format = sniff(path).or_else(|| format_by_extension(path)).ok_or_else(|| {
+        ParseError::UnsupportedFormat(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("no extension")
+                .to_string(),
+        )
+    })?;
 
     let chunks = match format {
         Format::Markdown => markdown::parse(&read(path)?),
@@ -166,7 +164,10 @@ mod tests {
         assert_eq!(format_by_extension(&path), Some(Format::Docx));
         // It still fails, because those bytes are not a usable pdf, but it
         // fails as a pdf rather than as a zip that is missing word/document.xml.
-        assert!(matches!(parse_file(&path), Err(ParseError::Malformed { format: "pdf", .. })));
+        assert!(matches!(
+            parse_file(&path),
+            Err(ParseError::Malformed { format: "pdf", .. })
+        ));
         std::fs::remove_file(&path).ok();
     }
 

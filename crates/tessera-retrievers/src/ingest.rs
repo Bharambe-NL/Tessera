@@ -68,8 +68,7 @@ pub fn index_folder(
         let reference = relative(root, &path);
         match parse_file(&path) {
             Ok(chunks) => {
-                report.chunks +=
-                    index::write_document(conn, folder_id, &reference, &chunks, embedder, &now)?;
+                report.chunks += index::write_document(conn, folder_id, &reference, &chunks, embedder, &now)?;
                 report.indexed += 1;
             }
             Err(e) => {
@@ -130,7 +129,9 @@ fn relative(root: &Path, path: &Path) -> String {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -162,12 +163,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tessera-ingest-{}", tessera_store::new_id()));
         std::fs::create_dir_all(dir.join("Sensitive")).expect("dir");
         std::fs::create_dir_all(dir.join("Open")).expect("dir");
-        std::fs::write(dir.join("Open/policy.md"), "# Policy\n\nThe buffer is 2.5 percent.\n")
-            .expect("write");
-        std::fs::write(dir.join("Open/insensitive-notes.md"), "# Notes\n\nA note about buffers.\n")
-            .expect("write");
-        std::fs::write(dir.join("Sensitive/minutes.md"), "# Minutes\n\nConfidential.\n")
-            .expect("write");
+        std::fs::write(
+            dir.join("Open/policy.md"),
+            "# Policy\n\nThe buffer is 2.5 percent.\n",
+        )
+        .expect("write");
+        std::fs::write(
+            dir.join("Open/insensitive-notes.md"),
+            "# Notes\n\nA note about buffers.\n",
+        )
+        .expect("write");
+        std::fs::write(dir.join("Sensitive/minutes.md"), "# Minutes\n\nConfidential.\n").expect("write");
         std::fs::write(dir.join("Open/broken.pdf"), b"%PDF-1.4\nnot really").expect("write");
         std::fs::write(dir.join("Open/photo.jpeg"), b"\xff\xd8\xff").expect("write");
         dir
@@ -177,8 +183,7 @@ mod tests {
     fn a_folder_is_walked_parsed_and_indexed() {
         let s = store();
         let root = tree();
-        let report =
-            index_folder(s.conn(), "p", "local", "Risk", &root, &[], None).expect("ingest");
+        let report = index_folder(s.conn(), "p", "local", "Risk", &root, &[], None).expect("ingest");
 
         assert_eq!(report.indexed, 3, "{report:?}");
         assert!(report.chunks >= 3);
@@ -187,8 +192,7 @@ mod tests {
         assert_eq!(report.errors.len(), 1);
         assert_eq!(report.errors[0].1, "malformed");
 
-        let hits = index::search(s.conn(), &["local".into()], "buffer percent", None, 10)
-            .expect("search");
+        let hits = index::search(s.conn(), &["local".into()], "buffer percent", None, 10).expect("search");
         assert!(!hits.is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -200,12 +204,10 @@ mod tests {
         let s = store();
         let root = tree();
         let report =
-            index_folder(s.conn(), "p", "local", "Risk", &root, &["Sensitive".into()], None)
-                .expect("ingest");
+            index_folder(s.conn(), "p", "local", "Risk", &root, &["Sensitive".into()], None).expect("ingest");
 
         assert_eq!(report.excluded, 1);
-        let hits = index::search(s.conn(), &["local".into()], "Confidential", None, 10)
-            .expect("search");
+        let hits = index::search(s.conn(), &["local".into()], "Confidential", None, 10).expect("search");
         assert!(hits.is_empty(), "an excluded file reached the index");
         std::fs::remove_dir_all(&root).ok();
     }
@@ -216,11 +218,10 @@ mod tests {
         // substring check would silently drop a file nobody excluded.
         let s = store();
         let root = tree();
-        index_folder(s.conn(), "p", "local", "Risk", &root, &["Sensitive".into()], None)
-            .expect("ingest");
+        index_folder(s.conn(), "p", "local", "Risk", &root, &["Sensitive".into()], None).expect("ingest");
 
-        let hits = index::search(s.conn(), &["local".into()], "note about buffers", None, 10)
-            .expect("search");
+        let hits =
+            index::search(s.conn(), &["local".into()], "note about buffers", None, 10).expect("search");
         assert!(!hits.is_empty(), "a file was excluded by a substring match");
         std::fs::remove_dir_all(&root).ok();
     }

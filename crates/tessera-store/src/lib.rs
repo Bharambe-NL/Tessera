@@ -132,7 +132,8 @@ impl Store {
             // the replacement but missed one would leave a dangling reference
             // that nothing notices until a much later read, so it is caught here
             // and rolled back with the rest of the migration.
-            let broken: i64 = tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
+            let broken: i64 =
+                tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
             if broken > 0 {
                 return Err(StoreError::MigrationBrokeReferences {
                     version: *version,

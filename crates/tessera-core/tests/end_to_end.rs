@@ -427,7 +427,12 @@ fn a_board_goes_to_trash_and_comes_back() {
     let trashed = call(&router, &mut core, "board.list", json!({ "status": "trashed" }));
     assert_eq!(trashed["boards"].as_array().map(Vec::len), Some(1));
 
-    call(&router, &mut core, "board.restore", json!({ "board_id": board_id }));
+    call(
+        &router,
+        &mut core,
+        "board.restore",
+        json!({ "board_id": board_id }),
+    );
     assert_eq!(
         call(&router, &mut core, "board.list", json!({}))["boards"]
             .as_array()
@@ -499,7 +504,10 @@ fn the_flags_queue_reads_across_boards_and_records_a_decision() {
 
     let listed = call(&router, &mut core, "flag.list", json!({}));
     let flags = listed["flags"].as_array().expect("flags").clone();
-    assert!(flags.len() >= 2, "a fast card carries fast_mode_notice, got {flags:?}");
+    assert!(
+        flags.len() >= 2,
+        "a fast card carries fast_mode_notice, got {flags:?}"
+    );
 
     let boards: std::collections::BTreeSet<&str> =
         flags.iter().filter_map(|f| f["board_id"].as_str()).collect();
@@ -574,11 +582,7 @@ fn deciding_a_flag_that_is_already_decided_says_so() {
     let again = router
         .dispatch(
             &mut core,
-            Request::new(
-                "flag.decide",
-                json!({ "flag_ids": ids, "decision": "accept" }),
-                1,
-            ),
+            Request::new("flag.decide", json!({ "flag_ids": ids, "decision": "accept" }), 1),
         )
         .expect("reply");
     assert_eq!(
@@ -606,10 +610,7 @@ fn the_profile_page_reports_key_presence_and_never_a_key() {
 
     let profile = call(&router, &mut core, "profile.get", json!({}));
     let text = profile.to_string();
-    assert!(
-        !text.contains("sk-secret-value"),
-        "the profile read leaked a key"
-    );
+    assert!(!text.contains("sk-secret-value"), "the profile read leaked a key");
 
     let aliases = profile["aliases"].as_array().expect("aliases");
     assert!(!aliases.is_empty());
@@ -860,8 +861,7 @@ fn a_learn_session_runs_intake_a_plan_a_check_and_an_ending() {
     assert_eq!(planned.len(), 3, "doc 14 section 3.4 plans three to five");
 
     // The plan is on the session, so a panel reopened tomorrow finds it.
-    let session = call(&router, &mut core, "learn.get", json!({ "board_id": board_id }))["session"]
-        .clone();
+    let session = call(&router, &mut core, "learn.get", json!({ "board_id": board_id }))["session"].clone();
     assert_eq!(session["status"], "building");
     assert_eq!(session["plan"].as_array().map(Vec::len), Some(3));
     assert_eq!(session["intake"].as_array().map(Vec::len), Some(1));
@@ -941,7 +941,10 @@ fn a_learn_session_runs_intake_a_plan_a_check_and_an_ending() {
         "learn.check_answered.v1",
         "learn.ended.v1",
     ] {
-        assert!(types.contains(&expected.to_string()), "{expected} is not in board history");
+        assert!(
+            types.contains(&expected.to_string()),
+            "{expected} is not in board history"
+        );
     }
 
     // Doc 12's walkthrough asks for the right actor, and a Learn session is the
@@ -1018,9 +1021,7 @@ fn a_tutor_reply_carrying_a_citation_marker_never_reaches_the_learner() {
     );
     // And the learner is told why rather than seeing an empty panel.
     assert!(
-        said["turn"]["caveats"]
-            .as_array()
-            .is_some_and(|c| !c.is_empty()),
+        said["turn"]["caveats"].as_array().is_some_and(|c| !c.is_empty()),
         "the reply vanished with no explanation"
     );
 }
@@ -1197,9 +1198,7 @@ fn reading_an_image_writes_a_card_whose_values_are_in_the_picture() {
     // The step row carries the summary, and every value in it came out of the
     // recovered structure.
     let output = packet_output(&core, &board_id, "reader");
-    let values = output["structured_summary"]["values"]
-        .as_array()
-        .expect("values");
+    let values = output["structured_summary"]["values"].as_array().expect("values");
     assert_eq!(values.len(), 2);
     let structure = output["recovered_structure"].to_string();
     for value in values {
@@ -1254,7 +1253,10 @@ fn text_in_an_image_that_reads_as_an_instruction_is_transcribed_and_not_obeyed()
         .expect("blocks");
     assert_eq!(blocks.len(), 1, "the instruction is still in the summary");
     assert!(
-        !output["structured_summary"].to_string().to_lowercase().contains("ignore previous"),
+        !output["structured_summary"]
+            .to_string()
+            .to_lowercase()
+            .contains("ignore previous"),
         "the instruction reached the summary"
     );
 
@@ -1352,7 +1354,12 @@ fn an_exercise_traces_every_item_to_the_card_it_came_from() {
     assert_eq!(made["items"].as_u64(), Some(1));
     let exercise_id = made["exercise_id"].as_str().expect("an exercise").to_string();
 
-    let listed = call(&router, &mut core, "exercise.list", json!({ "board_id": board_id }));
+    let listed = call(
+        &router,
+        &mut core,
+        "exercise.list",
+        json!({ "board_id": board_id }),
+    );
     let items = listed["exercises"][0]["items"].as_array().expect("items").clone();
     assert_eq!(items.len(), 1);
 
@@ -1568,11 +1575,7 @@ fn naming_a_board_stops_the_next_question_renaming_it() {
     let response = router
         .dispatch(
             &mut core,
-            Request::new(
-                "board.rename",
-                json!({ "board_id": board_id, "title": "   " }),
-                1,
-            ),
+            Request::new("board.rename", json!({ "board_id": board_id, "title": "   " }), 1),
         )
         .expect("reply");
     assert_eq!(
@@ -1645,10 +1648,7 @@ fn the_shell_can_branch_from_a_highlight_and_from_a_block() {
 
     // The anchor is stored, because it is what the branch card's header shows
     // and what the Router reads back as the subject.
-    let anchored: Vec<&str> = cards
-        .iter()
-        .filter_map(|c| c["anchor_text"].as_str())
-        .collect();
+    let anchored: Vec<&str> = cards.iter().filter_map(|c| c["anchor_text"].as_str()).collect();
     assert_eq!(anchored, vec!["the capital conservation buffer"]);
     let blocks: Vec<&str> = cards
         .iter()
@@ -1786,11 +1786,16 @@ fn the_router_asks_about_stakes_and_never_enumerates_domains() {
     // annotation from the free keyword pass.
     let provider = mock();
     let mut core = core_with(Arc::clone(&provider));
-    core.use_pack("finance-eu-synthetic").expect("the shipped pack loads");
+    core.use_pack("finance-eu-synthetic")
+        .expect("the shipped pack loads");
 
     let board_id = core.create_board("Board", "fast").expect("board");
-    core.ask(&board_id, "what applies when a customer initiates a transfer?", None)
-        .expect("the card runs");
+    core.ask(
+        &board_id,
+        "what applies when a customer initiates a transfer?",
+        None,
+    )
+    .expect("the card runs");
 
     let route = provider
         .calls()
@@ -1902,7 +1907,9 @@ fn a_research_card_is_planned_before_it_is_synthesized() {
         .find(|e| e.event_type == "card.planned.v1")
         .expect("card.planned.v1 was emitted");
     assert_eq!(planned.payload["sub_question_count"], 2);
-    let ids = planned.payload["retriever_ids"].as_array().expect("retriever ids");
+    let ids = planned.payload["retriever_ids"]
+        .as_array()
+        .expect("retriever ids");
     assert!(
         ids.iter().any(|i| i == "regulatory"),
         "a governed domain always includes the regulatory retriever: {ids:?}"
@@ -1948,7 +1955,10 @@ fn no_enabled_retriever_fails_the_card_with_a_pointer_at_the_fix() {
         error.contains("no_retriever_enabled") || error.contains("No retriever is enabled"),
         "the failure names itself: {error}"
     );
-    assert!(error.contains("Profile"), "the failure points at the fix: {error}");
+    assert!(
+        error.contains("Profile"),
+        "the failure points at the fix: {error}"
+    );
 }
 
 #[test]
@@ -1984,7 +1994,10 @@ fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
         "reg-car3-v1.md",
         &[Chunk::new(
             "The capital conservation buffer for a significant institution is 2.5 %.",
-            ChunkLocation::ArticleParagraph { article: "12".into(), paragraph: 1 },
+            ChunkLocation::ArticleParagraph {
+                article: "12".into(),
+                paragraph: 1,
+            },
             0,
         )],
         None,
@@ -1998,8 +2011,12 @@ fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
     };
 
     let board_id = core.create_board("Board", "deep").expect("board");
-    core.ask(&board_id, "what is the capital conservation buffer?", Some("deep"))
-        .expect("the card runs");
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("the card runs");
 
     // The passages reached the Synthesizer's packet, which is the contract
     // doc 06 section A4 describes.
@@ -2022,7 +2039,10 @@ fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
         .map(|e| e.event_type)
         .collect();
     assert!(events.contains(&"retrieval.started.v1".to_string()), "{events:?}");
-    assert!(events.contains(&"retrieval.completed.v1".to_string()), "{events:?}");
+    assert!(
+        events.contains(&"retrieval.completed.v1".to_string()),
+        "{events:?}"
+    );
     assert!(events.contains(&"source.created.v1".to_string()), "{events:?}");
 
     let sources: i64 = core
@@ -2067,7 +2087,8 @@ fn a_fast_card_never_retrieves() {
     };
 
     let board_id = core.create_board("Board", "fast").expect("board");
-    core.ask(&board_id, "what is the buffer?", Some("fast")).expect("runs");
+    core.ask(&board_id, "what is the buffer?", Some("fast"))
+        .expect("runs");
 
     let events: Vec<String> = core
         .store
@@ -2123,8 +2144,12 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
 
     // A second board asks something related and should recall it.
     let second = core.create_board("Second", "deep").expect("board");
-    core.ask(&second, "how does the capital conservation buffer apply?", Some("deep"))
-        .expect("second card");
+    core.ask(
+        &second,
+        "how does the capital conservation buffer apply?",
+        Some("deep"),
+    )
+    .expect("second card");
 
     let events: Vec<String> = core
         .store
@@ -2133,14 +2158,19 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
         .into_iter()
         .map(|e| e.event_type)
         .collect();
-    assert!(events.contains(&"retrieval.completed.v1".to_string()), "{events:?}");
+    assert!(
+        events.contains(&"retrieval.completed.v1".to_string()),
+        "{events:?}"
+    );
 
     // The prior card arrived as its own source class, which is what lets the
     // Verifier single it out at M8.
     let own_card: i64 = core
         .store
         .conn()
-        .query_row("SELECT count(*) FROM source WHERE class = 'own_card'", [], |r| r.get(0))
+        .query_row("SELECT count(*) FROM source WHERE class = 'own_card'", [], |r| {
+            r.get(0)
+        })
         .expect("count");
     assert_eq!(own_card, 1, "the prior card did not arrive as own_card");
 
@@ -2154,7 +2184,10 @@ fn a_verified_card_is_remembered_and_recalled_on_another_board() {
             |r| r.get(0),
         )
         .expect("card");
-    assert!(builds_on.contains(&first), "builds_on did not name the board it came from: {builds_on}");
+    assert!(
+        builds_on.contains(&first),
+        "builds_on did not name the board it came from: {builds_on}"
+    );
 
     // Doc 05 v0.2 line 106: the Synthesizer receives own_card passages "marked
     // prior work, context only". The class attribute said what they were and
@@ -2235,11 +2268,16 @@ fn a_follow_up_carries_its_parent_into_the_router_packet() {
     .expect("follow up runs");
 
     let packet = packet_for(&core, &board_id, "router");
-    assert_eq!(packet["request"]["kind"], "follow", "a follow-up was routed as a root");
+    assert_eq!(
+        packet["request"]["kind"], "follow",
+        "a follow-up was routed as a root"
+    );
     assert_eq!(packet["parent"]["card_id"], parent.card_id.as_str());
     assert_eq!(packet["parent"]["question"], "what are world models?");
     assert!(
-        packet["parent"]["answer"].as_str().is_some_and(|a| a.contains("world model")),
+        packet["parent"]["answer"]
+            .as_str()
+            .is_some_and(|a| a.contains("world model")),
         "the parent's answer did not reach the Router"
     );
 }
@@ -2262,7 +2300,7 @@ fn a_follow_up_carries_its_ancestors_into_the_planner_packet() {
         Some("research"),
         Anchor::on(&parent.card_id),
     )
-        .expect("follow up runs");
+    .expect("follow up runs");
 
     let packet = packet_for(&core, &board_id, "planner");
     let ancestors = packet["context"]["ancestors"].as_array().expect("ancestors");
@@ -2283,7 +2321,8 @@ fn a_root_card_still_reports_no_parent() {
     let mut core = core_with(mock());
     core.use_pack("finance-eu-synthetic").expect("pack");
     let board_id = core.create_board("Board", "deep").expect("board");
-    core.ask(&board_id, "what are world models?", Some("deep")).expect("runs");
+    core.ask(&board_id, "what are world models?", Some("deep"))
+        .expect("runs");
 
     let packet = packet_for(&core, &board_id, "router");
     assert_eq!(packet["request"]["kind"], "root");
@@ -2335,7 +2374,8 @@ fn the_board_seed_reaches_the_planner() {
         )
         .expect("seed");
 
-    core.ask(&board_id, "what are world models?", Some("research")).expect("runs");
+    core.ask(&board_id, "what are world models?", Some("research"))
+        .expect("runs");
 
     let packet = packet_for(&core, &board_id, "planner");
     assert_eq!(packet["context"]["board_seed"], "CAR3 transitional rules");
@@ -2390,7 +2430,10 @@ fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
         "reg-car3-v1.md",
         &[Chunk::new(
             "The capital conservation buffer for a significant institution is 2.5 %.",
-            ChunkLocation::ArticleParagraph { article: "12".into(), paragraph: 1 },
+            ChunkLocation::ArticleParagraph {
+                article: "12".into(),
+                paragraph: 1,
+            },
             0,
         )],
         None,
@@ -2414,7 +2457,12 @@ fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
         }),
     );
 
-    let check = call(&router, &mut sender, "board.export_preflight", json!({ "board_id": board_id }));
+    let check = call(
+        &router,
+        &mut sender,
+        "board.export_preflight",
+        json!({ "board_id": board_id }),
+    );
     assert_eq!(check["cards"], 1);
     assert_eq!(check["sources"], 1);
 
@@ -2445,23 +2493,38 @@ fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
         .iter()
         .filter_map(|b| b["id"].as_str())
         .collect();
-    assert!(ids.contains(&board_id.as_str()), "the board did not arrive: {ids:?}");
+    assert!(
+        ids.contains(&board_id.as_str()),
+        "the board did not arrive: {ids:?}"
+    );
 
     // And the card's citation resolves against a passage that travelled with
     // it, which is doc 01 section 7's reason for carrying passages at all.
-    let read = call(&router, &mut receiver, "board.get", json!({ "board_id": board_id }));
+    let read = call(
+        &router,
+        &mut receiver,
+        "board.get",
+        json!({ "board_id": board_id }),
+    );
     let cards = read["cards"].as_array().expect("cards");
     assert_eq!(cards.len(), 1);
     let citations = cards[0]["citations"].as_array().expect("citations");
     assert!(!citations.is_empty(), "the card arrived with no sources");
     assert!(
-        citations[0]["source_title"].as_str().is_some_and(|t| !t.is_empty()),
+        citations[0]["source_title"]
+            .as_str()
+            .is_some_and(|t| !t.is_empty()),
         "a citation arrived pointing at nothing"
     );
 
     // Doc 01 section 7: the import is in the recipient's history, and the
     // sender's own history arrived as a replay rather than as theirs.
-    let history = call(&router, &mut receiver, "board.history", json!({ "board_id": board_id }));
+    let history = call(
+        &router,
+        &mut receiver,
+        "board.history",
+        json!({ "board_id": board_id }),
+    );
     let types: Vec<&str> = history["events"]
         .as_array()
         .expect("events")
@@ -2469,5 +2532,8 @@ fn a_board_travels_to_a_second_machine_and_the_card_still_cites_its_source() {
         .filter_map(|e| e["type"].as_str())
         .collect();
     assert!(types.contains(&"board.imported.v1"), "{types:?}");
-    assert!(types.contains(&"card.answered.v1"), "the sender's history did not travel");
+    assert!(
+        types.contains(&"card.answered.v1"),
+        "the sender's history did not travel"
+    );
 }

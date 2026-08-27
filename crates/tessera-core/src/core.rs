@@ -284,11 +284,7 @@ impl Core {
     }
 
     /// Read an image into a card. Doc 07 part A.
-    pub fn read_image(
-        &mut self,
-        board_id: &str,
-        image_id: &str,
-    ) -> Result<pipeline::CardOutcome, CoreError> {
+    pub fn read_image(&mut self, board_id: &str, image_id: &str) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
         let pack = self.packs.get(&self.pack_code)?.clone();
         let ctx = RunContext {
@@ -343,8 +339,7 @@ impl Core {
             .filter_map(|s| serde_json::from_value(s).ok())
             .collect();
 
-        let raster = crate::raster::rasterise(&strokes)
-            .map_err(|e| CoreError::Runtime(e.to_string()))?;
+        let raster = crate::raster::rasterise(&strokes).map_err(|e| CoreError::Runtime(e.to_string()))?;
 
         Ok(repo::write_image(
             &mut self.store,
@@ -382,7 +377,12 @@ impl Core {
         self.runtime
             .handle()
             .clone()
-            .block_on(pipeline::run_exercise(&mut self.store, &ctx, board_id, audience_id))
+            .block_on(pipeline::run_exercise(
+                &mut self.store,
+                &ctx,
+                board_id,
+                audience_id,
+            ))
             .map_err(|f| CoreError::Runtime(f.to_string()))
     }
 
@@ -391,11 +391,7 @@ impl Core {
     /// Doc 07 section B3 batches these when a source goes stale. Nothing is
     /// retrieved and no answer is rewritten, so this is what a board reopened
     /// months later runs before the user reads it.
-    pub fn verify_card(
-        &mut self,
-        board_id: &str,
-        card_id: &str,
-    ) -> Result<pipeline::CardOutcome, CoreError> {
+    pub fn verify_card(&mut self, board_id: &str, card_id: &str) -> Result<pipeline::CardOutcome, CoreError> {
         let policy = self.resolved()?;
         let pack = self.packs.get(&self.pack_code)?.clone();
         let ctx = RunContext {
@@ -409,16 +405,12 @@ impl Core {
             retrievers: &self.retrievers,
         };
 
-        let result = self
-            .runtime
-            .handle()
-            .clone()
-            .block_on(pipeline::run_verify_only(
-                &mut self.store,
-                &ctx,
-                board_id,
-                card_id,
-            ));
+        let result = self.runtime.handle().clone().block_on(pipeline::run_verify_only(
+            &mut self.store,
+            &ctx,
+            board_id,
+            card_id,
+        ));
 
         match result {
             Ok(outcome) => Ok(outcome),
@@ -639,10 +631,7 @@ pub fn build_router() -> Router<Core> {
             status: default_board_status(),
         });
         if !matches!(p.status.as_str(), "active" | "trashed") {
-            return Err(RpcError::core(
-                "unknown_status",
-                "A board is active or trashed.",
-            ));
+            return Err(RpcError::core("unknown_status", "A board is active or trashed."));
         }
         let boards = repo::list_boards(&core.store, &core.profile_id, &p.status).map_err(store_error)?;
         Ok(json!({ "boards": boards }))
@@ -726,8 +715,8 @@ pub fn build_router() -> Router<Core> {
             limit: i64,
         }
         let p: Query = params(p)?;
-        let flags = repo::open_flags(&core.store, &core.profile_id, p.limit.clamp(1, 500))
-            .map_err(store_error)?;
+        let flags =
+            repo::open_flags(&core.store, &core.profile_id, p.limit.clamp(1, 500)).map_err(store_error)?;
         Ok(json!({ "flags": flags }))
     });
 
@@ -767,8 +756,8 @@ pub fn build_router() -> Router<Core> {
             limit: i64,
         }
         let p: Query = params(p)?;
-        let sources = repo::list_sources(&core.store, &core.profile_id, p.limit.clamp(1, 1000))
-            .map_err(store_error)?;
+        let sources =
+            repo::list_sources(&core.store, &core.profile_id, p.limit.clamp(1, 1000)).map_err(store_error)?;
         Ok(json!({ "sources": sources }))
     });
 
@@ -790,8 +779,8 @@ pub fn build_router() -> Router<Core> {
                 "Say what you want to learn about first.",
             ));
         }
-        let session_id = repo::start_learn_session(&mut core.store, &p.board_id, p.topic.trim())
-            .map_err(store_error)?;
+        let session_id =
+            repo::start_learn_session(&mut core.store, &p.board_id, p.topic.trim()).map_err(store_error)?;
         let turn = core
             .tutor_turn(&p.board_id, "intake", None, None)
             .map_err(core_error)?;
@@ -872,14 +861,9 @@ pub fn build_router() -> Router<Core> {
             concept_ids: Vec<String>,
         }
         let p: Answered = params(p)?;
-        let correct = pipeline::record_check(
-            &mut core.store,
-            &p.board_id,
-            &p.item,
-            &p.picked,
-            &p.concept_ids,
-        )
-        .map_err(|f| RpcError::core("learn", f.to_string()))?;
+        let correct =
+            pipeline::record_check(&mut core.store, &p.board_id, &p.item, &p.picked, &p.concept_ids)
+                .map_err(|f| RpcError::core("learn", f.to_string()))?;
         Ok(json!({ "correct": correct }))
     });
 
@@ -962,9 +946,8 @@ pub fn build_router() -> Router<Core> {
             data: String,
         }
         let p: Import = params(p)?;
-        let bytes = decode_base64(&p.data).ok_or_else(|| {
-            RpcError::core("bad_bundle", "That file could not be read as a bundle.")
-        })?;
+        let bytes = decode_base64(&p.data)
+            .ok_or_else(|| RpcError::core("bad_bundle", "That file could not be read as a bundle."))?;
         let profile_id = core.profile_id.clone();
         let outcome = tessera_bundle::import(&mut core.store, &profile_id, std::io::Cursor::new(bytes))
             .map_err(|e| RpcError::core("bundle", e.to_string()))?;
@@ -981,9 +964,8 @@ pub fn build_router() -> Router<Core> {
             height: u32,
         }
         let p: AddImage = params(p)?;
-        let bytes = decode_base64(&p.data).ok_or_else(|| {
-            RpcError::core("bad_image", "That image could not be read as an image.")
-        })?;
+        let bytes = decode_base64(&p.data)
+            .ok_or_else(|| RpcError::core("bad_image", "That image could not be read as an image."))?;
         // A bound, so a paste cannot fill the profile folder in one gesture.
         if bytes.len() > MAX_IMAGE_BYTES {
             return Err(RpcError::core(
@@ -1082,13 +1064,8 @@ pub fn build_router() -> Router<Core> {
             reason: Option<String>,
         }
         let p: Report = params(p)?;
-        repo::report_exercise_item(
-            &mut core.store,
-            &p.exercise_id,
-            &p.item_id,
-            p.reason.as_deref(),
-        )
-        .map_err(store_error)?;
+        repo::report_exercise_item(&mut core.store, &p.exercise_id, &p.item_id, p.reason.as_deref())
+            .map_err(store_error)?;
         Ok(json!({ "reported": p.item_id }))
     });
 
@@ -1165,9 +1142,7 @@ pub fn build_router() -> Router<Core> {
     // stands, which is what a stale flag asks the reader to do.
     r.register("card.verify", |core: &mut Core, p| {
         let p: CardRef = params(p)?;
-        let outcome = core
-            .verify_card(&p.board_id, &p.card_id)
-            .map_err(core_error)?;
+        let outcome = core.verify_card(&p.board_id, &p.card_id).map_err(core_error)?;
         Ok(json!({
             "card_id": outcome.card_id,
             "run_id": outcome.run_id,

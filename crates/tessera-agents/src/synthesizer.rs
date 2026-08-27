@@ -630,8 +630,7 @@ fn bind(draft: &Value, passages: &[Value], mode: &str, packet: &Value) -> Bound 
             0.15
         };
 
-        ((sentence_share * 0.5 + value_share * 0.2 + resolved + fresh_ancestors) * 100.0).round()
-            / 100.0
+        ((sentence_share * 0.5 + value_share * 0.2 + resolved + fresh_ancestors) * 100.0).round() / 100.0
     };
 
     Bound {
@@ -886,7 +885,9 @@ mod tests {
         assert_eq!(findings.len(), 2);
         assert_eq!(findings[0]["convergent"], json!(true), "{findings:?}");
         assert!(
-            findings[0]["text"].as_str().is_some_and(|t| t.starts_with("Both reached")),
+            findings[0]["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("Both reached")),
             "the convergent finding leads, got {findings:?}"
         );
         assert_eq!(findings[1]["convergent"], json!(false));
@@ -895,7 +896,11 @@ mod tests {
         // cannot converge with itself.
         let deep = bind(&draft, &passages, "deep", &json!({}));
         let deep = deep.findings.as_array().expect("findings");
-        assert!(deep[0]["text"].as_str().is_some_and(|t| t.starts_with("Only sq-1")));
+        assert!(
+            deep[0]["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("Only sq-1"))
+        );
     }
 
     #[test]

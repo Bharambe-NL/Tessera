@@ -237,8 +237,16 @@ mod tests {
                     issuer_pattern: Some("Central Authority".into()),
                     rank: 1,
                 },
-                TrustRank { class: Some("regulatory".into()), issuer_pattern: None, rank: 2 },
-                TrustRank { class: Some("local_document".into()), issuer_pattern: None, rank: 4 },
+                TrustRank {
+                    class: Some("regulatory".into()),
+                    issuer_pattern: None,
+                    rank: 2,
+                },
+                TrustRank {
+                    class: Some("local_document".into()),
+                    issuer_pattern: None,
+                    rank: 4,
+                },
             ],
             denied_domains: Vec::new(),
         }
@@ -247,7 +255,10 @@ mod tests {
     #[test]
     fn the_more_specific_doctrine_rule_wins() {
         let d = doctrine();
-        assert_eq!(d.rank_for("regulatory", Some("Central Authority for Prudential Oversight")), 1);
+        assert_eq!(
+            d.rank_for("regulatory", Some("Central Authority for Prudential Oversight")),
+            1
+        );
         assert_eq!(d.rank_for("regulatory", Some("Some Other Regulator")), 2);
         assert_eq!(d.rank_for("local_document", None), 4);
     }
@@ -308,8 +319,11 @@ mod tests {
         };
         assert!((best.confidence() - 1.0).abs() < 1e-9);
 
-        let no_trusted_source =
-            Retrieved { passages: vec![passage(7)], coverage: Coverage::Full, ..Default::default() };
+        let no_trusted_source = Retrieved {
+            passages: vec![passage(7)],
+            coverage: Coverage::Full,
+            ..Default::default()
+        };
         assert!((no_trusted_source.confidence() - 0.7).abs() < 1e-9);
 
         let nothing = Retrieved::default();
@@ -319,13 +333,22 @@ mod tests {
 
     #[test]
     fn a_fetch_error_and_a_rewrite_each_cost_what_the_spec_says() {
-        let base = Retrieved { coverage: Coverage::Full, ..Default::default() };
+        let base = Retrieved {
+            coverage: Coverage::Full,
+            ..Default::default()
+        };
         assert!((base.confidence() - 0.7).abs() < 1e-9);
 
-        let with_error = Retrieved { fetch_errors: 1, ..base.clone() };
+        let with_error = Retrieved {
+            fetch_errors: 1,
+            ..base.clone()
+        };
         assert!((with_error.confidence() - 0.5).abs() < 1e-9);
 
-        let rewritten = Retrieved { query_rewritten: true, ..base.clone() };
+        let rewritten = Retrieved {
+            query_rewritten: true,
+            ..base.clone()
+        };
         assert!((rewritten.confidence() - 0.6).abs() < 1e-9);
     }
 

@@ -549,7 +549,6 @@ fn caveats(depth: &Value) -> Value {
 
 // ------------------------------------------------------- deterministic bits --
 
-
 /// Doc 03 section 8.1: a strong single match sets the domain without asking the
 /// model. Two domains matching is not a strong match, so it defers.
 /// Every domain whose vocabulary appears verbatim in the question.

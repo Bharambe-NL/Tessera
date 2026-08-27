@@ -53,7 +53,10 @@ pub fn parse(path: &Path) -> Result<Vec<Chunk>, ParseError> {
             if lower.contains("encrypt") || lower.contains("password") {
                 return Err(ParseError::Protected(path.display().to_string()));
             }
-            return Err(ParseError::Malformed { format: "pdf", detail });
+            return Err(ParseError::Malformed {
+                format: "pdf",
+                detail,
+            });
         }
         Err(_) => {
             return Err(ParseError::Malformed {

@@ -148,9 +148,7 @@ pub fn load(corpus: &Path) -> Result<Vec<Board>, String> {
             continue;
         }
         let body = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        boards.push(
-            serde_json::from_str::<Board>(&body).map_err(|e| format!("{}: {e}", path.display()))?,
-        );
+        boards.push(serde_json::from_str::<Board>(&body).map_err(|e| format!("{}: {e}", path.display()))?);
     }
     Ok(boards)
 }
@@ -231,13 +229,9 @@ pub fn seed(
             continue;
         }
         for card in &board.cards {
-            let indexed = tessera_retrievers::boards::index_card(
-                store.conn(),
-                profile_id,
-                &card.card_id,
-                embedder,
-            )
-            .map_err(|e| format!("index {}: {e}", card.card_id))?;
+            let indexed =
+                tessera_retrievers::boards::index_card(store.conn(), profile_id, &card.card_id, embedder)
+                    .map_err(|e| format!("index {}: {e}", card.card_id))?;
             report.indexed += usize::from(indexed);
             if indexed != card.memory_eligible {
                 report.eligibility_disagreements.push(format!(
@@ -261,7 +255,11 @@ fn write_card(
     let conn = store.conn();
     let findings = serde_json::to_string(&card.findings).unwrap_or_else(|_| "[]".into());
     let builds_on = serde_json::to_string(&card.builds_on).unwrap_or_else(|_| "[]".into());
-    let kind = if card.kind.is_empty() { "root" } else { card.kind.as_str() };
+    let kind = if card.kind.is_empty() {
+        "root"
+    } else {
+        card.kind.as_str()
+    };
 
     conn.execute(
         "INSERT INTO card (id, board_id, parent_card_id, kind, anchor_text, question, depth,
@@ -329,7 +327,11 @@ fn write_card(
                 card.card_id,
                 citation.ordinal,
                 citation.passage_id,
-                if citation.verdict.is_empty() { "unchecked" } else { citation.verdict.as_str() },
+                if citation.verdict.is_empty() {
+                    "unchecked"
+                } else {
+                    citation.verdict.as_str()
+                },
                 now
             ],
         )?;
@@ -364,8 +366,14 @@ mod tests {
     #[test]
     fn a_corpus_path_becomes_the_locator_a_retriever_records() {
         assert_eq!(retriever_locator("regulatory/reg-car3-v1.md"), "reg-car3-v1.md");
-        assert_eq!(retriever_locator("internal/Risk/int-model-09.pdf"), "Risk/int-model-09.pdf");
-        assert_eq!(retriever_locator("web/site.invalid/page.html"), "site.invalid/page.html");
+        assert_eq!(
+            retriever_locator("internal/Risk/int-model-09.pdf"),
+            "Risk/int-model-09.pdf"
+        );
+        assert_eq!(
+            retriever_locator("web/site.invalid/page.html"),
+            "site.invalid/page.html"
+        );
         assert_eq!(retriever_locator("reg-car3-v1.md"), "reg-car3-v1.md");
         assert_eq!(retriever_locator("B-01/B-01-C03"), "B-01/B-01-C03");
     }
@@ -374,7 +382,13 @@ mod tests {
     fn snapshots_order_as_time() {
         assert!(at_or_before("T1", "T1"));
         assert!(at_or_before("T1", "T3"));
-        assert!(!at_or_before("T3", "T1"), "a T1 run remembered a card from the future");
-        assert!(at_or_before("", "T1"), "an unlabelled board is older than every snapshot");
+        assert!(
+            !at_or_before("T3", "T1"),
+            "a T1 run remembered a card from the future"
+        );
+        assert!(
+            at_or_before("", "T1"),
+            "an unlabelled board is older than every snapshot"
+        );
     }
 }

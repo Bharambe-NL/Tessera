@@ -82,10 +82,7 @@ impl Agent for Visualizer {
                     if ctx.machine.retries_used() == 0 && ctx.machine.retry().is_ok() {
                         return Err(Failure {
                             kind: "untraceable_labels".into(),
-                            detail: format!(
-                                "labels not present in the summary: {}",
-                                untraceable.join(", ")
-                            ),
+                            detail: format!("labels not present in the summary: {}", untraceable.join(", ")),
                             recovery: Recovery::Retried,
                             evidence: Some(json!({ "untraceable": untraceable })),
                             recoverable: true,
@@ -421,9 +418,10 @@ fn prune_untraceable(composed: &mut Value, visual_type: &str, untraceable: &[Str
             if let Some(rows) = payload["rows"].as_array_mut() {
                 let before = rows.len();
                 rows.retain(|row| {
-                    !row.as_array().into_iter().flatten().any(|cell| {
-                        cell.as_str().is_some_and(|label| gone.contains(label))
-                    })
+                    !row.as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|cell| cell.as_str().is_some_and(|label| gone.contains(label)))
                 });
                 dropped += before - rows.len();
             }
@@ -443,8 +441,7 @@ fn prune_untraceable(composed: &mut Value, visual_type: &str, untraceable: &[Str
                 for child in children.iter_mut() {
                     if let Some(grandchildren) = child["children"].as_array_mut() {
                         let before = grandchildren.len();
-                        grandchildren
-                            .retain(|g| !g["label"].as_str().is_some_and(|l| gone.contains(l)));
+                        grandchildren.retain(|g| !g["label"].as_str().is_some_and(|l| gone.contains(l)));
                         dropped += before - grandchildren.len();
                     }
                 }
@@ -472,9 +469,10 @@ fn has_content(composed: &Value, visual_type: &str) -> bool {
         "table" => payload["rows"].as_array().is_some_and(|r| !r.is_empty()),
         "steps" => payload["steps"].as_array().is_some_and(|s| !s.is_empty()),
         "tree" => payload["root"].is_object(),
-        _ => payload["groups"]
-            .as_array()
-            .is_some_and(|g| g.iter().any(|x| x["items"].as_array().is_some_and(|i| !i.is_empty()))),
+        _ => payload["groups"].as_array().is_some_and(|g| {
+            g.iter()
+                .any(|x| x["items"].as_array().is_some_and(|i| !i.is_empty()))
+        }),
     }
 }
 
@@ -890,7 +888,10 @@ mod tests {
             &composed,
             "table",
             &summary,
-            Shape { tie_broken: false, dropped: 1 },
+            Shape {
+                tie_broken: false,
+                dropped: 1,
+            },
         )
         .expect("indexes");
         assert!(pruned.confidence < intact.confidence, "{pruned:?} {intact:?}");
@@ -899,7 +900,10 @@ mod tests {
             &composed,
             "table",
             &summary,
-            Shape { tie_broken: true, dropped: 0 },
+            Shape {
+                tie_broken: true,
+                dropped: 0,
+            },
         )
         .expect("indexes");
         assert!(tied.confidence < intact.confidence);
@@ -917,8 +921,7 @@ mod tests {
                 { "label": "assign the risk weight" }
             ] }
         });
-        let indexed =
-            index_blocks(&composed, "steps", &summary, Shape::default()).expect("indexes");
+        let indexed = index_blocks(&composed, "steps", &summary, Shape::default()).expect("indexes");
         for block in indexed.blocks.as_array().expect("blocks") {
             let cited = block["citation_ordinals"]
                 .as_array()

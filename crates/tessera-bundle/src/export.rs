@@ -86,9 +86,7 @@ pub fn preflight(store: &Store, board_id: &str) -> Result<Preflight> {
         )?;
         local.push(LocalDocument {
             file_name: file_name_of(source["locator"].as_str().unwrap_or_default()),
-            text_withheld: passages
-                .iter()
-                .any(|p| p["text_withheld"].as_i64() == Some(1)),
+            text_withheld: passages.iter().any(|p| p["text_withheld"].as_i64() == Some(1)),
             passages: passages.len(),
             source_id: id,
         });
@@ -143,11 +141,7 @@ pub fn export<W: Write + Seek>(
     let ink = query(conn, "SELECT * FROM ink WHERE board_id = ?1", &[&board_id])?;
     let notes = query(conn, "SELECT * FROM note WHERE board_id = ?1", &[&board_id])?;
     let images = query(conn, "SELECT * FROM image WHERE board_id = ?1", &[&board_id])?;
-    let exercises = query(
-        conn,
-        "SELECT * FROM exercise WHERE board_id = ?1",
-        &[&board_id],
-    )?;
+    let exercises = query(conn, "SELECT * FROM exercise WHERE board_id = ?1", &[&board_id])?;
 
     // Concepts linked from this board's cards, and the links themselves. Doc 01
     // section 4.7 keeps concepts on the profile, so the filter is the link.
@@ -173,9 +167,7 @@ pub fn export<W: Write + Seek>(
     let mut withheld: BTreeSet<String> = BTreeSet::new();
     for source in cited_sources(store, board_id)? {
         let id = source["id"].as_str().unwrap_or_default().to_string();
-        if source["class"].as_str() == Some("local_document")
-            && !options.local_documents.contains(&id)
-        {
+        if source["class"].as_str() == Some("local_document") && !options.local_documents.contains(&id) {
             withheld.insert(id);
             continue;
         }
@@ -187,11 +179,7 @@ pub fn export<W: Write + Seek>(
         .collect();
     let passages: Vec<Value> = cited_passages(store, board_id)?
         .into_iter()
-        .filter(|p| {
-            p["source_id"]
-                .as_str()
-                .is_some_and(|id| kept.contains(id))
-        })
+        .filter(|p| p["source_id"].as_str().is_some_and(|id| kept.contains(id)))
         .map(redact_passage)
         .collect();
 
@@ -350,14 +338,10 @@ fn write_archive<W: Write + Seek>(
 }
 
 fn board_row(store: &Store, board_id: &str) -> Result<Value> {
-    query(
-        store.conn(),
-        "SELECT * FROM board WHERE id = ?1",
-        &[&board_id],
-    )?
-    .into_iter()
-    .next()
-    .ok_or_else(|| BundleError::NoBoard(board_id.to_string()))
+    query(store.conn(), "SELECT * FROM board WHERE id = ?1", &[&board_id])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| BundleError::NoBoard(board_id.to_string()))
 }
 
 /// Sources this board cites, through citation and passage.
@@ -436,11 +420,7 @@ fn redact_passage(mut passage: Value) -> Value {
 /// Both separators, because a bundle written on Windows is read on macOS and a
 /// backslash is an ordinary character in a POSIX file name.
 fn file_name_of(locator: &str) -> String {
-    locator
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(locator)
-        .to_string()
+    locator.rsplit(['/', '\\']).next().unwrap_or(locator).to_string()
 }
 
 #[cfg(test)]

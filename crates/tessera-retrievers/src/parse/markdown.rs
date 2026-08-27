@@ -22,7 +22,9 @@ use crate::chunking::{Chunk, ChunkLocation, windows};
 /// A heading that names an article, for example `## Article 12`.
 fn article_of(title: &str) -> Option<String> {
     let t = title.trim();
-    let rest = t.strip_prefix("Article ").or_else(|| t.strip_prefix("article "))?;
+    let rest = t
+        .strip_prefix("Article ")
+        .or_else(|| t.strip_prefix("article "))?;
     let number: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     (!number.is_empty()).then_some(number)
 }
@@ -42,7 +44,11 @@ struct Section {
 
 impl Section {
     fn empty() -> Self {
-        Self { title: String::new(), level: 1, blocks: Vec::new() }
+        Self {
+            title: String::new(),
+            level: 1,
+            blocks: Vec::new(),
+        }
     }
     fn is_empty(&self) -> bool {
         self.title.is_empty() && self.blocks.is_empty()
@@ -156,8 +162,10 @@ pub fn parse(source: &str) -> Vec<Chunk> {
                 for block in &section.blocks {
                     let paragraph = block.ordinal.unwrap_or(last);
                     last = paragraph;
-                    let location =
-                        ChunkLocation::ArticleParagraph { article: article.clone(), paragraph };
+                    let location = ChunkLocation::ArticleParagraph {
+                        article: article.clone(),
+                        paragraph,
+                    };
                     let produced = windows(&block.text, &location, sequence);
                     sequence += produced.len();
                     out.extend(produced);
@@ -170,8 +178,10 @@ pub fn parse(source: &str) -> Vec<Chunk> {
                     .map(|b| b.text.as_str())
                     .collect::<Vec<_>>()
                     .join("\n");
-                let location =
-                    ChunkLocation::Heading { title: section.title.clone(), level: section.level };
+                let location = ChunkLocation::Heading {
+                    title: section.title.clone(),
+                    level: section.level,
+                };
                 let produced = windows(&body, &location, sequence);
                 sequence += produced.len();
                 out.extend(produced);
@@ -197,9 +207,7 @@ This Article applies to institutions authorised under this Regulation.\n\n\
         parse(source)
             .into_iter()
             .filter_map(|c| match c.location {
-                ChunkLocation::ArticleParagraph { article, paragraph } => {
-                    Some((article, paragraph, c.text))
-                }
+                ChunkLocation::ArticleParagraph { article, paragraph } => Some((article, paragraph, c.text)),
                 _ => None,
             })
             .collect()
@@ -210,7 +218,11 @@ This Article applies to institutions authorised under this Regulation.\n\n\
         let found = paragraphs(REGULATION);
         let one = found.iter().find(|(_, p, _)| *p == 1).expect("paragraph 1");
         assert_eq!(one.0, "3");
-        assert!(one.2.contains("8.4 %"), "the planted value is missing: {:?}", one.2);
+        assert!(
+            one.2.contains("8.4 %"),
+            "the planted value is missing: {:?}",
+            one.2
+        );
 
         let two = found.iter().find(|(_, p, _)| *p == 2).expect("paragraph 2");
         assert!(two.2.contains("inventory"), "{:?}", two.2);
@@ -240,7 +252,8 @@ This Article applies to institutions authorised under this Regulation.\n\n\
     fn a_heading_that_merely_mentions_an_article_is_not_one() {
         let out = parse("## Articles of association\n\nSome prose about the company.\n");
         assert!(
-            out.iter().all(|c| !matches!(c.location, ChunkLocation::ArticleParagraph { .. })),
+            out.iter()
+                .all(|c| !matches!(c.location, ChunkLocation::ArticleParagraph { .. })),
             "a section was mistaken for a regulation article"
         );
     }

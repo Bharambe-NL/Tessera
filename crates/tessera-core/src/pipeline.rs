@@ -278,9 +278,7 @@ pub async fn run_tutor_turn(
 ) -> Result<Value, Failure> {
     let session = repo::read_learn_session(store, board_id)
         .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
-        .ok_or_else(|| {
-            Failure::new("no_session", "this board has no learn session", Recovery::Failed)
-        })?;
+        .ok_or_else(|| Failure::new("no_session", "this board has no learn session", Recovery::Failed))?;
 
     let policy_snapshot = serde_json::to_value(&ctx.policy).unwrap_or(Value::Null);
     let run_id = repo::start_run(
@@ -464,9 +462,7 @@ pub fn record_check(
 ) -> Result<bool, Failure> {
     let session = repo::read_learn_session(store, board_id)
         .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
-        .ok_or_else(|| {
-            Failure::new("no_session", "this board has no learn session", Recovery::Failed)
-        })?;
+        .ok_or_else(|| Failure::new("no_session", "this board has no learn session", Recovery::Failed))?;
 
     let correct = item["answer_id"].as_str() == Some(picked);
     let session_id = session["session_id"].as_str().unwrap_or_default().to_string();
@@ -508,9 +504,7 @@ pub fn record_check(
 pub fn end_learn_session(store: &mut Store, board_id: &str) -> Result<Value, Failure> {
     let session = repo::read_learn_session(store, board_id)
         .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
-        .ok_or_else(|| {
-            Failure::new("no_session", "this board has no learn session", Recovery::Failed)
-        })?;
+        .ok_or_else(|| Failure::new("no_session", "this board has no learn session", Recovery::Failed))?;
 
     let checks = session["checks"].as_array().cloned().unwrap_or_default();
     let correct = checks.iter().filter(|c| c["correct"] == true).count();
@@ -565,9 +559,7 @@ pub async fn run_read(
 
     let (image, bytes) = repo::read_image(store, image_id)
         .map_err(|e| Failure::new("store", e.to_string(), Recovery::Failed))?
-        .ok_or_else(|| {
-            Failure::new("image_unreadable", "no such image", Recovery::Failed)
-        })?;
+        .ok_or_else(|| Failure::new("image_unreadable", "no such image", Recovery::Failed))?;
 
     // Doc 01 section 4.4's `read` card kind. The question is what the reader
     // asked of the picture, and "read this" is the whole of it.
@@ -738,7 +730,11 @@ pub async fn run_read(
     Ok(CardOutcome {
         card_id,
         run_id,
-        status: if flags > 0 { "flagged".into() } else { "done".into() },
+        status: if flags > 0 {
+            "flagged".into()
+        } else {
+            "done".into()
+        },
         confidence,
         flags,
     })
@@ -776,11 +772,7 @@ pub fn base64(bytes: &[u8]) -> String {
     const SET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(SET[(n >> 18) as usize & 63] as char);
         out.push(SET[(n >> 12) as usize & 63] as char);
@@ -983,7 +975,12 @@ pub async fn run_card(
     // is walked once here rather than twice inside the builders.
     let card = CardIdentity::read(store, card_id);
     let ancestors = repo::ancestor_chain(store, card_id, 3).unwrap_or_default();
-    let subject = Subject { card: &card, run_id: &run_id, question, ancestors: &ancestors };
+    let subject = Subject {
+        card: &card,
+        run_id: &run_id,
+        question,
+        ancestors: &ancestors,
+    };
 
     // ------------------------------------------------------------ Router --
     let router_packet = build_router_packet(&board, &subject, depth_override, ctx);
@@ -1316,8 +1313,7 @@ pub async fn run_card(
                         .as_str()
                         .unwrap_or("The summary carried no structure to draw."),
                 }),
-                tessera_store::Provenance::agent("visualizer", run_id.clone())
-                    .with_source(ctx.source),
+                tessera_store::Provenance::agent("visualizer", run_id.clone()).with_source(ctx.source),
             )
             .on_board(board_id)
             .on_card(card_id),
@@ -1415,7 +1411,14 @@ pub async fn run_card(
         .unwrap_or_default();
 
     let confidence = verified["card_confidence"].as_f64().unwrap_or(0.0);
-    repo::finish_card(store, at, confidence, &verdicts, &verified["checks_run"], &builds_on)?;
+    repo::finish_card(
+        store,
+        at,
+        confidence,
+        &verdicts,
+        &verified["checks_run"],
+        &builds_on,
+    )?;
     repo::end_run(store, &run_id, "done")?;
     repo::touch_board(store, board_id)?;
 
@@ -1441,18 +1444,8 @@ pub async fn run_card(
         .filter_map(|e| e.as_str().map(str::to_string))
         .collect();
     if !entities.is_empty()
-        && let Ok(pack_id) = repo::ensure_pack(
-            store,
-            &serde_json::to_value(ctx.pack).unwrap_or(Value::Null),
-        )
-        && let Err(e) = repo::propose_concepts(
-            store,
-            at,
-            &ctx.profile_id,
-            &pack_id,
-            &entities,
-            "router",
-        )
+        && let Ok(pack_id) = repo::ensure_pack(store, &serde_json::to_value(ctx.pack).unwrap_or(Value::Null))
+        && let Err(e) = repo::propose_concepts(store, at, &ctx.profile_id, &pack_id, &entities, "router")
     {
         tracing::warn!(error = %e, "the concepts this card named were not proposed");
     }
@@ -1522,7 +1515,9 @@ fn board_row(store: &Store, board_id: &str) -> Result<Value, Failure> {
 /// nothing is what it retrieved: recall on standalone questions measured 1.000
 /// and on follow-ups 0.485, and the whole of that gap was this field.
 fn parent_block(ancestors: &[repo::Ancestor]) -> Value {
-    let Some(parent) = ancestors.first() else { return Value::Null };
+    let Some(parent) = ancestors.first() else {
+        return Value::Null;
+    };
     json!({
         "card_id": parent.card_id,
         "question": parent.question,

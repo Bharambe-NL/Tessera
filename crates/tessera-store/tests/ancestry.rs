@@ -100,14 +100,24 @@ fn a_follow_up_reaches_its_parents_question_and_answer() {
     // The whole point. Without this the Planner has nothing to resolve
     // "which article says so?" against.
     let mut f = fixture();
-    let root = card(&mut f, "What is the confidence level for the internal model?", None);
+    let root = card(
+        &mut f,
+        "What is the confidence level for the internal model?",
+        None,
+    );
     answer(&mut f, &root, "The confidence level is 98.4 percent.");
     let follow = card(&mut f, "Which article says so?", Some(&root));
 
     let chain = repo::ancestor_chain(&f.store, &follow, 3).expect("chain");
     assert_eq!(chain.len(), 1);
-    assert_eq!(chain[0].question, "What is the confidence level for the internal model?");
-    assert_eq!(chain[0].answer.as_deref(), Some("The confidence level is 98.4 percent."));
+    assert_eq!(
+        chain[0].question,
+        "What is the confidence level for the internal model?"
+    );
+    assert_eq!(
+        chain[0].answer.as_deref(),
+        Some("The confidence level is 98.4 percent.")
+    );
 }
 
 #[test]
@@ -147,7 +157,10 @@ fn a_cycle_does_not_hang_the_walk() {
     let b = card(&mut f, "two", Some(&a));
     f.store
         .conn()
-        .execute("UPDATE card SET parent_card_id = ?2 WHERE id = ?1", params![&a, &b])
+        .execute(
+            "UPDATE card SET parent_card_id = ?2 WHERE id = ?1",
+            params![&a, &b],
+        )
         .expect("cycle");
 
     let chain = repo::ancestor_chain(&f.store, &b, 3).expect("chain");
@@ -168,7 +181,10 @@ fn an_unanswered_parent_reports_no_answered_at() {
 
     answer(&mut f, &root, "Something.");
     let chain = repo::ancestor_chain(&f.store, &follow, 3).expect("chain");
-    assert!(chain[0].answered_at.is_some(), "an answered card withheld its timestamp");
+    assert!(
+        chain[0].answered_at.is_some(),
+        "an answered card withheld its timestamp"
+    );
 }
 
 #[test]

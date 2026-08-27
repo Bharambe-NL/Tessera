@@ -69,8 +69,7 @@ pub fn rasterise(strokes: &[Stroke]) -> Result<Raster, RasterError> {
         return Err(RasterError::Empty);
     }
 
-    let (mut min_x, mut min_y, mut max_x, mut max_y) =
-        (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
     for (x, y) in &points {
         min_x = min_x.min(*x);
         min_y = min_y.min(*y);
@@ -106,11 +105,7 @@ pub fn rasterise(strokes: &[Stroke]) -> Result<Raster, RasterError> {
         }
     }
 
-    encode(&pixels, width, height).map(|bytes| Raster {
-        bytes,
-        width,
-        height,
-    })
+    encode(&pixels, width, height).map(|bytes| Raster { bytes, width, height })
 }
 
 /// How dark a stroke draws. Colours are OKLCH strings from the token set and
@@ -125,15 +120,7 @@ fn ink_level(colour: &str) -> u8 {
 }
 
 /// A round brush along a segment, sampled at half a pixel.
-fn line(
-    pixels: &mut [u8],
-    width: u32,
-    height: u32,
-    a: (f64, f64),
-    b: (f64, f64),
-    radius: f64,
-    ink: u8,
-) {
+fn line(pixels: &mut [u8], width: u32, height: u32, a: (f64, f64), b: (f64, f64), radius: f64, ink: u8) {
     let dx = b.0 - a.0;
     let dy = b.1 - a.1;
     let length = (dx * dx + dy * dy).sqrt();
@@ -202,10 +189,7 @@ mod tests {
         // A blank png handed to a vision model bills for a call that can only
         // answer "unrecognised".
         assert!(matches!(rasterise(&[]), Err(RasterError::Empty)));
-        assert!(matches!(
-            rasterise(&[stroke(&[])]),
-            Err(RasterError::Empty)
-        ));
+        assert!(matches!(rasterise(&[stroke(&[])]), Err(RasterError::Empty)));
     }
 
     #[test]

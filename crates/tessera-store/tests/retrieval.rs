@@ -86,7 +86,13 @@ fn fixture() -> Fixture {
     )
     .expect("run");
 
-    Fixture { store, profile, board, card, run }
+    Fixture {
+        store,
+        profile,
+        board,
+        card,
+        run,
+    }
 }
 
 fn count(store: &Store, table: &str) -> i64 {
@@ -127,7 +133,13 @@ fn a_mirrored_page_becomes_one_source() {
     // Doc 05 section 12: zero duplicate Sources for mirrored pages. Four
     // spellings of one page is the shape this arrives in: a redirect, a
     // tracking parameter, a trailing slash, a capitalised host.
-    let Fixture { mut store, profile, board, card, run } = fixture();
+    let Fixture {
+        mut store,
+        profile,
+        board,
+        card,
+        run,
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,
@@ -142,13 +154,18 @@ fn a_mirrored_page_becomes_one_source() {
         "HTTPS://Ledgerline.Invalid/capital/buffers?utm_source=news",
         "https://ledgerline.invalid/capital/buffers#section-2",
     ];
-    let passages: Vec<NewPassage<'_>> =
-        spellings.iter().map(|l| passage(l, "The buffer is 2.5 percent.")).collect();
+    let passages: Vec<NewPassage<'_>> = spellings
+        .iter()
+        .map(|l| passage(l, "The buffer is 2.5 percent."))
+        .collect();
 
-    let retained = repo::record_retrieval(&mut store, &profile, here, &passages, "full", 12)
-        .expect("record");
+    let retained = repo::record_retrieval(&mut store, &profile, here, &passages, "full", 12).expect("record");
 
-    assert_eq!(count(&store, "source"), 1, "the mirrored page produced more than one source");
+    assert_eq!(
+        count(&store, "source"),
+        1,
+        "the mirrored page produced more than one source"
+    );
     assert_eq!(retained.sources_created, 1);
     assert_eq!(retained.sources_deduplicated, 3);
     // Every passage is kept: four retrievals of one page are four passages of
@@ -159,7 +176,13 @@ fn a_mirrored_page_becomes_one_source() {
 
 #[test]
 fn a_deduplicated_source_says_so_in_the_log() {
-    let Fixture { mut store, profile, board, card, run } = fixture();
+    let Fixture {
+        mut store,
+        profile,
+        board,
+        card,
+        run,
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,
@@ -183,7 +206,13 @@ fn a_sensitive_passage_keeps_its_location_and_loses_its_text() {
     // Doc 01 open question 2 as resolved: a sensitive folder stores offsets
     // rather than verbatim text. A citation into it stays checkable by the
     // person who owns the folder and carries nothing to anyone a bundle reaches.
-    let Fixture { mut store, profile, board, card, run } = fixture();
+    let Fixture {
+        mut store,
+        profile,
+        board,
+        card,
+        run,
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,
@@ -202,21 +231,32 @@ fn a_sensitive_passage_keeps_its_location_and_loses_its_text() {
 
     let (text, location, withheld): (Option<String>, String, i64) = store
         .conn()
-        .query_row("SELECT text, location, text_withheld FROM passage LIMIT 1", [], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })
+        .query_row(
+            "SELECT text, location, text_withheld FROM passage LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
         .expect("passage");
 
     assert_eq!(text, None, "the sensitive text was stored");
     assert_eq!(withheld, 1);
-    assert!(location.contains("heading"), "the location was lost with the text");
+    assert!(
+        location.contains("heading"),
+        "the location was lost with the text"
+    );
 }
 
 #[test]
 fn the_events_tell_the_whole_story_in_order() {
     // Doc 05 section 7. `started` lands before anything is fetched, so an
     // assignment that hangs is visible in the log rather than absent from it.
-    let Fixture { mut store, profile, board, card, run } = fixture();
+    let Fixture {
+        mut store,
+        profile,
+        board,
+        card,
+        run,
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,
@@ -237,9 +277,18 @@ fn the_events_tell_the_whole_story_in_order() {
     .expect("record");
 
     let seen = events(&store, &board);
-    let started = seen.iter().position(|e| e == "retrieval.started.v1").expect("started");
-    let created = seen.iter().position(|e| e == "source.created.v1").expect("created");
-    let completed = seen.iter().position(|e| e == "retrieval.completed.v1").expect("completed");
+    let started = seen
+        .iter()
+        .position(|e| e == "retrieval.started.v1")
+        .expect("started");
+    let created = seen
+        .iter()
+        .position(|e| e == "source.created.v1")
+        .expect("created");
+    let completed = seen
+        .iter()
+        .position(|e| e == "retrieval.completed.v1")
+        .expect("completed");
     assert!(started < created && created < completed, "{seen:?}");
 }
 
@@ -248,7 +297,13 @@ fn a_retrieval_event_is_attributed_to_a_retriever_rather_than_an_agent() {
     // Doc 01 section 6.3 gives retrievers their own emitter type, because
     // "which of these events came from something that reached outside the
     // profile" has to be answerable from the log directly.
-    let Fixture { mut store, board, card, run, .. } = fixture();
+    let Fixture {
+        mut store,
+        board,
+        card,
+        run,
+        ..
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,
@@ -274,7 +329,13 @@ fn a_hook_denial_names_the_category_and_never_the_item() {
     // Doc 05 section 10: the caveat names the exclusion category without
     // naming the excluded thing. An event recording the path would put the
     // secret into the log the exclusion exists to keep it out of.
-    let Fixture { mut store, board, card, run, .. } = fixture();
+    let Fixture {
+        mut store,
+        board,
+        card,
+        run,
+        ..
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,
@@ -282,24 +343,34 @@ fn a_hook_denial_names_the_category_and_never_the_item() {
         retriever_id: "local",
         sq_id: None,
     };
-    repo::record_hook_denial(&mut store, here, "exclude_paths", "an excluded folder")
-        .expect("denial");
+    repo::record_hook_denial(&mut store, here, "exclude_paths", "an excluded folder").expect("denial");
 
     let payload: String = store
         .conn()
-        .query_row("SELECT payload FROM event WHERE event_type = 'hook.denied.v1'", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT payload FROM event WHERE event_type = 'hook.denied.v1'",
+            [],
+            |r| r.get(0),
+        )
         .expect("event");
     assert!(payload.contains("an excluded folder"));
-    assert!(!payload.contains("Sensitive"), "the denial leaked what it refused");
+    assert!(
+        !payload.contains("Sensitive"),
+        "the denial leaked what it refused"
+    );
 }
 
 #[test]
 fn retrieval_survives_a_replay() {
     // The projections rebuild from the log, so anything a retrieval wrote has
     // to be reconstructable or the audit trail is decorative.
-    let Fixture { mut store, profile, board, card, run } = fixture();
+    let Fixture {
+        mut store,
+        profile,
+        board,
+        card,
+        run,
+    } = fixture();
     let here = RetrievalRef {
         run_id: &run,
         board_id: &board,

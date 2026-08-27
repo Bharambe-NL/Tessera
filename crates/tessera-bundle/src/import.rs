@@ -242,7 +242,11 @@ pub fn import<R: Read + Seek>(store: &mut Store, profile_id: &str, source: R) ->
         .into_iter()
         .chain(extra_links)
     {
-        count(&mut out, "concept_links.jsonl", insert(conn, "concept_link", "id", &row)?);
+        count(
+            &mut out,
+            "concept_links.jsonl",
+            insert(conn, "concept_link", "id", &row)?,
+        );
     }
 
     // ---- the sender's history ----

@@ -330,8 +330,7 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
     if let Some(reply) = decided["reply"].as_str() {
         if has_citation_marker(reply) {
             dropped.push(
-                "The tutor's reply carried a citation marker. It was dropped: only a card cites."
-                    .into(),
+                "The tutor's reply carried a citation marker. It was dropped: only a card cites.".into(),
             );
         } else {
             out.reply = json!(reply);
@@ -360,24 +359,17 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
     let check = decided["check"].clone();
     let item = check["item"].clone();
     let cards = packet_cards(packet);
-    let scope: Vec<&str> = cards
-        .iter()
-        .filter_map(|c| c["card_id"].as_str())
-        .collect();
+    let scope: Vec<&str> = cards.iter().filter_map(|c| c["card_id"].as_str()).collect();
 
     // Rule 1: the Exercise agent's own two checks, reused. A check item is an
     // Exercise item (doc 14 section 1), so it is held to an Exercise item's
     // standard by the same code rather than by a second opinion.
     if !exercise::traceable(&item, &cards, &scope) {
-        dropped.push(
-            "The check question could not be traced to a card, so it was dropped.".into(),
-        );
+        dropped.push("The check question could not be traced to a card, so it was dropped.".into());
         return (out, dropped);
     }
     if exercise::leaks_truth(&item, &cards) {
-        dropped.push(
-            "The check question had a second right answer, so it was dropped.".into(),
-        );
+        dropped.push("The check question had a second right answer, so it was dropped.".into());
         return (out, dropped);
     }
 
@@ -394,7 +386,11 @@ fn enforce(decided: Value, packet: &Value, stage: &str) -> (Decision, Vec<String
         if !overlaps(question, card) {
             dropped.push(format!(
                 "The {} question was about something this card does not mention, so it was dropped.",
-                if field == "next_if_right" { "next" } else { "remedial" }
+                if field == "next_if_right" {
+                    "next"
+                } else {
+                    "remedial"
+                }
             ));
             kept[field] = Value::Null;
         }
@@ -458,15 +454,12 @@ pub fn overlaps(question: &str, card: &Value) -> bool {
 /// question in English shares it.
 fn content_words(text: &str) -> std::collections::BTreeSet<String> {
     const CLOSED: [&str; 32] = [
-        "the", "a", "an", "and", "or", "but", "if", "of", "to", "in", "on", "for", "with", "at",
-        "by", "from", "is", "are", "was", "were", "be", "been", "it", "its", "this", "that",
-        "what", "which", "how", "why", "when", "does",
+        "the", "a", "an", "and", "or", "but", "if", "of", "to", "in", "on", "for", "with", "at", "by",
+        "from", "is", "are", "was", "were", "be", "been", "it", "its", "this", "that", "what", "which",
+        "how", "why", "when", "does",
     ];
     text.split_whitespace()
-        .map(|w| {
-            w.trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-        })
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
         .filter(|w| w.chars().count() > 2 && !CLOSED.contains(&w.as_str()))
         .collect()
 }
@@ -479,8 +472,7 @@ pub fn has_citation_marker(text: &str) -> bool {
         if bytes[i] == '[' {
             let mut j = i + 1;
             let mut digits = 0;
-            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == ',' || bytes[j] == ' ')
-            {
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == ',' || bytes[j] == ' ') {
                 if bytes[j].is_ascii_digit() {
                     digits += 1;
                 }
@@ -582,7 +574,10 @@ mod tests {
     fn a_check_that_passes_both_exercise_rules_survives_with_its_next_questions() {
         let (out, dropped) = enforce(good_check(), &packet("checking"), "checking");
         assert!(dropped.is_empty(), "{dropped:?}");
-        assert_eq!(out.check["next_if_right"], "How is the capital conservation buffer calculated?");
+        assert_eq!(
+            out.check["next_if_right"],
+            "How is the capital conservation buffer calculated?"
+        );
         assert_eq!(out.check["next_if_wrong"], "What are risk weighted assets?");
     }
 
@@ -605,7 +600,10 @@ mod tests {
         let mut bad = good_check();
         bad["check"]["next_if_wrong"] = json!("How do songbirds migrate?");
         let (out, dropped) = enforce(bad, &packet("checking"), "checking");
-        assert_eq!(out.check["next_if_right"], "How is the capital conservation buffer calculated?");
+        assert_eq!(
+            out.check["next_if_right"],
+            "How is the capital conservation buffer calculated?"
+        );
         assert!(out.check["next_if_wrong"].is_null());
         assert_eq!(dropped.len(), 1);
         assert!(dropped[0].contains("remedial"));

@@ -723,7 +723,10 @@ pub struct Ancestor {
 
 impl Ancestor {
     pub fn stale_citations(&self) -> usize {
-        self.citations.iter().filter(|c| c["stale"] == json!(true)).count()
+        self.citations
+            .iter()
+            .filter(|c| c["stale"] == json!(true))
+            .count()
     }
 }
 
@@ -743,7 +746,11 @@ pub fn ancestor_chain(store: &Store, card_id: &str, limit: usize) -> Result<Vec<
     seen.insert(card_id.to_string());
 
     let mut next: Option<String> = conn
-        .query_row("SELECT parent_card_id FROM card WHERE id = ?1", params![card_id], |r| r.get(0))
+        .query_row(
+            "SELECT parent_card_id FROM card WHERE id = ?1",
+            params![card_id],
+            |r| r.get(0),
+        )
         .optional()?
         .flatten();
 
@@ -1275,12 +1282,7 @@ pub fn decide_flags(
 pub fn start_learn_session(store: &mut Store, board_id: &str, topic: &str) -> Result<String> {
     let id = new_id();
     let now = now_iso8601();
-    let (row, board, subject, at) = (
-        id.clone(),
-        board_id.to_string(),
-        topic.to_string(),
-        now.clone(),
-    );
+    let (row, board, subject, at) = (id.clone(), board_id.to_string(), topic.to_string(), now.clone());
 
     store.append_with(
         NewEvent::new(
@@ -1377,9 +1379,7 @@ pub fn update_learn_session(store: &mut Store, u: LearnUpdate<'_>) -> Result<()>
     let set: Vec<(String, String)> = u
         .set
         .iter()
-        .filter(|(column, _)| {
-            matches!(*column, "intake" | "plan" | "checks" | "opened" | "mastery")
-        })
+        .filter(|(column, _)| matches!(*column, "intake" | "plan" | "checks" | "opened" | "mastery"))
         .map(|(column, value)| ((*column).to_string(), value.to_string()))
         .collect();
 
@@ -1543,7 +1543,8 @@ pub fn read_image(store: &Store, image_id: &str) -> Result<Option<(Value, Vec<u8
 /// The ink a board holds, for the sketch raster path.
 pub fn read_ink(store: &Store, board_id: &str) -> Result<Vec<Value>> {
     let conn = store.conn();
-    let mut stmt = conn.prepare("SELECT points, colour, width FROM ink WHERE board_id = ?1 ORDER BY created_at")?;
+    let mut stmt =
+        conn.prepare("SELECT points, colour, width FROM ink WHERE board_id = ?1 ORDER BY created_at")?;
     Ok(stmt
         .query_map(params![board_id], |r| {
             let points: String = r.get(0)?;
@@ -1728,7 +1729,9 @@ pub fn write_exercise(store: &mut Store, e: NewExercise<'_>) -> Result<String> {
                 "INSERT INTO exercise (id, board_id, scope, template_id, audience_id, items,
                                        produced_by, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![row, board, scope_json, template, audience, items_json, produced, now],
+                params![
+                    row, board, scope_json, template, audience, items_json, produced, now
+                ],
             )?;
             Ok(())
         },
@@ -1742,11 +1745,7 @@ pub fn write_exercise(store: &mut Store, e: NewExercise<'_>) -> Result<String> {
 /// Attempts stay local to the profile and are excluded from bundles by default,
 /// which the initial migration already says in a comment: what a reader got
 /// wrong is theirs.
-pub fn record_attempt(
-    store: &mut Store,
-    exercise_id: &str,
-    answers: &Value,
-) -> Result<(String, i64, i64)> {
+pub fn record_attempt(store: &mut Store, exercise_id: &str, answers: &Value) -> Result<(String, i64, i64)> {
     let (items, board_id): (String, String) = store.conn().query_row(
         "SELECT items, board_id FROM exercise WHERE id = ?1",
         params![exercise_id],
@@ -2158,9 +2157,7 @@ pub fn list_concepts(store: &Store, profile_id: &str, limit: i64) -> Result<Vec<
 /// summarises six numbers hides the one that is wrong.
 pub fn profile_counts(store: &Store, profile_id: &str) -> Result<Value> {
     let conn = store.conn();
-    let one = |sql: &str| -> Result<i64> {
-        Ok(conn.query_row(sql, params![profile_id], |r| r.get(0))?)
-    };
+    let one = |sql: &str| -> Result<i64> { Ok(conn.query_row(sql, params![profile_id], |r| r.get(0))?) };
 
     Ok(json!({
         "boards": one("SELECT COUNT(*) FROM board WHERE profile_id = ?1 AND status = 'active'")?,
@@ -2292,12 +2289,7 @@ pub fn start_retrieval(store: &mut Store, at: RetrievalRef<'_>, query: &str) -> 
 /// Marking is idempotent: re-verifying a source already stale for the same
 /// reason writes the same row and appends no second event, so a run repeated
 /// against an unchanged corpus does not fill the log with duplicates.
-pub fn mark_source_stale(
-    store: &mut Store,
-    source_id: &str,
-    reason: &str,
-    run_id: &str,
-) -> Result<usize> {
+pub fn mark_source_stale(store: &mut Store, source_id: &str, reason: &str, run_id: &str) -> Result<usize> {
     let already: Option<String> = store
         .conn()
         .query_row(
@@ -2428,8 +2420,8 @@ pub fn record_retrieval(
                              freshness_class, trust_rank, dedupe_key, version_ref, created_at)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, ?12, ?13, ?8)",
                         params![
-                            sid, profile, class, title, locator, issuer, published, now, hash,
-                            freshness, rank, dedupe, version
+                            sid, profile, class, title, locator, issuer, published, now, hash, freshness,
+                            rank, dedupe, version
                         ],
                     )?;
                     Ok(())

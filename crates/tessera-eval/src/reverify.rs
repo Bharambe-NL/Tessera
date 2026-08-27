@@ -130,8 +130,8 @@ pub fn mark(
 /// is read as gone rather than as a locator this pass could not place.
 fn resolve(corpus: &Path, baseline: Option<&Path>, locator: &str) -> Option<PathBuf> {
     const FOLDERS: [&str; 3] = ["regulatory", "internal", "web"];
-    let candidates = std::iter::once(PathBuf::from(locator))
-        .chain(FOLDERS.iter().map(|f| Path::new(f).join(locator)));
+    let candidates =
+        std::iter::once(PathBuf::from(locator)).chain(FOLDERS.iter().map(|f| Path::new(f).join(locator)));
 
     for candidate in candidates {
         let in_either = corpus.join("corpus").join(&candidate).exists()
@@ -149,11 +149,7 @@ fn resolve(corpus: &Path, baseline: Option<&Path>, locator: &str) -> Option<Path
 /// and states them in the title line too. Reading the folder is what a
 /// regulatory retriever does anyway, so this needs no index and no filter.
 fn superseded_by_a_later_version(path: &Path) -> bool {
-    let Some((stem, version)) = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .and_then(split_version)
-    else {
+    let Some((stem, version)) = path.file_stem().and_then(|s| s.to_str()).and_then(split_version) else {
         return false;
     };
     let Some(folder) = path.parent() else {
@@ -168,9 +164,7 @@ fn superseded_by_a_later_version(path: &Path) -> bool {
             .file_stem()
             .and_then(|s| s.to_str())
             .and_then(split_version)
-            .is_some_and(|(other_stem, other_version)| {
-                other_stem == stem && other_version > version
-            })
+            .is_some_and(|(other_stem, other_version)| other_stem == stem && other_version > version)
     })
 }
 
@@ -214,8 +208,14 @@ mod tests {
         assert!(!superseded_by_a_later_version(&v1), "v2 does not exist yet");
         std::fs::write(&v2, "two").expect("write");
         assert!(superseded_by_a_later_version(&v1));
-        assert!(!superseded_by_a_later_version(&v2), "nothing supersedes the latest");
-        assert!(!superseded_by_a_later_version(&solo), "no version, nothing to supersede");
+        assert!(
+            !superseded_by_a_later_version(&v2),
+            "nothing supersedes the latest"
+        );
+        assert!(
+            !superseded_by_a_later_version(&solo),
+            "no version, nothing to supersede"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -296,7 +296,10 @@ fn trim_to(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         return s.to_string();
     }
-    format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>().trim_end())
+    format!(
+        "{}…",
+        s.chars().take(n.saturating_sub(1)).collect::<String>().trim_end()
+    )
 }
 
 fn partition(items: &[Value], keep: impl Fn(&Value) -> bool) -> (Vec<Value>, usize) {
@@ -356,7 +359,10 @@ fn source_titles(card: &Value) -> Vec<String> {
 /// the card, and a check that failed on the space would drop a good item.
 fn normalised(card: &Value) -> String {
     let mut text = String::new();
-    for part in [card["answer"].as_str().unwrap_or_default(), card["question"].as_str().unwrap_or_default()] {
+    for part in [
+        card["answer"].as_str().unwrap_or_default(),
+        card["question"].as_str().unwrap_or_default(),
+    ] {
         text.push(' ');
         text.push_str(part);
     }
@@ -378,7 +384,13 @@ fn normalised(card: &Value) -> String {
 fn flatten(s: &str) -> String {
     let lowered: String = s
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
         .collect();
     lowered.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -397,14 +409,22 @@ fn option_text<'a>(item: &'a Value, option_id: &str) -> Option<&'a str> {
 /// option's text appears normalised in that card; and every citation ordinal the
 /// item claims exists on it.
 pub fn traceable(item: &Value, cards: &[Value], scope: &[&str]) -> bool {
-    let Some(card_id) = item["source_card_id"].as_str() else { return false };
+    let Some(card_id) = item["source_card_id"].as_str() else {
+        return false;
+    };
     if !scope.contains(&card_id) {
         return false;
     }
-    let Some(card) = card_by_id(cards, card_id) else { return false };
+    let Some(card) = card_by_id(cards, card_id) else {
+        return false;
+    };
 
-    let Some(answer_id) = item["answer_id"].as_str() else { return false };
-    let Some(answer) = option_text(item, answer_id) else { return false };
+    let Some(answer_id) = item["answer_id"].as_str() else {
+        return false;
+    };
+    let Some(answer) = option_text(item, answer_id) else {
+        return false;
+    };
 
     let flat_answer = flatten(answer);
     if flat_answer.is_empty() || !normalised(card).contains(&flat_answer) {
@@ -431,7 +451,9 @@ pub fn traceable(item: &Value, cards: &[Value], scope: &[&str]) -> bool {
 /// right answer, and a reader who knows the material has to guess between them.
 /// Doc 08 section 12 measures this as "distractor truth leakage 0".
 pub fn leaks_truth(item: &Value, cards: &[Value]) -> bool {
-    let Some(answer_id) = item["answer_id"].as_str() else { return true };
+    let Some(answer_id) = item["answer_id"].as_str() else {
+        return true;
+    };
     let source = item["source_card_id"].as_str().unwrap_or_default();
 
     let others: Vec<String> = cards
@@ -550,7 +572,11 @@ mod tests {
             &cards
         ));
         assert!(!leaks_truth(
-            &item("01ARZ3NDEKTSV4RRFFQ69G5FAV", "2.5 per cent", "the buffer was withdrawn in 2019"),
+            &item(
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "2.5 per cent",
+                "the buffer was withdrawn in 2019"
+            ),
             &cards
         ));
     }

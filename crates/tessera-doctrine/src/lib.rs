@@ -126,11 +126,7 @@ pub struct LearningTemplates {
 fn default_shapes() -> Vec<String> {
     // Doc 14 section 3.8's fallback, which is also the sensible default: what it
     // is, how it works, who is involved.
-    vec![
-        "foundation".into(),
-        "mechanism".into(),
-        "landscape".into(),
-    ]
+    vec!["foundation".into(), "mechanism".into(), "landscape".into()]
 }
 
 fn default_mastery() -> u32 {
