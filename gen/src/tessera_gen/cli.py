@@ -15,10 +15,10 @@ from . import boards as boards_mod
 from . import breadth as breadth_mod
 from . import corpus as corpus_mod
 from . import edge_cases, harness, mess, retrieval, writer
+from . import learning as learning_mod
 from . import memory as memory_mod
 from . import questions as questions_mod
 from . import snapshots as snapshots_mod
-from . import learning as learning_mod
 from . import vault as vault_mod
 from .facts import generate_facts
 from .rng import GENERATOR_VERSION

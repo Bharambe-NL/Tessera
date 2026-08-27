@@ -35,6 +35,8 @@ from .corpus import Document
 from .entities import manifest, synthetic_source_hierarchy
 from .facts import Fact
 from .facts import summarise as summarise_facts
+from .learning import LearningTruth
+from .learning import summarise as summarise_learning
 from .matchers import MATCHERS_VERSION
 from .memory import MemoryTruth
 from .memory import summarise as summarise_memory
@@ -43,8 +45,6 @@ from .questions import Question, audiences_manifest
 from .questions import summarise as summarise_questions
 from .rng import GENERATOR_VERSION
 from .snapshots import Snapshot
-from .learning import LearningTruth
-from .learning import summarise as summarise_learning
 from .vault import VaultTruth
 from .vault import summarise as summarise_vault
 
@@ -125,8 +125,8 @@ def render_html(doc: Document) -> str:
         '<!doctype html>\n<html lang="' + doc.language + '">\n<head>\n'
         '<meta charset="utf-8">\n'
         f"<title>{_escape(doc.title)}</title>\n"
-        f"<meta name=\"issuer\" content=\"{_escape(doc.issuer or '')}\">\n"
-        f"<meta name=\"published\" content=\"{doc.published_at or ''}\">\n"
+        f'<meta name="issuer" content="{_escape(doc.issuer or "")}">\n'
+        f'<meta name="published" content="{doc.published_at or ""}">\n'
         "</head>\n<body>\n" + body + "\n</body>\n</html>\n"
     )
 

@@ -18,6 +18,7 @@
 
 mod boards;
 mod bundles;
+mod learners;
 mod reverify;
 mod vault;
 
@@ -80,6 +81,13 @@ struct Args {
     /// about model quality.
     #[arg(long)]
     grounded: bool,
+
+    /// Doc 17 section 10's four scripted learners, walked through placement on
+    /// the corpus's twenty concept path. Asks no questions and spends nothing:
+    /// the Planner's model call only fires for a topic with no concepts, and a
+    /// path has them all.
+    #[arg(long)]
+    learner: bool,
 
     /// Doc 16 section 3.4's notebook, over the vault question set
     /// (questions_vault.jsonl). Each question opens its own session and runs
@@ -438,15 +446,20 @@ fn main() -> std::process::ExitCode {
     };
 
     let total = args.limit.unwrap_or(questions.len()).min(questions.len());
-    println!(
-        "running {total} of {} questions against the {} provider",
-        questions.len(),
-        if args.mock {
-            "mock"
-        } else {
-            args.bulk_provider.as_str()
-        }
-    );
+    // The learner leg asks none of them: doc 17 section 3's placement is
+    // decided from ratings, and saying it ran four hundred questions would be
+    // the run record claiming work nobody did.
+    if !args.learner {
+        println!(
+            "running {total} of {} questions against the {} provider",
+            questions.len(),
+            if args.mock {
+                "mock"
+            } else {
+                args.bulk_provider.as_str()
+            }
+        );
+    }
 
     let plan = match build_plan(&args, &questions, total) {
         Ok(p) => p,
@@ -456,6 +469,10 @@ fn main() -> std::process::ExitCode {
         }
     };
     println!("{}", plan.describe());
+
+    if args.learner {
+        return run_learners(&args, &pack, &plan);
+    }
 
     if args.notebook {
         let mut records = run_notebook(&args, &pack, &plan, &questions);
@@ -910,6 +927,86 @@ fn run_one(
     record.events = events;
     record.latency_ms = started.elapsed().as_millis();
     record
+}
+
+/// Doc 17 section 10's learner leg.
+///
+/// One profile per learner, because a map is per profile and four learners
+/// sharing one would each be placed on the last one's ratings.
+fn run_learners(args: &Args, pack: &str, plan: &Plan) -> std::process::ExitCode {
+    let truth = match learners::load(&args.corpus) {
+        Ok(t) => t,
+        Err(message) => {
+            eprintln!("{message}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    if truth.path.is_empty() || truth.learners.is_empty() {
+        eprintln!("the corpus has no learning path; rebuild it with `gen build`");
+        return std::process::ExitCode::from(2);
+    }
+
+    let router = tessera_core::build_router();
+    let mut records = Vec::new();
+    for learner in &truth.learners {
+        let keys = keystore(args.mock);
+        let first_key_ref = if args.mock {
+            "test-key"
+        } else {
+            args.bulk_key_ref.as_str()
+        };
+        let mut core = match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("could not bring a core up: {e}");
+                return std::process::ExitCode::from(2);
+            }
+        };
+        core.source = Source::Test;
+        if let Err(e) = core.use_pack(pack) {
+            eprintln!("could not load the `{pack}` pack: {e}");
+            return std::process::ExitCode::from(2);
+        }
+        records.push(learners::place(&mut core, &router, &truth, learner));
+    }
+
+    println!("{}", learners::report(&records));
+
+    let dir = args
+        .out
+        .join(corpus_name(&args.corpus))
+        .join(&args.policy)
+        .join(stamp());
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("could not write the results: {e}");
+        return std::process::ExitCode::from(2);
+    }
+    let written = std::fs::File::create(dir.join("learn_sessions.jsonl")).and_then(|mut file| {
+        for record in &records {
+            writeln!(file, "{}", serde_json::to_string(record).unwrap_or_default())?;
+        }
+        Ok(())
+    });
+    if let Err(e) = written {
+        eprintln!("could not write the results: {e}");
+        return std::process::ExitCode::from(2);
+    }
+    if let Err(e) = write_records(&dir, &[], &[], &[], args, pack, 0, 0) {
+        eprintln!("could not write the results: {e}");
+        return std::process::ExitCode::from(2);
+    }
+
+    let right = records
+        .iter()
+        .filter(|r| r.frontier == r.expected_frontier)
+        .count();
+    println!(
+        "{} learners placed, {right} on the frontier the corpus expects",
+        records.len()
+    );
+    println!("wrote {}", dir.display());
+    println!("score it with: gen score --results {}", dir.display());
+    std::process::ExitCode::SUCCESS
 }
 
 /// The grounding state the core recorded for a notebook answer.
@@ -2325,6 +2422,10 @@ fn write_records(
         // has tested it. The boards retriever is configured with the others,
         // so this follows them.
         "memory_enabled": !args.no_retrievers,
+        // Doc 17 section 10's metrics report n/a until a learner leg has run.
+        // A frontier correctness of 1.000 over nobody would say the placement
+        // rule holds when nothing has walked it.
+        "learning_enabled": args.learner,
         // Doc 04 section 5: the plan's must_exclude may add to the doctrine's
         // list and never remove from it. The scorer needs the floor to check
         // compliance, and the pack is loaded here, not there.

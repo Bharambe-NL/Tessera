@@ -3413,6 +3413,40 @@ the concept the learner rated 3 sits at exactly 0.5 with a state of `rated`, whi
 
 ---
 
+### BN-135 Four learners walk the path, and three gates open
+
+**Spec** 17 section 10.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --mock --learner`. Four placements, no
+provider spend: the Planner's model call only fires for a topic with no concepts, and a path has
+them all.
+
+| Metric | Result |
+|---|---|
+| `frontier_correctness` | 1.000, four of four (reported: n=4 is under the thin sample floor) |
+| `proposals_never_applied` | 1.000 |
+| `mastery_honesty` | 1.000 |
+
+**What the leg does not read.** The corpus records what each learner could actually answer, per
+concept and per level, and the leg never opens it. A placement is decided before any check is asked,
+and reading the answer sheet while marking the paper is exactly the failure the two files exist to
+prevent. The scorer reads the ratings and the expected frontier; the answers wait for 13g, where a
+check is asked and the overconfident rater is caught.
+
+**Proposals applied are counted from the map, not from the output.** The Planner's own answer says
+what it proposed, and trusting it would score the agent on its own report. What the leg counts is a
+confirmed edge the path did not draw, which is the only shape a proposal quietly applied could take.
+
+**The thin sample guard did its job.** Four learners is four, and one either way would flip the
+frontier ratio by a quarter, so the scorer reports the number and withholds the gate. That is the
+existing floor working as written rather than a new exemption: doc 17 section 10 asks for 0.90 and
+the run says 1.000 over a denominator too small to hold it to that.
+
+**Verified** Full battery green, 86 generator guards including the three metrics broken on purpose,
+the workspace tests, clippy at `-D warnings`, and the bundle round trip whole.
+
+---
+
 ---
 
 ## Measured findings
