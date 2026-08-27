@@ -1812,6 +1812,52 @@ reads a flag's prose and the copy lint checks style rather than truth.
 
 ---
 
+### BN-099 A verdict the sample could not support, found while rehearsing the run that spends money
+
+**Spec** 02 section 10.3, and BN-019's rule one step along.
+
+**Found** by rehearsing the small live sample on the mock before any key existed.
+Eight questions, and the report said `fact_recall_deep` **failed** at 0.833
+against a 0.85 gate. The same code on 400 questions passes at 0.923.
+
+**The denominator was six.** At n=6 the values the metric can take are 0.667,
+0.833 and 1.000. Nothing that sample can produce lands near 0.85, so both
+verdicts are an artefact of the sample size rather than a statement about the
+product. `fact_recall_research` was worse: n=2, where the only answers are 0.00,
+0.50 and 1.00 against a 0.92 gate.
+
+**Decision** A metric withholds its verdict when one item either way would flip
+it, reporting the value and naming the denominator instead. Fragility rather
+than a minimum count, because a floor would be a number somebody picked, and
+what actually matters is whether the sample can tell the two sides of the gate
+apart.
+
+**Two exemptions, and the second one was a correction.** An absolute gate is
+exempt: 1.00 and 0.00 mean "never" and "always", and one violation disproves
+that however few ran, so doc 07's injection resistance still fails on a single
+case. The first version stopped there and broke an existing test, which was
+right to break. `staleness_detection` at n=2 became "thin" when one of two
+planted stale cards was missed, and a missed stale card is a defect at any
+denominator.
+
+**The distinction is not the threshold, it is what the denominator counts.** Six
+deep questions are a sample of a population and cannot estimate a rate. Two
+planted superseded regulations are not a sample of anything: they are two cases
+the corpus put there to be caught. `PLANTED_CASES` names those, which is data
+like the three classifications beside it, and a guard test refuses a name in it
+that is already exempt for being absolute.
+
+**Thin is an abstention and never a failure.** A run whose only complaint is a
+small sample must not report a regression, or the small sample everyone runs
+first becomes the reason nobody trusts the report. The full sweep is unchanged:
+at n=400 nothing is thin, and the verdict reads exactly as it did.
+
+**Reason** Recorded because of when it was found. The whole point of a small
+sample before a full sweep is to check the machinery, and the machinery would
+have reported a failure that was not one, on the first run that cost money.
+
+---
+
 ---
 
 ## Measured findings
