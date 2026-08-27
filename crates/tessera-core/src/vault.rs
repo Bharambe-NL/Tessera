@@ -348,6 +348,121 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
     Some(out)
 }
 
+// ------------------------------------------------------------ the editor --
+
+/// Write a page, new or existing. Doc 16 phase 12c's editor.
+///
+/// One function for both, because a person editing a title has done the same
+/// thing as a person typing one: the row keeps its id, the file follows the
+/// slug, and the links are re-read from the body either way.
+pub fn write_page(
+    store: &mut tessera_store::Store,
+    profile_id: &str,
+    doctrine_pack_id: Option<&str>,
+    page_id: Option<&str>,
+    title: &str,
+    body: &str,
+) -> Result<String, SaveError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(SaveError::Refused(NO_TITLE_GIVEN));
+    }
+
+    // Doc 16 section 3.1's uniqueness rule, met before the write rather than as
+    // a constraint error a person has to read.
+    if let Some(other) = repo::page_by_title(store, profile_id, title).map_err(SaveError::Store)?
+        && Some(other.id.as_str()) != page_id
+    {
+        return Err(SaveError::Refused(TITLE_TAKEN_BY_A_PAGE));
+    }
+
+    let root = store.root().to_path_buf();
+    let id = match page_id {
+        Some(id) => {
+            let existing = repo::read_page(store, id)
+                .map_err(SaveError::Store)?
+                .ok_or(SaveError::Refused(NO_SUCH_PAGE))?;
+
+            if existing.title != title {
+                let taken: std::collections::BTreeSet<String> = repo::list_pages(store, profile_id, 10_000)
+                    .map_err(SaveError::Store)?
+                    .into_iter()
+                    .filter(|p| p.id != existing.id)
+                    .map(|p| p.file_path)
+                    .collect();
+                let path = file_path(folder_of(&existing.file_path), title, &taken);
+                repo::rename_page(store, id, title, &path).map_err(SaveError::Store)?;
+                // The old file goes before the new one arrives. A crash between
+                // the two leaves the row with no file, which the mirror writes
+                // back; the other order leaves a file with no row, which it
+                // adopts as a second page.
+                let _ = std::fs::remove_file(root.join(&existing.file_path));
+            }
+            repo::edit_page(store, id, body).map_err(SaveError::Store)?;
+            id.to_string()
+        }
+        None => {
+            let taken: std::collections::BTreeSet<String> = repo::list_pages(store, profile_id, 10_000)
+                .map_err(SaveError::Store)?
+                .into_iter()
+                .map(|p| p.file_path)
+                .collect();
+            let path = file_path("", title, &taken);
+            let id = repo::create_page(
+                store,
+                repo::NewPage {
+                    profile_id,
+                    title,
+                    body,
+                    file_path: &path,
+                    source_card_id: None,
+                    citations_carried: Value::Array(Vec::new()),
+                    doctrine_pack_id,
+                },
+            )
+            .map_err(SaveError::Store)?;
+            // Doc 16 section 3.1: a link written before its page existed is
+            // kept, and this is the moment it was kept for.
+            repo::resolve_pending_links(store, "page", &id, title).map_err(SaveError::Store)?;
+            id
+        }
+    };
+
+    let page = repo::read_page(store, &id)
+        .map_err(SaveError::Store)?
+        .ok_or(SaveError::Refused(NO_SUCH_PAGE))?;
+    save_links(store, profile_id, &id, body).map_err(SaveError::Store)?;
+    write_file(&root, &page.file_path, body, None);
+    repo::mark_page_synced(store, &id, body).map_err(SaveError::Store)?;
+    index_page(store, profile_id, &page).map_err(SaveError::Store)?;
+    Ok(id)
+}
+
+/// Remove a page, its file and its index entries.
+pub fn delete_page(store: &mut tessera_store::Store, page_id: &str) -> Result<(), tessera_store::StoreError> {
+    let root = store.root().to_path_buf();
+    if let Some(page) = repo::read_page(store, page_id)? {
+        let _ = std::fs::remove_file(root.join(&page.file_path));
+    }
+    // The index first: a page whose row is gone but whose chunks remain would
+    // be retrieved and cited as a source nobody can open.
+    tessera_retrievers::pages::forget_page(store.conn(), page_id)?;
+    repo::delete_page(store, page_id)
+}
+
+/// The folder part of a page's path, so a rename keeps a page where it lives.
+fn folder_of(file_path: &str) -> &str {
+    let rest = file_path.strip_prefix(&format!("{VAULT}/")).unwrap_or(file_path);
+    match rest.rfind('/') {
+        Some(at) => &rest[..at],
+        None => "",
+    }
+}
+
+pub const NO_TITLE_GIVEN: &str = "a page needs a title";
+pub const TITLE_TAKEN_BY_A_PAGE: &str = "another page has this title";
+pub const NO_SUCH_PAGE: &str = "no such page";
+
 // --------------------------------------------------------- save as a page --
 
 /// Why a card could not be saved. Doc 16 section 3.2.

@@ -146,7 +146,7 @@ body.rail-open .rail-item .label {
   margin-left: auto;
 }
 
-#page-body {
+#page-text {
   padding: var(--s6) var(--s7) var(--s9);
 }
 
@@ -882,4 +882,70 @@ ol.setup .note {
 #page button.primary:disabled {
   background: var(--line);
   color: var(--ink-3);
+}
+
+/* ---- Pages, doc 16 section 3.7 ---- */
+
+.page-edit {
+  display: grid;
+  gap: var(--s3);
+}
+
+.page-edit #page-name {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.page-edit #page-text {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.page-read {
+  max-width: 62ch;
+}
+
+.page-read h2,
+.page-read h3,
+.page-read h4 {
+  margin: var(--s4) 0 var(--s2);
+}
+
+.page-read p,
+.page-read li {
+  line-height: 1.65;
+}
+
+/* Doc 16 section 3.1: a wikilink is a control, and an unresolved one says so
+   rather than looking like a link that does nothing. */
+.wikilink {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  padding: 0;
+  cursor: pointer;
+}
+
+.wikilink.unresolved {
+  color: var(--ink-2);
+  border-bottom-style: dashed;
+}
+
+.wikilink:hover {
+  color: var(--ink);
 }

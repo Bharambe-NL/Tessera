@@ -233,6 +233,33 @@ export class Rpc {
     }>('board.update_pack', { board_id: boardId });
   }
 
+  // ------------------------------------------------------------- pages --
+  // Doc 16 section 3.7's rail item, over the five verbs the core registers.
+
+  pages(limit?: number) {
+    return this.call<{ pages: PageRow[] }>('page.list', limit === undefined ? {} : { limit });
+  }
+
+  page(pageId: string) {
+    return this.call<PageDetail>('page.get', { page_id: pageId });
+  }
+
+  writePage(page: { page_id?: string; title: string; body: string }) {
+    return this.call<{ page_id: string; title: string | null; file_path: string | null }>(
+      'page.write',
+      page,
+    );
+  }
+
+  deletePage(pageId: string) {
+    return this.call<{ page_id: string; deleted: boolean }>('page.delete', { page_id: pageId });
+  }
+
+  /** Doc 16 section 3.1: an unresolved link creates the page it names. */
+  createPageFromLink(title: string) {
+    return this.call<{ page_id: string; title: string }>('page.create_from_link', { title });
+  }
+
   /**
    * Doc 16 section 3.2's ninth verb. The page carries the card's citations
    * rather than becoming one, so what the next answer cites is still the
@@ -545,6 +572,36 @@ export interface FirstRun {
   packs: string[];
   active_pack: string;
   key_refs: string[];
+}
+
+/** One page in the explorer. Doc 16 section 3.7. */
+export interface PageRow {
+  id: string;
+  title: string;
+  file_path: string;
+  updated_at: string;
+  /** Saved from a card rather than written by hand. Doc 16 section 3.2. */
+  from_card: boolean;
+  citations_carried: number;
+}
+
+/** One page open, with what points at it. */
+export interface PageDetail {
+  id: string;
+  title: string;
+  body: string;
+  file_path: string;
+  updated_at: string;
+  source_card_id: string | null;
+  citations_carried: { ordinal: number; passage_id: string }[];
+  links: {
+    target_kind: 'page' | 'concept' | 'unresolved';
+    target_id: string | null;
+    target_title: string;
+    display_text: string;
+    position: number;
+  }[];
+  backlinks: { page_id: string; title: string; display_text: string; position: number }[];
 }
 
 export interface PackStatus {

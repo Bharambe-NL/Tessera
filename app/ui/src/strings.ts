@@ -302,6 +302,29 @@ export const COPY = {
   savedAsPage: 'In my pages',
   saveFailed: 'That card was not saved.',
 
+  // ------------------------------------------------ pages, doc 16 --
+
+  /** Doc 16 section 7 point 1: the vault object is a page, the board one a sticky. */
+  railPages: 'Pages',
+  pagesEmpty: 'Nothing here yet. Keep a card as a page, or write one.',
+  pagesEmptyBody: 'This page has nothing in it yet.',
+  pagesNew: 'Write a page',
+  pagesOpen: 'Open',
+  pagesRemove: 'Remove',
+  pagesBack: 'All pages',
+  pagesEdit: 'Write',
+  pagesPreview: 'Read',
+  pagesSave: 'Save the page',
+  pagesTitle: 'Title',
+  pagesBody: 'The page',
+  pagesEdited: 'edited',
+  pagesCarried: 'carried citations',
+  pagesFromCard: 'from a card',
+  pagesBacklinks: 'What links here',
+  pagesNoBacklinks: 'Nothing links here yet.',
+  pagesFileNote: 'On this machine at',
+  pagesWriteFailed: 'That page was not saved.',
+
   profileDoctrine: 'Doctrine',
   /** Doc 10 section 9: a pack is data, and importing one is reading a file. */
   profilePackImport: 'Import a doctrine pack',
