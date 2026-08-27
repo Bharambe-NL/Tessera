@@ -219,6 +219,21 @@ export class Rpc {
   }
 
   /**
+   * Doc 10 section 9's update pack. Nothing is retrieved and no answer is
+   * rewritten: the cards are judged again under the version the board moves to.
+   */
+  updateBoardPack(boardId: string) {
+    return this.call<{
+      board_id: string;
+      pack_code: string;
+      from_version: string;
+      to_version: string;
+      updated: boolean;
+      cards: { card_id: string; status: string; flags?: number }[];
+    }>('board.update_pack', { board_id: boardId });
+  }
+
+  /**
    * Doc 09 section 5's Branch verb, in its three forms. With no anchor at all
    * the card is a root; with a parent alone it is a follow-up; with a parent and
    * either anchor it is a branch. The core rejects an anchor with no parent,

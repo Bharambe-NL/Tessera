@@ -1067,6 +1067,88 @@ pub fn rename_board(store: &mut Store, board_id: &str, title: &str) -> Result<()
     Ok(())
 }
 
+/// The doctrine pack a board pinned. Doc 01 section 4.17.
+#[derive(Debug, Clone)]
+pub struct PinnedPack {
+    pub pack_id: String,
+    pub code: String,
+    pub version: String,
+}
+
+pub fn board_pack(store: &Store, board_id: &str) -> Result<Option<PinnedPack>> {
+    Ok(store
+        .conn()
+        .query_row(
+            "SELECT p.id, p.code, p.version FROM board b
+               JOIN doctrine_pack p ON p.id = b.doctrine_pack_id
+              WHERE b.id = ?1",
+            params![board_id],
+            |r| {
+                Ok(PinnedPack {
+                    pack_id: r.get(0)?,
+                    code: r.get(1)?,
+                    version: r.get(2)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// The cards on a board that a re-verification has something to judge.
+///
+/// A card with no answer has nothing for the Verifier to read, and a blocked
+/// one was never admitted, so neither is re-judged by a pack update. Ordered by
+/// creation so a batch runs the board top to bottom and its events read in the
+/// order a person would expect.
+pub fn cards_to_reverify(store: &Store, board_id: &str) -> Result<Vec<String>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id FROM card
+          WHERE board_id = ?1 AND status IN ('done', 'flagged')
+          ORDER BY created_at, id",
+    )?;
+    Ok(stmt
+        .query_map(params![board_id], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// Point a board at a newer version of the pack it pinned. Doc 10 section 9.
+///
+/// The pin moves only here. A pack update never rewrites it on its own, because
+/// a board's answers were judged by the rules of the version it names and
+/// changing that silently would make the claim untrue after the fact.
+pub fn repin_board(
+    store: &mut Store,
+    board_id: &str,
+    to: &PinnedPack,
+    from_version: &str,
+    cards: usize,
+) -> Result<()> {
+    let (id, pack_id, now) = (board_id.to_string(), to.pack_id.clone(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "board.pack_updated.v1",
+            json!({
+                "board_id": board_id,
+                "pack_code": to.code,
+                "from_version": from_version,
+                "to_version": to.version,
+                "cards_to_reverify": cards,
+            }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "UPDATE board SET doctrine_pack_id = ?1, updated_at = ?2 WHERE id = ?3",
+                params![pack_id, now, id],
+            )?;
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
 /// Move a board to Trash. Doc 09 open question 1, adopted by doc 11: Trash is a
 /// filter on Home rather than a rail item of its own.
 ///

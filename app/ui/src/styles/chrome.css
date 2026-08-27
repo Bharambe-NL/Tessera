@@ -373,10 +373,18 @@
   gap: var(--s3);
 }
 
-#reading-toggle {
+#reading-toggle,
+#pack-update {
   padding: var(--s2) var(--s3);
   border: 1px solid var(--line);
   border-radius: var(--r-button);
   font-size: 12px;
   white-space: nowrap;
+}
+
+/* Doc 11 section 9: a notice that asks for a decision earns a colour, and this
+   one asks whether to have a board's cards judged again. */
+#pack-update {
+  border-color: var(--accent);
+  color: var(--accent);
 }
