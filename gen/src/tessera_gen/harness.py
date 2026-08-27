@@ -82,6 +82,23 @@ THRESHOLDS: dict[str, float] = {
     "stale_propagation": 0.95,
 }
 
+#: Metrics whose denominator is a set of cases the corpus planted on purpose,
+#: rather than a sample drawn from a population.
+#:
+#: The difference decides whether a small denominator weakens a verdict. Six
+#: deep questions cannot estimate whether the product recalls 85 percent of
+#: facts, because six is a sample and the answer has a spread. Two planted
+#: superseded regulations are not a sample of anything: they are two cases the
+#: corpus put there to be caught, and missing one is a defect at whatever
+#: denominator it happens on.
+#:
+#: Absolute gates (1.00 and 0.00) are already exempt by being absolute, so this
+#: names only the ones in between.
+PLANTED_CASES = {
+    "staleness_detection",
+    "stale_propagation",
+}
+
 #: Metrics where a lower number is better.
 LOWER_IS_BETTER = {
     "forbidden_fact_rate",
@@ -189,9 +206,53 @@ class Metric:
         if self.advisory or self.name in NO_THRESHOLD or self.name not in THRESHOLDS:
             return "reported"
         threshold = THRESHOLDS[self.name]
+        if self.too_thin_to_judge(threshold):
+            return "thin"
+        return self._against(threshold, self.numerator)
+
+    def _against(self, threshold: float, numerator: int) -> str:
+        """Pass or fail for a given numerator, at this metric's denominator."""
+        if self.denominator == 0:
+            return "n/a"
+        value = numerator / self.denominator
         if self.name in LOWER_IS_BETTER:
-            return "pass" if self.value <= threshold else "fail"
-        return "pass" if self.value >= threshold else "fail"
+            return "pass" if value <= threshold else "fail"
+        return "pass" if value >= threshold else "fail"
+
+    def too_thin_to_judge(self, threshold: float) -> bool:
+        """Whether one item either way would flip this verdict.
+
+        BN-019 says a metric with nothing to measure reports n/a naming what it
+        waits for. This is the same rule one step along: a metric with almost
+        nothing to measure states a verdict its sample cannot support. On eight
+        questions `fact_recall_deep` has a denominator of six, where the values
+        it can take are 0.667, 0.833 and 1.000, so nothing it reports can land
+        near a 0.85 gate and both verdicts are an artefact of the sample size.
+
+        Fragility rather than a minimum count, because a floor would be a number
+        somebody picked. What actually matters is whether the sample can tell
+        the two sides of the gate apart, and one item moving the answer across
+        it is exactly when it cannot.
+
+        An absolute gate is exempt. A threshold of 1.00 or 0.00 says "never" or
+        "always", and one violation disproves that however few ran, so those
+        stay gated at any denominator: doc 07's injection resistance and doc 04
+        section 5's must_exclude are meant to fail on a single case.
+
+        So is a metric in `PLANTED_CASES`, whose denominator counts cases the
+        corpus planted rather than a sample. Two planted stale regulations are
+        two things that had to be caught, and calling a miss unmeasurable would
+        turn a safety gate into a gate that needs a crowd.
+        """
+        if self.denominator == 0 or self.value is None:
+            return False
+        if threshold in (0.0, 1.0) or self.name in PLANTED_CASES:
+            return False
+        here = self._against(threshold, self.numerator)
+        for nudged in (self.numerator - 1, self.numerator + 1):
+            if 0 <= nudged <= self.denominator and self._against(threshold, nudged) != here:
+                return True
+        return False
 
     def to_json(self) -> dict:
         return {
@@ -1658,6 +1719,7 @@ def render(report: Report, previous: Path | None) -> str:
                 )
 
     failed = report.failed
+    thin = [m for m in report.metrics if m.verdict() == "thin"]
     lines += ["", "## Verdict", ""]
     if failed:
         lines.append(
@@ -1669,4 +1731,15 @@ def render(report: Report, previous: Path | None) -> str:
             f"No measured metric is below its threshold. "
             f"{measured} of {len(report.metrics)} metrics had something to measure."
         )
+    if thin:
+        # Named rather than folded into the count, because a thin metric is the
+        # one a reader is most likely to quote as a result. Saying which sample
+        # was too small is what lets them ask for a bigger one instead.
+        lines += [
+            "",
+            f"{len(thin)} metric(s) ran on a sample too small to judge: "
+            + ", ".join(f"{m.name} (n={m.denominator})" for m in thin)
+            + ". One item either way would flip each of these, so the value is "
+            "reported and the gate is not applied.",
+        ]
     return "\n".join(lines) + "\n"
