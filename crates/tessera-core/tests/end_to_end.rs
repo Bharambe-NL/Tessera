@@ -591,6 +591,185 @@ fn deciding_a_flag_that_is_already_decided_says_so() {
     );
 }
 
+/// A pack file a person could plausibly have: the general pack under a code of
+/// their own. Built from the shipped file so it validates for the same reasons
+/// the shipped one does, with only what an author would change changed.
+fn imported_pack_file(dir: &std::path::Path, code: &str) -> std::path::PathBuf {
+    let mut pack: Value =
+        serde_json::from_str(include_str!("../../../packs/general.json")).expect("the shipped pack parses");
+    pack["code"] = json!(code);
+    pack["name"] = json!("A pack of my own");
+    pack["version"] = json!("0.2.0");
+    std::fs::create_dir_all(dir).expect("dir");
+    let path = dir.join(format!("{code}.json"));
+    std::fs::write(&path, serde_json::to_string_pretty(&pack).expect("json")).expect("pack file");
+    path
+}
+
+fn core_at(root: &std::path::Path) -> Core {
+    use tessera_providers::MemoryKeyStore;
+    Core::open(
+        root,
+        Box::new(MemoryKeyStore::with("anthropic-default", "sk-test")),
+        mock(),
+        "anthropic-default",
+    )
+    .expect("core")
+}
+
+#[test]
+fn an_imported_pack_outlives_the_process_that_imported_it() {
+    // Doc 10 section 9 and doc 12 principle 4. An import that lived only in the
+    // session that made it would be a demonstration rather than a feature, and
+    // the profile's choice of pack has the same problem: before M14.3 the core
+    // read `general` at every start, so a person who chose finance came back
+    // judged by rules they had switched away from.
+    let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
+    let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
+    let file = imported_pack_file(&source, "house-rules");
+
+    let router = build_router();
+    {
+        let mut core = core_at(&root);
+        let summary = call(
+            &router,
+            &mut core,
+            "pack.import",
+            json!({ "path": file.display().to_string() }),
+        );
+        assert_eq!(summary["code"], "house-rules");
+        assert_eq!(summary["built_in"], false);
+        // Importing is not activating. Doc 10 section 9 keeps a pack change a
+        // deliberate act.
+        assert_eq!(summary["active"], false);
+        let profile = call(&router, &mut core, "profile.get", json!({}));
+        assert_eq!(profile["active_pack"], "general");
+
+        call(
+            &router,
+            &mut core,
+            "profile.set_pack",
+            json!({ "code": "house-rules" }),
+        );
+    }
+
+    // A second core over the same profile folder, which is what tomorrow is.
+    {
+        let mut core = core_at(&root);
+        let profile = call(&router, &mut core, "profile.get", json!({}));
+        assert_eq!(
+            profile["active_pack"], "house-rules",
+            "the pack the person chose did not survive the restart"
+        );
+        let details = profile["pack_details"].as_array().expect("pack details");
+        let imported = details
+            .iter()
+            .find(|p| p["code"] == "house-rules")
+            .expect("the imported pack is in the library");
+        assert_eq!(imported["built_in"], false);
+        assert!(
+            details
+                .iter()
+                .any(|p| p["code"] == "general" && p["built_in"] == true),
+            "the shipped packs are still there and still say so"
+        );
+        assert!(
+            profile["pack_problems"].as_array().expect("problems").is_empty(),
+            "a pack that loads is not a problem: {profile}"
+        );
+
+        // And a card runs under it, which is the only claim that matters.
+        let board_id = core.create_board("Board", "fast").expect("board");
+        core.ask(&board_id, "what are world models?", Some("fast"))
+            .expect("a card under the imported pack");
+    }
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&source).ok();
+}
+
+#[test]
+fn a_pack_file_cannot_take_the_code_of_one_that_ships() {
+    // Boards pin the pack they were judged under by code and version. A file
+    // that renamed `general` would change what every board that pinned it
+    // claims to have been judged by, which is the one thing an import must not
+    // be able to do.
+    let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
+    let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
+    let file = imported_pack_file(&source, "general");
+
+    let mut core = core_at(&root);
+    let response = build_router()
+        .dispatch(
+            &mut core,
+            Request::new("pack.import", json!({ "path": file.display().to_string() }), 1),
+        )
+        .expect("a request gets a reply");
+    let error = response.error.expect("an import over a shipped code is refused");
+    assert!(
+        error.message.contains("ships with the app"),
+        "the refusal says why: {}",
+        error.message
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&source).ok();
+}
+
+#[test]
+fn a_pack_file_that_does_not_validate_is_refused_rather_than_half_loaded() {
+    let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
+    let source = std::env::temp_dir().join(format!("tessera-packsrc-{}", tessera_store::new_id()));
+    std::fs::create_dir_all(&source).expect("dir");
+    let file = source.join("broken.json");
+    std::fs::write(&file, r#"{ "code": "broken", "version": "0.1.0" }"#).expect("file");
+
+    let mut core = core_at(&root);
+    let response = build_router()
+        .dispatch(
+            &mut core,
+            Request::new("pack.import", json!({ "path": file.display().to_string() }), 1),
+        )
+        .expect("a request gets a reply");
+    assert!(
+        response.error.is_some(),
+        "a pack missing half its rules was accepted"
+    );
+
+    // And nothing was left behind: a refused import adds no pack and no file.
+    let profile = call(&build_router(), &mut core, "profile.get", json!({}));
+    assert!(
+        !profile["packs"].to_string().contains("broken"),
+        "a refused pack reached the library: {profile}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&source).ok();
+}
+
+#[test]
+fn a_pack_file_that_stops_validating_is_reported_rather_than_locking_the_profile() {
+    // The file belongs to the person. A typo in one must not stop them opening
+    // their own boards, so it is skipped and the reason goes to the Doctrine
+    // page, where the fix is.
+    let root = std::env::temp_dir().join(format!("tessera-packs-{}", tessera_store::new_id()));
+    std::fs::create_dir_all(root.join("packs")).expect("dir");
+    std::fs::write(root.join("packs").join("hand-edited.json"), "{ not json at all").expect("file");
+
+    let mut core = core_at(&root);
+    let profile = call(&build_router(), &mut core, "profile.get", json!({}));
+    let problems = profile["pack_problems"].as_array().expect("problems");
+    assert_eq!(problems.len(), 1, "{profile}");
+    assert_eq!(problems[0]["file"], "hand-edited.json");
+    assert!(
+        problems[0]["detail"].as_str().is_some_and(|d| !d.is_empty()),
+        "the problem says what is wrong with the file"
+    );
+    assert_eq!(profile["active_pack"], "general", "the profile still opened");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn the_profile_page_reports_key_presence_and_never_a_key() {
     // Doc 10 section 8 and the standing rule: a key lives in the OS keychain and

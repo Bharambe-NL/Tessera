@@ -20,6 +20,10 @@ use crate::rpc::{Router, RpcError, params};
 /// fails before any retrieval rather than discovering a missing key halfway.
 const CARD_STAGES: &[&str] = &["route", "plan", "retrieve", "synthesize", "visualize", "verify"];
 
+/// Where imported doctrine packs live, under the profile folder. Doc 12
+/// principle 4: a pack is a file, and this is the one the profile owns.
+const IMPORTED_PACKS: &str = "packs";
+
 /// Where a new card hangs from. Doc 01 section 4.4.
 ///
 /// A struct rather than three parameters because the three are one decision:
@@ -109,7 +113,11 @@ impl Core {
     ) -> Result<Self, CoreError> {
         let mut store = Store::open(root)?;
         let registry = Registry::load()?;
-        let packs = PackLibrary::load_built_in(&registry)?;
+        let mut packs = PackLibrary::load_built_in(&registry)?;
+        // Doc 12 principle 4: packs are data. An imported one is a file in the
+        // profile folder, so it loads the same way on every start rather than
+        // living only in the session that imported it.
+        packs.load_imported(&registry, &store.root().join(IMPORTED_PACKS));
 
         // Doc 10 section 6: reclaim before anything else, so a crash from the
         // last session is resolved before this one takes work.
@@ -137,6 +145,15 @@ impl Core {
             .build()
             .map_err(|e| CoreError::Runtime(e.to_string()))?;
 
+        // The pack the profile last chose, which has to outlive the process.
+        // A code the library no longer has (an imported file that was deleted,
+        // or one that stopped validating) falls back to general rather than
+        // failing to open the profile, and the Doctrine page says which packs
+        // did not load.
+        let pack_code = repo::active_pack_code(&store)?
+            .filter(|code| packs.get(code).is_ok())
+            .unwrap_or_else(|| "general".to_string());
+
         let mut core = Self {
             store,
             registry,
@@ -146,7 +163,7 @@ impl Core {
             policy,
             profile_id,
             source: Source::Live,
-            pack_code: "general".to_string(),
+            pack_code,
             ledger: tessera_harness::Ledger::new(),
             retrievers: crate::retrieval::RetrieverSet::default(),
             runtime,
@@ -240,11 +257,82 @@ impl Core {
         // Fail here rather than at the first card, so a typo in a pack code is
         // a startup error and not a run that quietly used the wrong rules.
         self.packs.get(code)?;
-        self.pack_code = code.to_string();
+        let was = std::mem::replace(&mut self.pack_code, code.to_string());
+
+        // Persisted, because the choice belongs to the profile rather than to
+        // the process that happened to be running when it was made.
+        let pack_id = self.active_pack_id()?;
+        repo::set_active_pack(&self.store, &self.profile_id, &pack_id)?;
+        if was != self.pack_code {
+            let profile_id = self.profile_id.clone();
+            self.store.append(tessera_store::event::NewEvent::new(
+                "pack.activated.v1",
+                json!({
+                    "profile_id": profile_id,
+                    "pack_code": self.pack_code,
+                    "pack_id": pack_id,
+                    "previous_pack_code": was,
+                }),
+                tessera_store::event::Provenance::user(),
+            ))?;
+        }
+
         // The pack is what says which retrievers are enabled, so the set it
         // enables changes with it.
         self.rebuild_retrievers()?;
         Ok(())
+    }
+
+    /// Take a doctrine pack file into this profile. Doc 10 section 9.
+    ///
+    /// Validation is the registry's, against `schemas/pack/doctrine-pack.v1.json`,
+    /// so an imported pack is held to what the shipped ones are held to. The
+    /// file is copied into the profile folder rather than referenced where it
+    /// was found: a pack read from a path outside the profile would change
+    /// under the boards that pinned it, or vanish.
+    ///
+    /// Importing does not activate. Doc 10 section 9 keeps a pack change a
+    /// deliberate act, and an import that silently re-judged the next card
+    /// would be one.
+    pub fn import_pack(&mut self, raw: &str) -> Result<Value, CoreError> {
+        let pack = tessera_doctrine::DoctrinePack::parse(&self.registry, raw)?;
+
+        // A built in code is not a name a file may take: boards pin the pack
+        // they were judged under by code and version, and a file that renamed
+        // `general` would change what every one of them claims.
+        if PackLibrary::is_built_in(&pack.code) {
+            return Err(CoreError::Doctrine(tessera_doctrine::DoctrineError::Malformed {
+                code: pack.code.clone(),
+                detail: "a pack that ships with the app already uses this code".to_string(),
+            }));
+        }
+
+        let dir = self.store.root().join(IMPORTED_PACKS);
+        std::fs::create_dir_all(&dir).map_err(|e| CoreError::Runtime(e.to_string()))?;
+        std::fs::write(dir.join(format!("{}.json", pack.code)), raw)
+            .map_err(|e| CoreError::Runtime(e.to_string()))?;
+
+        let value = serde_json::to_value(&pack).unwrap_or(Value::Null);
+        let pack_id = repo::ensure_pack(&self.store, &value)?;
+        let summary = json!({
+            "code": pack.code,
+            "version": pack.version,
+            "name": pack.name,
+            "pack_id": pack_id,
+            "audiences": pack.audiences.len(),
+            "flag_rules": pack.flag_rules.len(),
+            "source_ranks": pack.source_hierarchy.len(),
+            "retrievers": pack.retrievers.iter().map(|r| r.id.clone()).collect::<Vec<_>>(),
+            "built_in": false,
+            "active": false,
+        });
+        self.store.append(tessera_store::event::NewEvent::new(
+            "pack.imported.v1",
+            summary.clone(),
+            tessera_store::event::Provenance::user(),
+        ))?;
+        self.packs.add(pack);
+        Ok(summary)
     }
 
     /// The stored id of the active doctrine pack, writing it if it is not there.
@@ -1294,9 +1382,32 @@ pub fn build_router() -> Router<Core> {
 
         let counts = repo::profile_counts(&core.store, &core.profile_id).map_err(store_error)?;
 
+        // Doc 10 section 9: a built in pack is the same on every machine and an
+        // imported one is not, so the Doctrine page says which is which rather
+        // than listing codes that all look alike.
+        let packs: Vec<Value> = core
+            .packs
+            .codes()
+            .map(|code| {
+                json!({
+                    "code": code,
+                    "built_in": PackLibrary::is_built_in(code),
+                    "active": code == core.pack_code,
+                })
+            })
+            .collect();
+        let pack_problems: Vec<Value> = core
+            .packs
+            .problems()
+            .iter()
+            .map(|p| json!({ "file": p.file, "detail": p.detail }))
+            .collect();
+
         Ok(json!({
             "profile_id": core.profile_id,
             "packs": core.packs.codes().collect::<Vec<_>>(),
+            "pack_details": packs,
+            "pack_problems": pack_problems,
             "active_pack": core.pack_code,
             "provider": core.provider.id(),
             "policy": serde_json::to_value(&core.policy).unwrap_or(Value::Null),
@@ -1356,6 +1467,29 @@ pub fn build_router() -> Router<Core> {
 
     // Doc 12 principle 4: packs are data. Choosing one is choosing which file
     // the profile reads, not editing a rule.
+    // Doc 10 section 9 and doc 12 principle 4: a pack is data, so taking one in
+    // is reading a file and validating it, never running it.
+    //
+    // A path rather than the pack's text, to match the folder step: the shell
+    // knows where the person pointed and the core is what may read it. The file
+    // is copied into the profile folder, so a pack that a board pinned cannot
+    // later move or change under it.
+    r.register("pack.import", |core: &mut Core, p| {
+        #[derive(Deserialize)]
+        struct Import {
+            path: String,
+        }
+        let p: Import = params(p)?;
+        let path = std::path::Path::new(p.path.trim());
+        if p.path.trim().is_empty() {
+            return Err(RpcError::core("no_pack", "Choose a doctrine pack file."));
+        }
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| RpcError::core("no_pack", format!("That pack file could not be read: {e}")))?;
+        let summary = core.import_pack(&raw).map_err(core_error)?;
+        Ok(summary)
+    });
+
     r.register("profile.set_pack", |core: &mut Core, p| {
         #[derive(Deserialize)]
         struct SetPack {
@@ -1448,6 +1582,28 @@ pub fn build_router() -> Router<Core> {
             None,
         )
         .map_err(|e| RpcError::core("store", e.to_string()))?;
+
+        // `index.folder_added.v1` has been in the vocabulary since M2 and had no
+        // writer until the folder was actually read. Doc 05 section 11's page
+        // reads the log for what each folder holds.
+        let profile_id = core.profile_id.clone();
+        core.store
+            .append(tessera_store::event::NewEvent::new(
+                "index.folder_added.v1",
+                json!({
+                    "profile_id": profile_id,
+                    "folder_id": id,
+                    "label": p.label.trim(),
+                    "sensitive": p.sensitive,
+                    "embeddings": if p.provider_embeddings { "provider" } else { "local" },
+                    "indexed": report.indexed,
+                    "chunks": report.chunks,
+                    "excluded": report.excluded,
+                    "unreadable": report.errors.len(),
+                }),
+                tessera_store::event::Provenance::user(),
+            ))
+            .map_err(store_error)?;
 
         // The set is what the fan-out reads, and the folder just added is in it
         // now rather than after a restart.

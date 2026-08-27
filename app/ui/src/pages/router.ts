@@ -267,6 +267,12 @@ export class Router {
       const keyVerb = target.closest<HTMLElement>('[data-key-act]');
       if (keyVerb) {
         void this.setKey(keyVerb.closest<HTMLElement>('[data-key-ref]')?.dataset.keyRef ?? '');
+        return;
+      }
+      const packVerb = target.closest<HTMLElement>('[data-pack-act]');
+      if (packVerb) {
+        const code = packVerb.closest<HTMLElement>('[data-pack]')?.dataset.pack;
+        if (code) void this.usePack(code);
       }
     });
 
@@ -318,6 +324,7 @@ export class Router {
       e.preventDefault();
       if (form?.id === 'setup-key') void this.saveKey();
       if (form?.id === 'setup-folder') void this.watchFolder();
+      if (form?.id === 'pack-import') void this.importPack();
     });
 
     // Row selection, which is a change rather than a click.
@@ -349,6 +356,32 @@ export class Router {
       await this.rpc.setKey(keyRef, secret);
       this.setup.keySaved = true;
     });
+  }
+
+  /**
+   * Doc 10 section 9. The path is read by the core, which validates the file
+   * before anything else sees it, and the page redraws from `profile.get` so
+   * what it shows is the library rather than what this call happened to return.
+   */
+  private async importPack(): Promise<void> {
+    const path = this.hosts.body.querySelector<HTMLInputElement>('#pack-path')?.value ?? '';
+    if (!path.trim()) return;
+    try {
+      const added = await this.rpc.importPack(path.trim());
+      await this.render();
+      this.actions.toast(`${COPY.profilePackImported} ${added.code}`);
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.pageUnread, 'error');
+    }
+  }
+
+  private async usePack(code: string): Promise<void> {
+    try {
+      await this.rpc.setPack(code);
+      await this.render();
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.pageUnread, 'error');
+    }
   }
 
   private async watchFolder(): Promise<void> {

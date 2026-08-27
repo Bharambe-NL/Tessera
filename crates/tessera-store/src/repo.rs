@@ -970,6 +970,34 @@ pub fn ensure_profile(store: &Store, pack_id: &str, default_depth: &str, policy:
     Ok(id)
 }
 
+/// The code of the pack this profile last chose, if the row still names one.
+///
+/// The profile's pack is a choice that has to outlive the process. Before this
+/// the core read `general` at every start, so a person who chose finance came
+/// back the next morning judged by rules they had switched away from, and
+/// nothing on the screen said so.
+pub fn active_pack_code(store: &Store) -> Result<Option<String>> {
+    Ok(store
+        .conn()
+        .query_row(
+            "SELECT p.code FROM profile pr
+               JOIN doctrine_pack p ON p.id = pr.default_doctrine_pack_id
+              LIMIT 1",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+/// Point the profile at a pack version. Boards keep the version they pinned.
+pub fn set_active_pack(store: &Store, profile_id: &str, pack_id: &str) -> Result<()> {
+    store.conn().execute(
+        "UPDATE profile SET default_doctrine_pack_id = ?1, updated_at = ?2 WHERE id = ?3",
+        params![pack_id, now_iso8601(), profile_id],
+    )?;
+    Ok(())
+}
+
 /// Register a doctrine pack version, returning its row id. A pack version is
 /// inserted once; boards pin it (doc 01 section 4.17).
 pub fn ensure_pack(store: &Store, pack: &Value) -> Result<String> {

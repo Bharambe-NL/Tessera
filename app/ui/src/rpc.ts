@@ -291,6 +291,24 @@ export class Rpc {
     return this.call<{ active_pack: string }>('profile.set_pack', { code });
   }
 
+  /**
+   * Doc 10 section 9. The core reads the file and validates it; importing does
+   * not activate, because a pack change is a deliberate act.
+   */
+  importPack(path: string) {
+    return this.call<{
+      code: string;
+      version: string;
+      name: string | null;
+      audiences: number;
+      flag_rules: number;
+      source_ranks: number;
+      retrievers: string[];
+      built_in: boolean;
+      active: boolean;
+    }>('pack.import', { path });
+  }
+
   watchFolder(folder: {
     root: string;
     label: string;
@@ -499,9 +517,24 @@ export interface FirstRun {
   key_refs: string[];
 }
 
+export interface PackStatus {
+  code: string;
+  /** Ships with the app, so it is the same on every machine. Doc 10 section 9. */
+  built_in: boolean;
+  active: boolean;
+}
+
+/** A pack file in the profile folder that did not load, and why. */
+export interface PackProblem {
+  file: string;
+  detail: string;
+}
+
 export interface ProfileSummary {
   profile_id: string;
   packs: string[];
+  pack_details?: PackStatus[];
+  pack_problems?: PackProblem[];
   active_pack: string;
   provider: string;
   policy: unknown;

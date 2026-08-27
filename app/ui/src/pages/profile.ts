@@ -91,6 +91,62 @@ function retrievers(profile: ProfileSummary): string {
   );
 }
 
+/**
+ * Doctrine. Doc 11 section 6 and doc 10 section 9.
+ *
+ * The list says which packs ship with the app and which came from a file,
+ * because they are not the same claim: a shipped pack is the same on every
+ * machine and an imported one is whatever its author wrote.
+ */
+function doctrine(profile: ProfileSummary): string {
+  const packs = profile.pack_details ?? profile.packs.map((code) => ({
+    code,
+    built_in: true,
+    active: code === profile.active_pack,
+  }));
+  const problems = profile.pack_problems ?? [];
+
+  return (
+    `<ul class="lib-list">` +
+    packs
+      .map(
+        (p) =>
+          `<li class="lib-row" data-pack="${esc(p.code)}"><div class="what"><div class="line">` +
+          `<span class="title">${esc(p.code)}</span>` +
+          `<span class="chip">${p.built_in ? COPY.profilePackBuiltIn : COPY.profilePackImported}</span>` +
+          (p.active ? `<span class="chip ok">${COPY.profilePackActive}</span>` : '') +
+          `</div></div>` +
+          (p.active
+            ? ''
+            : `<div class="verbs"><button data-pack-act="use">${COPY.profilePackUse}</button></div>`) +
+          `</li>`,
+      )
+      .join('') +
+    `</ul>` +
+    // A file that did not load is said here, where the fix is, rather than in a
+    // log. The profile opened without it.
+    (problems.length > 0
+      ? `<p class="page-note" role="alert">${COPY.profilePackUnread}</p>` +
+        `<ul class="lib-list">` +
+        problems
+          .map(
+            (p) =>
+              `<li class="lib-row"><div class="what"><div class="line">` +
+              `<span class="title">${esc(p.file)}</span></div>` +
+              `<p class="meta">${esc(p.detail)}</p></div></li>`,
+          )
+          .join('') +
+        `</ul>`
+      : '') +
+    `<form id="pack-import" class="setup-folder">` +
+    `<input id="pack-path" placeholder="${COPY.profilePackPath}" ` +
+    `aria-label="${COPY.profilePackPath}" autocomplete="off" />` +
+    `<button type="submit">${COPY.profilePackImport}</button>` +
+    `</form>` +
+    `<p class="page-note">${COPY.profilePackImportNote}</p>`
+  );
+}
+
 function diagnostics(profile: ProfileSummary): string {
   const d = profile.diagnostics;
   if (!d) return emptyState(COPY.profileNoDiagnostics);
@@ -114,10 +170,7 @@ export function profileHTML(profile: ProfileSummary | null, tab: ProfileTab): st
     case 'retrievers':
       return retrievers(profile);
     case 'doctrine':
-      return facts([
-        [COPY.profileActivePack, profile.active_pack],
-        [COPY.profileAvailablePacks, profile.packs.join(', ')],
-      ]);
+      return doctrine(profile);
     case 'diagnostics':
       return diagnostics(profile);
     default:

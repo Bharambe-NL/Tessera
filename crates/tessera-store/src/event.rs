@@ -266,6 +266,9 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     "exercise.generated.v1",
     "attempt.recorded.v1",
     "exercise.item_reported.v1",
+    // doctrine packs, doc 10 section 9
+    "pack.imported.v1",
+    "pack.activated.v1",
     // index
     "index.folder_added.v1",
     "index.updated.v1",
