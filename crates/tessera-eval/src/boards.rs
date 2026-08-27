@@ -38,6 +38,25 @@ pub struct Board {
     pub cards: Vec<Card>,
     #[serde(default)]
     pub flags: Vec<Flag>,
+    /// Doc 02 section 6's concepts, which the bundle round trip needs and the
+    /// retrieval seed does not: memory indexes cards, not terms.
+    #[serde(default)]
+    pub concepts: Vec<Concept>,
+    /// Doc 02 line 155: three boards ship as bundles.
+    #[serde(default)]
+    pub export_as_bundle: bool,
+    /// The term this board's bundle collides with on import, when the corpus
+    /// planted one. Doc 01 section 7's merge rule is what it tests.
+    #[serde(default)]
+    pub concept_collision: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Concept {
+    pub concept_id: String,
+    pub term: String,
+    #[serde(default)]
+    pub linked_cards: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

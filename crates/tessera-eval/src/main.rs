@@ -17,6 +17,7 @@
 //! score` turns it into metrics.
 
 mod boards;
+mod bundles;
 mod reverify;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -171,6 +172,14 @@ struct Args {
     /// reporting that nothing changed.
     #[arg(long)]
     baseline: Option<PathBuf>,
+
+    /// Round trip every corpus board through export and import. Doc 12 phase
+    /// 10's acceptance.
+    ///
+    /// Costs nothing: no provider is called, because a bundle carries what the
+    /// board already holds and asks no model anything.
+    #[arg(long)]
+    bundles: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -317,8 +326,48 @@ fn exercise_record(
     }
 }
 
+/// Doc 12 phase 10's acceptance: every corpus board out and back in.
+fn round_trip_bundles(args: &Args) -> std::process::ExitCode {
+    let trips = match bundles::run(&args.corpus, &args.snapshot) {
+        Ok(t) => t,
+        Err(message) => {
+            eprintln!("{message}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+
+    println!("{}", bundles::report(&trips));
+    let lost: Vec<&bundles::Trip> = trips.iter().filter(|t| !t.whole()).collect();
+    let marked = trips.iter().filter(|t| t.marked_for_export).count();
+    let collided: usize = trips.iter().map(|t| t.concepts_collided).sum();
+
+    println!(
+        "{} boards round tripped, {marked} of them marked for export by the corpus, \
+         {collided} concept {} handled",
+        trips.len(),
+        if collided == 1 { "term collision" } else { "term collisions" }
+    );
+    if lost.is_empty() {
+        println!("every board arrived whole");
+        return std::process::ExitCode::SUCCESS;
+    }
+    for trip in &lost {
+        eprintln!(
+            "{} lost rows: {:?} sent, {:?} arrived. {}",
+            trip.board_id, trip.sent, trip.arrived, trip.note
+        );
+    }
+    std::process::ExitCode::from(1)
+}
+
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
+
+    // Before the question set is read, because a bundle round trip asks no
+    // questions and a corpus with no `questions.jsonl` can still ship boards.
+    if args.bundles {
+        return round_trip_bundles(&args);
+    }
 
     let questions_file = if args.breadth { "questions_breadth.jsonl" } else { "questions.jsonl" };
     let pack = args

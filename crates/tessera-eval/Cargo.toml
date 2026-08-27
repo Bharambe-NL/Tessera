@@ -17,6 +17,7 @@ serde_json = "1.0.151"
 sha2 = "0.11.0"
 hex = "0.4.3"
 tessera-core = { version = "0.1.0", path = "../tessera-core" }
+tessera-bundle = { version = "0.1.0", path = "../tessera-bundle" }
 tessera-doctrine = { version = "0.1.0", path = "../tessera-doctrine" }
 tessera-providers = { version = "0.1.0", path = "../tessera-providers" }
 tessera-retrievers = { version = "0.1.0", path = "../tessera-retrievers" }
