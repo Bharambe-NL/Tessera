@@ -18,6 +18,7 @@ from . import edge_cases, harness, mess, retrieval, writer
 from . import memory as memory_mod
 from . import questions as questions_mod
 from . import snapshots as snapshots_mod
+from . import vault as vault_mod
 from .facts import generate_facts
 from .rng import GENERATOR_VERSION
 
@@ -51,6 +52,17 @@ def build(seed: int, out: Path, snapshot: str | None = None) -> dict:
     breadth_set = breadth_mod.generate(seed)
     board_set = boards_mod.generate(seed, facts, documents, question_set)
 
+    # Doc 16 section 5's synthetic vault, after boards because two dozen of its
+    # pages are saved from cards. Its facts join the ledger and its questions
+    # join the set, so a page-only answer is scored by the same matchers as any
+    # other rather than by a second set of rules.
+    vault_truth = vault_mod.generate(seed, facts, documents, question_set, board_set)
+    # The facts join the ledger, so a page-only answer is scored by the same
+    # matchers as any other. The questions do not join the question set: doc 02
+    # section 6 fixes that set at 400 with a stated shape, and the vault's own
+    # families are a second set beside it, as the breadth questions already are.
+    facts.extend(vault_truth.facts)
+
     # Memory runs after boards because it plants cards on them.
     memory_truth = memory_mod.build(seed, facts, documents, question_set, board_set)
     snaps = snapshots_mod.build(seed, documents, facts)
@@ -83,6 +95,7 @@ def build(seed: int, out: Path, snapshot: str | None = None) -> dict:
         questions=question_set,
         breadth=breadth_set,
         boards=board_set,
+        vault=vault_truth,
         snapshots=snaps,
         memory_truth=memory_truth,
         transformations=transformations,
@@ -119,6 +132,7 @@ def verify(seed: int, out: Path, snapshot: str | None = None) -> int:
     print(f"  documents    {build_row['documents']['total'] if build_row else '?'}")
     print(f"  questions    {build_row['questions']['total'] if build_row else '?'}")
     print(f"  boards       {build_row['boards']['total'] if build_row else '?'}")
+    print(f"  pages        {build_row.get('vault', {}).get('total', '?') if build_row else '?'}")
     print(f"  plantings    {sum(1 for r in rows if r.get('type') == 'planting')}")
     print(f"  dropped      {len(dropped)}")
     if stranded:

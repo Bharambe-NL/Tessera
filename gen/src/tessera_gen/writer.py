@@ -43,6 +43,8 @@ from .questions import Question, audiences_manifest
 from .questions import summarise as summarise_questions
 from .rng import GENERATOR_VERSION
 from .snapshots import Snapshot
+from .vault import VaultTruth
+from .vault import summarise as summarise_vault
 
 #: Pinned so a rendered document is byte identical between builds.
 FIXED_TIMESTAMP = (2026, 1, 1, 0, 0, 0)
@@ -292,6 +294,7 @@ def write_corpus(
     questions: list[Question],
     breadth: list[BreadthQuestion],
     boards: list[Board],
+    vault: VaultTruth,
     snapshots: list[Snapshot],
     memory_truth: MemoryTruth,
     transformations: list[Transformation],
@@ -330,6 +333,20 @@ def write_corpus(
     for board in boards:
         write_json(root / "boards" / board.board_id / "board.json", board.to_json())
 
+    # Doc 16 section 3.1: the file is the export and the row is the index, so
+    # the corpus writes the files a person's vault would hold and the ground
+    # truth sits outside the folder. Everything that walks `vault/` expects to
+    # find pages there and nothing else.
+    for page in vault.pages:
+        (root / page.file_path).parent.mkdir(parents=True, exist_ok=True)
+        (root / page.file_path).write_text(page.body, encoding="utf-8")
+    write_jsonl(root / "vault.jsonl", (p.to_json() for p in vault.pages))
+    # Doc 16 section 5's two families: questions the vault answers and nothing
+    # else does, and questions the corpus answers while the vault holds nothing
+    # about them. Their own file, because doc 02 section 6 fixes the main set at
+    # 400 questions with a shape the guards check.
+    write_jsonl(root / "questions_vault.jsonl", (q.to_json() for q in vault.questions))
+
     # Doc 15 section 5. What the boards retriever should find, what it must not,
     # and the two planted cases the Verifier is scored on. At the root rather
     # than under boards/, because it is not a board and everything that walks
@@ -367,6 +384,7 @@ def write_corpus(
             "languages": _count(d.language for d in documents),
         },
         "boards": summarise_boards(boards),
+        "vault": summarise_vault(vault),
         "breadth": summarise_breadth(breadth),
         "memory": summarise_memory(memory_truth),
         "snapshots": [s.label for s in snapshots],
@@ -448,6 +466,8 @@ see `entities.json`. Nothing here describes a real regulator, bank or rule.{at_l
   {summary["questions"]["empty_corpus"]} about a domain the corpus says nothing about.
 - **{summary["boards"]["total"]} boards** at T1, carrying
   {summary["boards"]["cards"]} cards.
+- **{summary["vault"]["total"]} pages** in `vault/`, of which
+  {summary["vault"]["by_kind"].get("page_only", 0)} say something no document does.
 - **{len(summary["snapshots"])} snapshots**: {", ".join(summary["snapshots"])}.
 
 ## How to regenerate

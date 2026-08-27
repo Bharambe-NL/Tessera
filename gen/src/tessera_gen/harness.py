@@ -35,6 +35,15 @@ THRESHOLDS: dict[str, float] = {
     "fact_recall_deep": 0.85,
     "fact_recall_research": 0.92,
     "citation_accuracy_ledger": 0.95,
+    "page_sole_support_rate": 0.0,
+    # Doc 16 section 5: "backlink completeness 1.00". Absolute, because a
+    # backlinks panel that finds most of the links into a page is a panel
+    # nobody can trust to tell them what refers to what.
+    "backlink_completeness": 1.0,
+    # Doc 16 section 5's other two, gated from 12d when the notebook can
+    # produce them. Listed now so the day a run sets them the number is judged
+    # rather than reported.
+    "grounding_state_accuracy": 0.95,
     "verifier_agreement": 0.90,
     "staleness_detection": 0.95,
     # Doc 06 section B12: "every block in block_index has at least one supported
@@ -102,6 +111,10 @@ PLANTED_CASES = {
 
 #: Metrics where a lower number is better.
 LOWER_IS_BETTER = {
+    # Doc 16 section 5: "page sole support after verification 0". A numeric
+    # claim resting on a page alone is what doc 16 section 3.3 extends
+    # `own_card_sole_support` to block.
+    "page_sole_support_rate",
     "forbidden_fact_rate",
     "forbidden_fact_unflagged",
     "flag_false_positive_rate",
@@ -349,6 +362,30 @@ def load_runs(results: Path) -> tuple[list[dict], dict]:
         json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     )
     return runs, manifest
+
+
+def load_vault(corpus: Path) -> list[dict]:
+    """The pages the corpus planted. Doc 16 section 5."""
+    path = corpus / "vault.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def load_vault_links(results: Path) -> list[dict]:
+    """What the store's backlink query answered for every planted link.
+
+    Absent on every run before M15 and on any run whose corpus has no vault,
+    which is why the metric reports n/a naming what it waits for rather than 0.
+    """
+    path = results / "vault_links.jsonl"
+    if not path.exists():
+        return []
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 def load_exercises(results: Path) -> list[dict]:
@@ -1148,6 +1185,57 @@ def score(results: Path, corpus: Path) -> Report:
             "mock has no eyes to read one with",
         )
     )
+    # ------------------------------------------------------------ vault ----
+    # Doc 16 phase 12c: "Backlinks are a query over PageLink; no full scan."
+    # The eval records what that query answered for every link the corpus
+    # planted; the arithmetic is done here, against the corpus's own
+    # `links_to`, so a run that silently dropped links cannot score 1.00 on the
+    # few it kept.
+    pages = load_vault(corpus)
+    link_rows = load_vault_links(results)
+    planted = sum(
+        1
+        for page in pages
+        for target in page.get("links_to") or []
+        if target.lower() in {p["title"].lower() for p in pages}
+    )
+    resolvable = [r for r in link_rows if r.get("target_kind") == "page"]
+    if not pages:
+        note = "this corpus has no vault; doc 16 section 5's forty pages arrive with it"
+        report.metrics.append(Metric("backlink_completeness", None, 0, 0, note))
+    elif not link_rows:
+        note = "the run recorded no backlink check; runs from M15 12a-iv record one"
+        report.metrics.append(Metric("backlink_completeness", None, 0, planted, note))
+    elif len(resolvable) != planted:
+        # A link that never reached the store cannot fail a backlink check,
+        # because there is nothing to check. Counting only what arrived would
+        # report 1.00 on a vault that lost half its links.
+        report.metrics.append(
+            Metric(
+                "backlink_completeness",
+                len([r for r in resolvable if r.get("in_backlinks")]) / planted if planted else None,
+                len([r for r in resolvable if r.get("in_backlinks")]),
+                planted,
+                f"the corpus planted {planted} links between pages and the store took "
+                f"{len(resolvable)}",
+            )
+        )
+    else:
+        report.metrics.append(
+            _ratio(
+                "backlink_completeness",
+                sum(1 for r in resolvable if r.get("in_backlinks")),
+                planted,
+                "links between two pages that the target page can find",
+            )
+        )
+
+    # Doc 16 section 5's other two. The notebook is 12d, so these have nothing
+    # to measure until it lands and they say so rather than reporting 0.
+    waiting = "the notebook view arrives at 12d, and its grounding states with it"
+    report.metrics.append(Metric("grounding_state_accuracy", None, 0, 0, waiting))
+    report.metrics.append(Metric("page_sole_support_rate", None, 0, 0, waiting))
+
     exercises = load_exercises(results) if exercise else []
     items = [
         (item, {c["card_id"]: c for c in ex.get("cards") or []})
