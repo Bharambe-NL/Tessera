@@ -1059,3 +1059,139 @@ button.wait {
   font-size: 12px;
   color: var(--ink-2);
 }
+
+/* ---------------------------------------------------------------- map ---
+   Doc 17 section 6. The six states get the four node hues plus two greys, so
+   the map stays inside doc 11 section 2's palette: a state is content the
+   product generated, which is what the node hues are reserved for. */
+
+.map-wrap {
+  overflow: auto;
+  padding: var(--s3) 0 var(--s6);
+}
+
+.map {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Doc 17 section 6's frontier band, behind the nodes so a node reads as
+   standing in it rather than wearing a badge. */
+.map-band {
+  fill: var(--accent-soft);
+}
+
+.map-edge {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.map-edge.proposed {
+  stroke-dasharray: 3 4;
+  stroke: var(--line);
+}
+
+.map-node circle {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.map-node text {
+  fill: var(--ink-2);
+  font-size: 11px;
+}
+
+.map-node:hover circle,
+.map-node:focus-visible circle {
+  stroke: var(--accent);
+  cursor: pointer;
+}
+
+.map-node:focus-visible {
+  outline: none;
+}
+
+.map-node.frontier circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.map-node.state-exposed circle {
+  fill: var(--slate);
+}
+
+.map-node.state-rated circle {
+  fill: var(--amber);
+}
+
+.map-node.state-checked circle {
+  fill: var(--olive);
+}
+
+.map-node.state-mastered circle {
+  fill: var(--olive-ink);
+}
+
+/* Gone stale reads as a known thing that faded, so it keeps the rust hue
+   rather than falling back to the empty one. */
+.map-node.state-decayed circle {
+  fill: var(--rust);
+}
+
+.map-key {
+  margin: var(--s5) 0 0;
+  max-width: 60ch;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.map-panel h3 {
+  margin: 0 0 var(--s3);
+}
+
+.map-panel h4 {
+  margin: var(--s7) 0 var(--s3);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.map-line {
+  margin: 0 0 var(--s3);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.map-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--s2);
+}
+
+.map-links li {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+}
+
+.map-links button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.map-links .muted {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.map-verbs {
+  margin-top: var(--s7);
+}

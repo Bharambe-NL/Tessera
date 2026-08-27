@@ -1674,6 +1674,72 @@ fn a_failed_check_walks_the_ladder_down_and_then_reaches_for_a_prerequisite() {
     assert_eq!(moved, 0, "the core restated a move the projection already made");
 }
 
+/// Doc 17 section 6: the map read carries the answers the view draws.
+///
+/// The depth and the frontier are rules the product owns, so the map read says
+/// what they are rather than handing the view a pile of edges and hoping it
+/// derives the same thing. A second implementation in the shell would be a
+/// second product, and the one that disagreed would be the one on screen.
+#[test]
+fn the_map_read_carries_the_depth_and_the_frontier_the_view_draws() {
+    let router = build_router();
+    let mut core = core_with(mock());
+    let profile_id = core.profile_id.clone();
+    let pack_id = core.active_pack_id().expect("pack");
+
+    let ids: Vec<String> = ["state space", "world model", "planning"]
+        .iter()
+        .map(|term| {
+            tessera_store::repo::ensure_concept(&mut core.store, &profile_id, &pack_id, term)
+                .expect("a concept")
+        })
+        .collect();
+    for pair in ids.windows(2) {
+        tessera_store::repo::propose_edge(
+            &mut core.store,
+            tessera_store::repo::NewEdge {
+                from_concept_id: &pair[0],
+                to_concept_id: &pair[1],
+                relation: "prerequisite_of",
+                proposed_by: "path",
+                status: "confirmed",
+                weight: 1.0,
+            },
+        )
+        .expect("a prerequisite");
+    }
+
+    // Doc 17 section 3: rated at 2 or more, mastery unverified. Two of the
+    // three, so the frontier has a choice to make and makes the shallow one.
+    for id in ids.iter().take(2) {
+        tessera_store::repo::rate_concept(&mut core.store, id, 3).expect("a rating");
+    }
+
+    let map = call(&router, &mut core, "map.read", json!({}));
+    let depth_of = |term: &str| {
+        map["concepts"]
+            .as_array()
+            .expect("concepts")
+            .iter()
+            .find(|c| c["term"] == term)
+            .and_then(|c| c["depth"].as_u64())
+    };
+    assert_eq!(depth_of("state space"), Some(0));
+    assert_eq!(depth_of("world model"), Some(1));
+    assert_eq!(depth_of("planning"), Some(2));
+
+    // The lowest rated concept nobody has checked, which is where a learner who
+    // has only ever claimed is put.
+    assert_eq!(map["frontier"].as_array().map(Vec::len), Some(1));
+    assert_eq!(map["frontier"][0], json!(ids[0]));
+
+    // Doc 17 section 6's node panel reads its links separately, so a map of two
+    // hundred concepts does not ship every card on every one of them.
+    let links = call(&router, &mut core, "map.concept", json!({ "concept_id": ids[0] }));
+    assert_eq!(links["cards"].as_array().map(Vec::len), Some(0));
+    assert_eq!(links["pages"].as_array().map(Vec::len), Some(0));
+}
+
 /// Doc 17 sections 4 and 5, which answer two different questions about a rung.
 ///
 /// The Planner picks the level a lesson opens at, from the last check the

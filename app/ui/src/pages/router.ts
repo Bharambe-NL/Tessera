@@ -19,6 +19,7 @@ import { COPY } from '../strings.js';
 import { flagsHTML, bulkHTML } from './flags.js';
 import { homeHTML, homeToolsHTML, type HomeFilter } from './home.js';
 import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './library.js';
+import { mapHTML, mapToolsHTML, type MapFilter, type MapState } from './map.js';
 import { notebookHTML, notebookToolsHTML, type NotebookState } from './notebook.js';
 import { pagesHTML, pagesToolsHTML, type PagesState } from './pages.js';
 import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
@@ -36,6 +37,7 @@ export type View =
   | 'library'
   | 'notebook'
   | 'pages'
+  | 'map'
   | 'profile'
   | 'setup';
 
@@ -55,6 +57,11 @@ export interface RouterActions {
   createBoard(): Promise<void>;
   /** Ask a question on the current board, for the Library ask verbs. */
   ask(question: string): void;
+  /**
+   * Doc 17 section 6: open a board, start a lesson on this concept, and ask the
+   * first check when the learner asked to be checked now.
+   */
+  startLesson(topic: string, check: boolean): Promise<void>;
   toast(message: string, level?: 'info' | 'warn' | 'error'): void;
   /** Leave the first run screen for the board. Doc 11 section 6. */
   finishSetup(): Promise<void>;
@@ -67,6 +74,7 @@ export class Router {
   private profileTab: ProfileTab = 'context';
   private pages: PagesState = { open: null, editing: false };
   private notebook: NotebookState = { session: null, asking: false };
+  private map: MapState = { map: null, open: null, links: null, filter: 'all', missionOnly: false };
   /** Flags selected for a bulk decision, kept across a re-render. */
   private picked = new Set<string>();
   /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
@@ -164,6 +172,23 @@ export class Router {
           body.innerHTML = pagesHTML(pages, this.pages);
           break;
         }
+        case 'map': {
+          // Doc 17 section 6. The read is whole every time: a rating, a check
+          // or a lesson elsewhere changes what a node is, and a map that kept
+          // its last answer would show a state the learner had already left.
+          title.textContent = COPY.railMap;
+          this.map.map = await this.rpc.readMap();
+          if (this.map.open) {
+            const fresh = this.map.map.concepts.find(
+              (c) => c.concept_id === this.map.open?.concept_id,
+            );
+            this.map.open = fresh ?? null;
+            if (!this.map.open) this.map.links = null;
+          }
+          tools.innerHTML = mapToolsHTML(this.map);
+          body.innerHTML = mapHTML(this.map);
+          break;
+        }
         case 'profile': {
           title.textContent = COPY.railProfile;
           tools.innerHTML = profileToolsHTML(this.profileTab);
@@ -202,6 +227,78 @@ export class Router {
       this.setFlagCount(flags.length);
     } catch {
       // The badge is a convenience; a failed read leaves the last count.
+    }
+  }
+
+  // ------------------------------------------------------------------ map --
+
+  /** Doc 17 section 6's node panel, with its links read as it opens. */
+  private async openNode(conceptId: string): Promise<void> {
+    const concept = this.map.map?.concepts.find((c) => c.concept_id === conceptId);
+    if (!concept) return;
+    this.map.open = concept;
+    this.map.links = null;
+    await this.render();
+    try {
+      this.map.links = await this.rpc.mapConcept(conceptId);
+      await this.render();
+    } catch {
+      // The panel stands without its links rather than closing: the rating and
+      // the three verbs are what a learner came for, and they need no read.
+    }
+  }
+
+  private async mapVerb(verb: string): Promise<void> {
+    if (verb === 'close') {
+      this.map.open = null;
+      this.map.links = null;
+      await this.render();
+      return;
+    }
+    if (verb === 'mission') {
+      this.map.missionOnly = !this.map.missionOnly;
+      await this.render();
+      return;
+    }
+
+    const concept = this.map.open;
+    if (!concept) return;
+    try {
+      // Doc 17 section 6's three verbs, each of which lands the learner on a
+      // board. A lesson and a check both start a session; the check asks its
+      // first question straight away, which is what "check me now" means.
+      if (verb === 'explore') {
+        const { board_id } = await this.rpc.createBoard(concept.term);
+        await this.actions.openBoard(board_id);
+        this.actions.ask(concept.term);
+        return;
+      }
+      if (verb === 'lesson' || verb === 'check') {
+        await this.actions.startLesson(concept.term, verb === 'check');
+      }
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.mapFailed, 'error');
+    }
+  }
+
+  /** Doc 17 section 2.1: the learner rates, and it is a claim, never evidence. */
+  private async rate(rating: number): Promise<void> {
+    const concept = this.map.open;
+    if (!concept || !Number.isFinite(rating)) return;
+    try {
+      await this.rpc.rateConcept(concept.concept_id, rating);
+      await this.render();
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.mapFailed, 'error');
+    }
+  }
+
+  private async openPageFromMap(pageId: string): Promise<void> {
+    try {
+      this.pages = { open: await this.rpc.page(pageId), editing: false };
+      await this.go('pages');
+    } catch (e) {
+      this.actions.toast(e instanceof RpcError ? e.message : COPY.pageUnread, 'error');
     }
   }
 
@@ -326,6 +423,39 @@ export class Router {
           row?.dataset.page,
           pageVerb.dataset.title,
         );
+        return;
+      }
+
+      // ---- Map
+      const mapFilter = target.closest<HTMLElement>('[data-map-filter]')?.dataset.mapFilter;
+      if (mapFilter) {
+        this.map.filter = mapFilter as MapFilter;
+        void this.render();
+        return;
+      }
+      const node = target.closest<HTMLElement>('[data-concept]');
+      if (node && this.view === 'map') {
+        void this.openNode(node.dataset.concept ?? '');
+        return;
+      }
+      const mapVerb = target.closest<HTMLElement>('[data-map-act]')?.dataset.mapAct;
+      if (mapVerb) {
+        void this.mapVerb(mapVerb);
+        return;
+      }
+      const rate = target.closest<HTMLElement>('[data-map-rate]')?.dataset.mapRate;
+      if (rate !== undefined) {
+        void this.rate(Number(rate));
+        return;
+      }
+      const mapCard = target.closest<HTMLElement>('[data-map-card]')?.dataset.mapCard;
+      if (mapCard) {
+        void this.actions.openBoard(mapCard);
+        return;
+      }
+      const mapPage = target.closest<HTMLElement>('[data-map-page]')?.dataset.mapPage;
+      if (mapPage) {
+        void this.openPageFromMap(mapPage);
         return;
       }
 

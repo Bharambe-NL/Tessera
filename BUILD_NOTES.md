@@ -3590,6 +3590,53 @@ whole.
 
 ---
 
+### BN-138 The Map, and a claim that was being shown as a score
+
+**Spec** 17 section 6.
+
+**What landed.** An eighth rail view: concepts as nodes laid out in bands by prerequisite depth,
+sized by the cards linked to them, coloured by doc 17 section 2.3's six states, with confirmed edges
+solid and proposed ones dotted, the frontier as a band behind the nodes, filters by state and by
+mission, and a node panel carrying the rating, the score, the evidence, what covers the concept, and
+the three verbs that put a learner on a board.
+
+**The depth and the frontier come from the core.** Both are rules the product already owns, in
+`tessera-agents`, and `map.read` runs them and ships the answers. The alternative was handing the
+view a pile of edges and having it derive the same two things in TypeScript, which is a second
+implementation of a rule the eval gates in Rust: the day they disagreed, the wrong one would be the
+one on screen. The view draws what it is told and holds no rule of its own.
+
+**One SVG rather than two hundred divs.** A card on the canvas is a DOM node because it holds text a
+person selects and a menu they open. A map node holds a term and a click, so the whole map is one
+SVG and the 200 card pan gate is untouched by a view that could have a thousand nodes.
+
+**A claim was being shown as a score, and a Playwright test found it.** Doc 17 section 2.4 gives a
+rating a starting prior of 0, 0.15, 0.35 or 0.5, so a concept nobody has checked still carries a
+number. The panel's first version printed it as `Score 35%`, which hands a learner their own guess
+back as evidence, in a product whose whole argument is that the two are different. The panel now
+says which of the two the number is, and adds that no check has confirmed it. Doc 17 section 2.1's
+"a rating is a claim, never evidence" is a rule about the interface as much as about the column.
+
+**The frontier is at the bottom of what a learner claimed, not the top.** The test asserted the
+frontier sat where the ratings ran out; the product put it on the shallowest rated concept instead.
+The product is right and doc 17 section 3 says so: "the lowest prerequisite level where rated
+concepts have a rating of 2 or more and mastery is still unverified". That is the rule that catches
+the overconfident rater within two questions, and a frontier at the deep end would ask them the
+hardest thing first and learn nothing. The test and the dev fixture's comment were corrected to the
+rule.
+
+**A verb that started a lesson the shell did not know about.** The Map's Start a lesson called
+`learn.start` through the RPC directly, so a session existed and the panel that renders it never
+opened. The shell owns that state, so the Map asks for a lesson through a router action and the
+shell starts it, which is the same split every other cross view verb already uses.
+
+**Verified** Full battery green: workspace tests including a new end to end one over `map.read` and
+`map.concept`, clippy at `-D warnings`, fmt, style lint, 89 generator guards, 71 Playwright tests
+including six new ones over the map and the contrast floor extended to it, and the 20 board bundle
+round trip whole.
+
+---
+
 ---
 
 ## Measured findings

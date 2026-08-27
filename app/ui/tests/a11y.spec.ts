@@ -124,7 +124,7 @@ test('text in a flow and in a tile meets the contrast floor', async ({ page }) =
 
 test('text on every page meets the contrast floor', async ({ page }) => {
   await askOne(page);
-  for (const view of ['home', 'flags', 'library', 'notebook', 'pages', 'profile'] as const) {
+  for (const view of ['home', 'flags', 'library', 'notebook', 'pages', 'map', 'profile'] as const) {
     await page.locator(`#rail [data-view="${view}"]`).click();
     await expect(page.locator('#page-title')).not.toBeEmpty();
     const failures = await contrastFailures(page);

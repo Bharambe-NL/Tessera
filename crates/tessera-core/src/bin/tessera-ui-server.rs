@@ -206,14 +206,69 @@ fn with_vault(core: &mut Core) {
 /// no frontier, so a check names no concept and nothing adapts, which is what a
 /// learner who has rated nothing would actually get.
 fn with_learning(core: &mut Core) {
+    use tessera_store::repo;
+
     let profile_id = core.profile_id.clone();
     let pack_id = core.active_pack_id().expect("pack id");
-    let concept_id =
-        tessera_store::repo::ensure_concept(&mut core.store, &profile_id, &pack_id, "world model")
-            .expect("a concept on the map");
+
+    // Five concepts in a prerequisite chain, so the map has depth to layer by
+    // and the frontier lands somewhere in the middle of it rather than on
+    // everything. Written through the same calls the product uses: a fixture
+    // that reached past them would draw a map the product cannot produce.
+    let terms = [
+        "state space",
+        "transition function",
+        "world model",
+        "planning horizon",
+        "model based control",
+    ];
+    let ids: Vec<String> = terms
+        .iter()
+        .map(|term| {
+            repo::ensure_concept(&mut core.store, &profile_id, &pack_id, term).expect("a concept on the map")
+        })
+        .collect();
+
+    for pair in ids.windows(2) {
+        repo::propose_edge(
+            &mut core.store,
+            repo::NewEdge {
+                from_concept_id: &pair[0],
+                to_concept_id: &pair[1],
+                relation: "prerequisite_of",
+                proposed_by: "path",
+                status: "confirmed",
+                weight: 1.0,
+            },
+        )
+        .expect("a prerequisite");
+    }
+    // Doc 17 section 7: an agent's guess is proposed until the learner says so,
+    // and the map draws it dotted. One of them, so both edge kinds are on
+    // screen.
+    repo::propose_edge(
+        &mut core.store,
+        repo::NewEdge {
+            from_concept_id: &ids[0],
+            to_concept_id: &ids[3],
+            relation: "prerequisite_of",
+            proposed_by: "learning_planner",
+            status: "proposed",
+            weight: 0.6,
+        },
+    )
+    .expect("a proposal");
+
     // Doc 17 section 2.1: a rating is a claim, and a claim of 2 or more is what
-    // puts a concept on the frontier.
-    tessera_store::repo::rate_concept(&mut core.store, &concept_id, 2).expect("a rating");
+    // puts a concept on the frontier. Three of the five are claimed and none of
+    // them has been checked, so section 3's rule puts the frontier on the
+    // shallowest of the three rather than on the deepest: a learner who has
+    // only ever claimed starts at the bottom of what they claimed, which is
+    // what catches the overconfident rater in the first two questions.
+    for id in ids.iter().take(2) {
+        repo::rate_concept(&mut core.store, id, 3).expect("a rating");
+    }
+    repo::rate_concept(&mut core.store, &ids[2], 2).expect("a rating");
 }
 
 fn tutor_reply(request: &tessera_providers::CompletionRequest) -> MockResponse {
