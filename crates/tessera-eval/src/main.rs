@@ -22,13 +22,13 @@ mod reverify;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tessera_core::retrieval::RetrieverSet;
 use tessera_providers::CompletionRequest;
 use tessera_retrievers::IndexedConfig;
 use tessera_retrievers::embed::Embedder;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -261,7 +261,7 @@ struct RunRecord {
     provider: String,
     /// `reference` or `bulk`.
     leg: String,
-/// `card` for a question this run asked, `verify_only` for a card it read
+    /// `card` for a question this run asked, `verify_only` for a card it read
     /// back. The scorer keeps the two apart: a re-verification answers nothing,
     /// so counting it among the answers would dilute every recall metric with
     /// rows that were never asked a question.
@@ -296,11 +296,7 @@ struct ExerciseRecord {
 const EXERCISE_BOARDS_PER_WORKER: usize = 5;
 
 /// Read back what the exercise wrote, so the scorer measures the stored rows.
-fn exercise_record(
-    core: &Core,
-    board_id: &str,
-    outcome: &tessera_core::ExerciseOutcome,
-) -> ExerciseRecord {
+fn exercise_record(core: &Core, board_id: &str, outcome: &tessera_core::ExerciseOutcome) -> ExerciseRecord {
     let items = outcome
         .exercise_id
         .as_deref()
@@ -326,6 +322,30 @@ fn exercise_record(
     }
 }
 
+/// Where this run reads its keys.
+///
+/// A mock run needs none, so it gets a keystore holding one fake. A live run on
+/// a person's machine reads the OS keychain, which is doc 01 section 4.16's rule
+/// and the only place a key belongs on a machine that has one.
+///
+/// A headless runner has no keychain at all: on Linux `keyring` wants a Secret
+/// Service over D-Bus and a CI runner has no session for one, so the choice is
+/// between reading the environment and having no nightly eval. The environment
+/// is chosen only when `TESSERA_CI` says so, rather than by asking whether the
+/// keychain happens to answer: a keychain that is merely locked would look the
+/// same, and falling back then would train a person to expect a prompt that
+/// never comes.
+fn keystore(mock: bool) -> Box<dyn KeyStore> {
+    if mock {
+        return Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"));
+    }
+    if std::env::var("TESSERA_CI").is_ok_and(|v| !v.trim().is_empty()) {
+        eprintln!("reading keys from the environment, which is what TESSERA_CI asks for");
+        return Box::new(tessera_providers::EnvKeyStore);
+    }
+    Box::new(OsKeychain)
+}
+
 /// Doc 12 phase 10's acceptance: every corpus board out and back in.
 fn round_trip_bundles(args: &Args) -> std::process::ExitCode {
     let trips = match bundles::run(&args.corpus, &args.snapshot) {
@@ -345,7 +365,11 @@ fn round_trip_bundles(args: &Args) -> std::process::ExitCode {
         "{} boards round tripped, {marked} of them marked for export by the corpus, \
          {collided} concept {} handled",
         trips.len(),
-        if collided == 1 { "term collision" } else { "term collisions" }
+        if collided == 1 {
+            "term collision"
+        } else {
+            "term collisions"
+        }
     );
     if lost.is_empty() {
         println!("every board arrived whole");
@@ -369,11 +393,19 @@ fn main() -> std::process::ExitCode {
         return round_trip_bundles(&args);
     }
 
-    let questions_file = if args.breadth { "questions_breadth.jsonl" } else { "questions.jsonl" };
-    let pack = args
-        .pack
-        .clone()
-        .unwrap_or_else(|| if args.breadth { "general" } else { "finance-eu-synthetic" }.to_string());
+    let questions_file = if args.breadth {
+        "questions_breadth.jsonl"
+    } else {
+        "questions.jsonl"
+    };
+    let pack = args.pack.clone().unwrap_or_else(|| {
+        if args.breadth {
+            "general"
+        } else {
+            "finance-eu-synthetic"
+        }
+        .to_string()
+    });
     let questions = match load_questions(&args.corpus.join(questions_file)) {
         Ok(q) => q,
         Err(e) => {
@@ -451,11 +483,7 @@ fn main() -> std::process::ExitCode {
                 // Each worker gets its own profile. Doc 10 section 6's ledger is
                 // per profile, and sharing one store would have the workers
                 // contend on the very lock the limit exists to avoid.
-                let keys: Box<dyn KeyStore> = if args.mock {
-                    Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
-                } else {
-                    Box::new(OsKeychain)
-                };
+                let keys = keystore(args.mock);
                 let first_key_ref = if args.mock {
                     "test-key"
                 } else {
@@ -485,8 +513,7 @@ fn main() -> std::process::ExitCode {
                 // with no retrievers and reported n/a for the half of the
                 // product that had just been built.
                 if !args.no_retrievers
-                    && let Err(e) =
-                        configure_retrievers(&mut core, &args.corpus, &args.snapshot)
+                    && let Err(e) = configure_retrievers(&mut core, &args.corpus, &args.snapshot)
                 {
                     eprintln!("a worker could not index the corpus: {e}");
                     return;
@@ -535,8 +562,11 @@ fn main() -> std::process::ExitCode {
                 // worker filled is a board with cards worth testing, so this is
                 // the widest sample the run can take for free.
                 if args.exercise {
-                    let taken: Vec<String> =
-                        boards_seen.iter().take(EXERCISE_BOARDS_PER_WORKER).cloned().collect();
+                    let taken: Vec<String> = boards_seen
+                        .iter()
+                        .take(EXERCISE_BOARDS_PER_WORKER)
+                        .cloned()
+                        .collect();
                     if boards_seen.len() > taken.len() {
                         // No silent caps: a run that sampled 5 of 40 boards
                         // says so, because "traceability 1.00" over five boards
@@ -650,12 +680,7 @@ struct Answered {
     card_id: String,
 }
 
-fn run_one(
-    core: &mut Core,
-    q: &Question,
-    parent: Option<&Answered>,
-    failures: &mut usize,
-) -> RunRecord {
+fn run_one(core: &mut Core, q: &Question, parent: Option<&Answered>, failures: &mut usize) -> RunRecord {
     let started = std::time::Instant::now();
 
     // A follow-up belongs on its parent's board, which is what makes the
@@ -732,7 +757,9 @@ fn run_one(
             // By id, not the board's first card: a follow-up sits on its
             // parent's board, and `first()` would report the parent's answer as
             // this question's.
-            let card = board.as_ref().and_then(|b| b.cards.iter().find(|c| c.id == o.card_id));
+            let card = board
+                .as_ref()
+                .and_then(|b| b.cards.iter().find(|c| c.id == o.card_id));
 
             RunRecord {
                 ok: true,
@@ -775,11 +802,7 @@ fn run_one(
                         c.builds_on
                             .iter()
                             .filter_map(|b| {
-                                Some(format!(
-                                    "{}/{}",
-                                    b["board_id"].as_str()?,
-                                    b["card_id"].as_str()?
-                                ))
+                                Some(format!("{}/{}", b["board_id"].as_str()?, b["card_id"].as_str()?))
                             })
                             .collect()
                     })
@@ -814,21 +837,20 @@ fn run_one(
 /// One store rather than the sweep's three, because a re-verification reads
 /// cards another worker would not have.
 fn run_verify_only(args: &Args, pack: &str, plan: &Plan, questions: &[Question]) -> Vec<RunRecord> {
-    let keys: Box<dyn KeyStore> = if args.mock {
-        Box::new(tessera_providers::MemoryKeyStore::with("test-key", "sk-test"))
+    let keys = keystore(args.mock);
+    let first_key_ref = if args.mock {
+        "test-key"
     } else {
-        Box::new(OsKeychain)
+        args.bulk_key_ref.as_str()
     };
-    let first_key_ref = if args.mock { "test-key" } else { args.bulk_key_ref.as_str() };
 
-    let mut core =
-        match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("could not bring a core up: {e}");
-                return Vec::new();
-            }
-        };
+    let mut core = match Core::in_memory_with_keys(Arc::clone(&plan.bulk.provider), keys, first_key_ref) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("could not bring a core up: {e}");
+            return Vec::new();
+        }
+    };
     core.source = Source::Test;
     if let Err(e) = core.use_pack(pack) {
         eprintln!("could not load the `{pack}` pack: {e}");
@@ -942,11 +964,7 @@ fn verify_sweep(
                             .builds_on
                             .iter()
                             .filter_map(|b| {
-                                Some(format!(
-                                    "{}/{}",
-                                    b["board_id"].as_str()?,
-                                    b["card_id"].as_str()?
-                                ))
+                                Some(format!("{}/{}", b["board_id"].as_str()?, b["card_id"].as_str()?))
                             })
                             .collect();
                     }
@@ -963,7 +981,10 @@ fn verify_sweep(
         .iter()
         .filter(|r| r.flags.iter().any(|f| f["rule_id"] == json!("stale_source")))
         .count();
-    println!("  {} cards re-verified, {flagged} carry a stale citation", records.len());
+    println!(
+        "  {} cards re-verified, {flagged} carry a stale citation",
+        records.len()
+    );
 
     records.extend(follow_up_on_stale(core, questions, &stale.locators));
     records
@@ -986,11 +1007,7 @@ fn verify_sweep(
 /// The follow-up says nothing about verifying or currency on purpose. The
 /// grounded mock echoes the request into its one sub-question, so a question
 /// using those words would score the wording rather than the Planner.
-fn follow_up_on_stale(
-    core: &mut Core,
-    questions: &[Question],
-    stale_locators: &[String],
-) -> Vec<RunRecord> {
+fn follow_up_on_stale(core: &mut Core, questions: &[Question], stale_locators: &[String]) -> Vec<RunRecord> {
     const FOLLOW_UP: &str = "What does this mean for the position today?";
     let mut out = Vec::new();
 
@@ -1087,11 +1104,7 @@ fn follow_up_on_stale(
     out
 }
 
-fn empty_verify_record(
-    board: &boards::Board,
-    card: &boards::Card,
-    started: std::time::Instant,
-) -> RunRecord {
+fn empty_verify_record(board: &boards::Board, card: &boards::Card, started: std::time::Instant) -> RunRecord {
     RunRecord {
         q_id: format!("VO-{}-{}", board.board_id, card.card_id),
         text: card.question.clone(),
@@ -1222,20 +1235,19 @@ impl Plan {
 /// conflict resolution, or whether a real model would have cited the passage it
 /// was given. Those need a real provider and a real sweep.
 fn grounded_mock() -> Arc<dyn ModelProvider> {
-    let provider = MockProvider::new()
-        .with_default(MockResponse::Scripted(Arc::new(|request| {
-            match request.stage.as_str() {
-                "route" => MockResponse::Json(routed()),
-                "plan" => MockResponse::Json(planned(request)),
-                "synthesize" => MockResponse::Json(synthesized(request)),
-                "visualize" => MockResponse::Json(visualised(request)),
-                "verify" => MockResponse::Json(support_judged(request)),
-                "exercise" => MockResponse::Json(exercised(request)),
-                // Anything else is not scripted, and failing closed is the
-                // right default for a stage nobody thought about.
-                _ => MockResponse::Garbage,
-            }
-        })));
+    let provider = MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
+        match request.stage.as_str() {
+            "route" => MockResponse::Json(routed()),
+            "plan" => MockResponse::Json(planned(request)),
+            "synthesize" => MockResponse::Json(synthesized(request)),
+            "visualize" => MockResponse::Json(visualised(request)),
+            "verify" => MockResponse::Json(support_judged(request)),
+            "exercise" => MockResponse::Json(exercised(request)),
+            // Anything else is not scripted, and failing closed is the
+            // right default for a stage nobody thought about.
+            _ => MockResponse::Garbage,
+        }
+    })));
     Arc::new(provider)
 }
 
@@ -1338,8 +1350,7 @@ fn support_judged(request: &CompletionRequest) -> Value {
         return json!({ "matches": matches });
     }
 
-    let passages: std::collections::BTreeMap<usize, String> =
-        passages_in(&prompt).into_iter().collect();
+    let passages: std::collections::BTreeMap<usize, String> = passages_in(&prompt).into_iter().collect();
 
     let mut verdicts = Vec::new();
     for line in prompt.lines() {
@@ -1397,7 +1408,9 @@ fn passages_in(prompt: &str) -> Vec<(usize, String)> {
         };
         let Some(open_end) = after.find('>') else { break };
         let body = &after[open_end + 1..];
-        let Some(close) = body.find("</passage>") else { break };
+        let Some(close) = body.find("</passage>") else {
+            break;
+        };
         out.push((ordinal, body[..close].trim().to_string()));
         rest = &body[close..];
     }
@@ -1805,7 +1818,11 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
     }
 
     let roots = [
-        ("regulatory", "Central Authority for Prudential Oversight", corpus.join("corpus/regulatory")),
+        (
+            "regulatory",
+            "Central Authority for Prudential Oversight",
+            corpus.join("corpus/regulatory"),
+        ),
         ("local", "Internal documents", corpus.join("corpus/internal")),
         ("web", "The synthetic web", corpus.join("corpus/web")),
     ];
@@ -1864,8 +1881,14 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
     // unasked question.
     let pack_id = core.active_pack_id().map_err(|e| format!("pack: {e}"))?;
     let seeded = boards::load(corpus)?;
-    let report =
-        boards::seed(&mut core.store, &profile_id, &pack_id, &seeded, snapshot, embedder.as_deref())?;
+    let report = boards::seed(
+        &mut core.store,
+        &profile_id,
+        &pack_id,
+        &seeded,
+        snapshot,
+        embedder.as_deref(),
+    )?;
     if !report.eligibility_disagreements.is_empty() {
         // Doc 15 section 3 is the rule and the corpus label is a second opinion.
         // Where they differ one of them is wrong, and finding out which is worth
@@ -1882,7 +1905,10 @@ fn configure_retrievers(core: &mut Core, corpus: &Path, snapshot: &str) -> Resul
         report.boards, report.cards, report.indexed
     );
 
-    core.retrievers = RetrieverSet { indexed: configured, embedder };
+    core.retrievers = RetrieverSet {
+        indexed: configured,
+        embedder,
+    };
     Ok(())
 }
 
@@ -1970,5 +1996,3 @@ fn write_records(
     )?;
     Ok(())
 }
-
-

@@ -47,6 +47,76 @@ impl KeyStore for OsKeychain {
     }
 }
 
+/// Keys from the environment, for a headless runner and nothing else.
+///
+/// A CI runner has no OS keychain: on Linux `keyring` wants a Secret Service
+/// over D-Bus, which a runner has no session for, so the eval could not reach a
+/// key at all and doc 12 phase 11's nightly could not exist.
+///
+/// What this does not do is loosen the rule. A secret still never lands in a
+/// file and never becomes an argument, which is what the rule is protecting
+/// against: an argument shows up in `ps`, in a crash dump and in the runner's
+/// own echo of the command it ran. An environment variable set for one step
+/// from a repository secret is the narrowest thing that works.
+///
+/// **Not exposed to the shell.** [`crate::build_provider`] and the desktop app
+/// take [`OsKeychain`], and this type is reachable only from the eval binary.
+/// A user's machine has a keychain, so on a user's machine there is no reason
+/// to read a key from anywhere else, and a fallback that quietly worked there
+/// would be a second place a key could live.
+pub struct EnvKeyStore;
+
+impl EnvKeyStore {
+    /// `anthropic-default` becomes `TESSERA_KEY_ANTHROPIC`.
+    ///
+    /// The provider rather than the whole ref, because a ref carries a label a
+    /// person chose (`anthropic-team`, `anthropic-mine`) and a runner has one
+    /// account per provider. Everything after the first dash is that label.
+    fn var_for(key_ref: &str) -> String {
+        let provider = key_ref.split('-').next().unwrap_or(key_ref);
+        format!(
+            "TESSERA_KEY_{}",
+            provider
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                })
+                .collect::<String>()
+        )
+    }
+}
+
+impl KeyStore for EnvKeyStore {
+    fn get(&self, key_ref: &str) -> Result<String> {
+        let var = Self::var_for(key_ref);
+        match std::env::var(&var) {
+            Ok(secret) if !secret.trim().is_empty() => Ok(secret),
+            // Naming the variable and never its value. A message carrying a
+            // prefix of the key would put a secret in a CI log, which is the
+            // most public place this build has.
+            _ => Err(ProviderError::Keychain(format!(
+                "no key in `{var}` for `{key_ref}`"
+            ))),
+        }
+    }
+
+    fn set(&self, _key_ref: &str, _secret: &str) -> Result<()> {
+        // A process cannot set an environment variable for the job that follows
+        // it, and pretending otherwise would report a key stored that is not.
+        Err(ProviderError::Keychain(
+            "the environment keystore is read only; set the repository secret instead".into(),
+        ))
+    }
+
+    fn delete(&self, _key_ref: &str) -> Result<()> {
+        Err(ProviderError::Keychain(
+            "the environment keystore is read only; remove the repository secret instead".into(),
+        ))
+    }
+}
+
 /// In memory, for tests and for the eval harness.
 ///
 /// Deliberately not exposed to the app: a keystore that survives only as long as
@@ -108,6 +178,35 @@ mod tests {
         let s = MemoryKeyStore::new();
         assert!(s.get("anthropic-team").is_err());
         assert!(!s.has("anthropic-team"));
+    }
+
+    #[test]
+    fn an_environment_key_is_found_by_its_provider_and_never_by_its_label() {
+        // A runner has one account per provider, and the label after the first
+        // dash is a name a person chose on their own machine.
+        assert_eq!(EnvKeyStore::var_for("anthropic-default"), "TESSERA_KEY_ANTHROPIC");
+        assert_eq!(EnvKeyStore::var_for("anthropic-team"), "TESSERA_KEY_ANTHROPIC");
+        assert_eq!(EnvKeyStore::var_for("moonshot-default"), "TESSERA_KEY_MOONSHOT");
+        assert_eq!(EnvKeyStore::var_for("openai"), "TESSERA_KEY_OPENAI");
+    }
+
+    #[test]
+    fn a_missing_environment_key_names_the_variable_and_not_the_value() {
+        // A CI log is the most public place this build has, so the message says
+        // which variable to set and nothing about what any key contains.
+        let message = EnvKeyStore
+            .get("moonshot-default")
+            .expect_err("an unset variable is an error")
+            .to_string();
+        assert!(message.contains("TESSERA_KEY_MOONSHOT"), "{message}");
+    }
+
+    #[test]
+    fn the_environment_keystore_refuses_to_write() {
+        // Nothing a process exports reaches the step after it, and reporting a
+        // key stored that is not would send someone looking for it later.
+        assert!(EnvKeyStore.set("moonshot-default", "sk-test").is_err());
+        assert!(EnvKeyStore.delete("moonshot-default").is_err());
     }
 
     #[test]
