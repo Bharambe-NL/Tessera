@@ -321,6 +321,18 @@ pub mod sequences {
         "emitting",
         "done",
     ];
+
+    /// Doc 14 section 3.3. The Tutor runs once per turn, so this is its own
+    /// sequence and not doc 14 section 3.4's session machine: the session is a
+    /// row that outlives any one run, and the run is one decision inside it.
+    pub const TUTOR: &[&str] = &[
+        "received",
+        "reading_session",
+        "deciding",
+        "checking_rules",
+        "emitting",
+        "done",
+    ];
 }
 
 #[cfg(test)]

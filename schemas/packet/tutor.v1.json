@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tessera:packet/tutor.v1",
+  "title": "Tutor packet",
+  "description": "Doc 14 section 3.2. The Tutor decides what to ask and what to open, so this packet carries the session, the cards that are done and the concepts on the board. Doc 14 section 3.1 keeps retrieval and writing card content out of scope: there are no passages here, and the cards arrive as what they already say rather than as material to write from.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "board_id", "stage", "session"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "run_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "board_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+    "stage": {
+      "description": "Doc 14 section 3.4's session machine, as the state this turn is deciding from.",
+      "enum": ["intake", "building", "reading", "checking", "opening", "ended"]
+    },
+    "session": {
+      "type": "object",
+      "required": ["session_id", "topic", "status"],
+      "properties": {
+        "session_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+        "topic": { "type": "string" },
+        "status": { "enum": ["intake", "building", "reading", "checking", "ended"] },
+        "intake": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": { "q": { "type": "string" }, "a": { "type": "string" } }
+          }
+        },
+        "plan": { "type": "array", "items": { "type": "object" } },
+        "checks": { "type": "array", "items": { "type": "object" } },
+        "opened": { "type": "array", "items": { "type": "object" } },
+        "mastery": {
+          "type": "object",
+          "description": "Doc 14 section 3.6: concept id to score. The Tutor prefers checks on the lowest."
+        }
+      }
+    },
+    "cards": {
+      "type": "array",
+      "description": "Doc 14 section 3.2: the done cards, as question, answer, visual labels and citations. Never the passages behind them.",
+      "items": {
+        "type": "object",
+        "required": ["card_id", "question"],
+        "properties": {
+          "card_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "visual_labels": { "type": "array", "items": { "type": "string" } },
+          "citations": { "type": "array", "items": { "type": "object" } },
+          "concept_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept_id", "term"],
+        "properties": {
+          "concept_id": { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+          "term": { "type": "string" },
+          "definition": { "type": ["string", "null"] },
+          "mastery": { "type": "integer" }
+        }
+      }
+    },
+    "target_card_id": {
+      "oneOf": [
+        { "$ref": "tessera:entity/common.v1#/$defs/ulid" },
+        { "type": "null" }
+      ],
+      "description": "Which card a check or an opening is about. Doc 14 section 3.5's next_* questions must reference this card's entities."
+    },
+    "learner_message": {
+      "type": ["string", "null"],
+      "description": "Doc 14 section 3.4: at any time the learner can type in the panel."
+    },
+    "profile": {
+      "type": "object",
+      "description": "Doc 14 section 6 question 2, resolved as proposed: a role already on the profile means intake does not ask for it again.",
+      "properties": { "role": { "type": ["string", "null"] } }
+    },
+    "doctrine": {
+      "type": "object",
+      "properties": {
+        "curriculum_shapes": { "type": "array", "items": { "type": "string" } },
+        "mastery_threshold": { "type": "integer", "minimum": 1 },
+        "intake_questions": { "type": "array", "items": { "type": "string" } },
+        "audiences": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "description": "Doc 14 section 3.5: at most one card per turn and eight per session without the learner choosing another.",
+      "properties": {
+        "cards_requested": { "type": "integer", "minimum": 0 },
+        "cards_max": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "effort_budget": {
+      "type": "object",
+      "properties": { "max_tokens": { "type": "integer" } }
+    }
+  }
+}

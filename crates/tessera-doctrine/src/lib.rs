@@ -104,6 +104,44 @@ impl FlagRule {
     }
 }
 
+/// Doc 14 section 3.2's learning doctrine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LearningTemplates {
+    /// Doc 14 section 3.4: the plan is ordered foundation to detail.
+    #[serde(default = "default_shapes")]
+    pub curriculum_shapes: Vec<String>,
+    /// Doc 14 section 3.6: how many correct checks make a concept mastered.
+    #[serde(default = "default_mastery")]
+    pub mastery_threshold: u32,
+    /// Doc 14 section 3.2: intake question templates per domain.
+    #[serde(default)]
+    pub intake_questions: Vec<String>,
+}
+
+fn default_shapes() -> Vec<String> {
+    // Doc 14 section 3.8's fallback, which is also the sensible default: what it
+    // is, how it works, who is involved.
+    vec![
+        "foundation".into(),
+        "mechanism".into(),
+        "landscape".into(),
+    ]
+}
+
+fn default_mastery() -> u32 {
+    2
+}
+
+impl Default for LearningTemplates {
+    fn default() -> Self {
+        Self {
+            curriculum_shapes: default_shapes(),
+            mastery_threshold: default_mastery(),
+            intake_questions: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct RetrieverConfig {
     pub id: String,
@@ -202,6 +240,10 @@ pub struct DoctrinePack {
     #[serde(default)]
     pub writing_rules: WritingRules,
     pub exercise_templates: Vec<ExerciseTemplate>,
+    /// Doc 14 section 3.2: the shapes a curriculum takes and how many correct
+    /// checks count as mastery are doctrine, not substrate.
+    #[serde(default)]
+    pub learning_templates: LearningTemplates,
     /// Doc 07 section A2: what the Reader looks for first is doctrine.
     ///
     /// The finance pack names figures, dates and article references. A pack that
@@ -517,6 +559,7 @@ mod tests {
             writing_rules: WritingRules::default(),
             exercise_templates: vec![],
             reader_extract_first: vec![],
+            learning_templates: LearningTemplates::default(),
             rulings: vec![],
         }
     }

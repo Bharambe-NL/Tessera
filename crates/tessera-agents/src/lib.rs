@@ -13,6 +13,7 @@ pub mod prompts;
 pub mod reader;
 pub mod router;
 pub mod synthesizer;
+pub mod tutor;
 pub mod verifier;
 pub mod visualizer;
 
@@ -21,6 +22,7 @@ pub use planner::Planner;
 pub use reader::Reader;
 pub use router::Router;
 pub use synthesizer::Synthesizer;
+pub use tutor::Tutor;
 pub use verifier::Verifier;
 pub use visualizer::Visualizer;
 

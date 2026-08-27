@@ -229,6 +229,7 @@ pub mod ids {
     pub const PACKET_VISUALIZER: &str = "tessera:packet/visualizer.v1";
     pub const PACKET_EXERCISE: &str = "tessera:packet/exercise.v1";
     pub const PACKET_READER: &str = "tessera:packet/reader.v1";
+    pub const PACKET_TUTOR: &str = "tessera:packet/tutor.v1";
 
     pub const OUT_ROUTER: &str = "tessera:output/router.v1";
     pub const OUT_PLANNER: &str = "tessera:output/planner.v1";
@@ -257,6 +258,7 @@ pub mod ids {
         PACKET_VISUALIZER,
         PACKET_EXERCISE,
         PACKET_READER,
+        PACKET_TUTOR,
         OUT_ROUTER,
         OUT_PLANNER,
         OUT_RETRIEVER,
