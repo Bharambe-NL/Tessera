@@ -618,6 +618,27 @@ pub async fn run_card(
                 "run_id": run_id,
             }),
         )?;
+    } else {
+        // Doc 06 section B7. A Visualizer that declined said why, and until now
+        // only a Visualizer that failed left a trace. Every grounded run
+        // declined every visual and the event log recorded nothing at all, so
+        // the audit trail could not tell a card that wanted no diagram from one
+        // whose diagram was dropped.
+        store.append(
+            tessera_store::NewEvent::new(
+                "visual.declined.v1",
+                json!({
+                    "card_id": card_id,
+                    "reason": visual["declined_reason"]
+                        .as_str()
+                        .unwrap_or("The summary carried no structure to draw."),
+                }),
+                tessera_store::Provenance::agent("visualizer", run_id.clone())
+                    .with_source(ctx.source),
+            )
+            .on_board(board_id)
+            .on_card(card_id),
+        )?;
     }
 
     // ----------------------------------------------------------- Verifier --

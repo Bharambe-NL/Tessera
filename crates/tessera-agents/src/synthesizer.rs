@@ -88,7 +88,7 @@ impl Agent for Synthesizer {
         let draft = draft(ctx, packet, mode, &passages).await?;
 
         step(ctx, "binding_citations")?;
-        let bound = bind(&draft, &passages, mode);
+        let bound = bind(&draft, &passages, mode, packet);
 
         step(ctx, "reconciling_conflicts")?;
         let conflicts = detect_conflicts(&bound.summary, &passages);
@@ -348,7 +348,7 @@ struct Bound {
 /// Doc 06 section A8 point 2. Deterministic: markers are parsed, spans computed
 /// from the sentence containing the marker, `passage_id` looked up. Markers with
 /// no passage are removed and the sentence listed as unsupported.
-fn bind(draft: &Value, passages: &[Value], mode: &str) -> Bound {
+fn bind(draft: &Value, passages: &[Value], mode: &str, packet: &Value) -> Bound {
     let raw_answer = draft["answer"].as_str().unwrap_or_default().to_string();
     let fast = mode == "fast";
 
@@ -404,21 +404,52 @@ fn bind(draft: &Value, passages: &[Value], mode: &str) -> Bound {
         }
     }
 
-    let findings: Vec<Value> = draft["findings"]
-        .as_array()
-        .map(|f| {
-            f.iter()
-                .filter_map(Value::as_str)
-                .map(|text| {
-                    let ordinals: Vec<usize> = if fast { vec![] } else { markers_in(text) };
-                    json!({
-                        "text": if fast { strip_markers(text) } else { text.to_string() },
-                        "citations": ordinals.iter().filter(|o| seen_ordinals.contains(o)).collect::<Vec<_>>()
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // Doc 06 section A5's harness rule is that every marker in the answer *and
+    // the findings* has a citation with that n. A finding citing a passage the
+    // answer did not cite used to keep its marker and lose its citation, which
+    // is a claim pointing at nothing. Such a marker now earns a citation of its
+    // own, bound as `finding`; a marker naming no passage at all is stripped
+    // from the text so the text and the citations agree.
+    let mut findings: Vec<Value> = Vec::new();
+    for text in draft["findings"].as_array().into_iter().flatten() {
+        let Some(text) = text.as_str() else { continue };
+        if fast {
+            findings.push(json!({ "text": strip_markers(text), "citations": [] }));
+            continue;
+        }
+
+        let mut cited: Vec<usize> = Vec::new();
+        let mut orphaned: Vec<usize> = Vec::new();
+        for ordinal in markers_in(text) {
+            match passages.get(ordinal.saturating_sub(1)) {
+                Some(p) if ordinal >= 1 => {
+                    if seen_ordinals.insert(ordinal) {
+                        citations.push(json!({
+                            "n": ordinal,
+                            "passage_id": p["passage_id"].clone(),
+                            // The span is into the finding, not the answer, and
+                            // a finding has no offset in the answer to give.
+                            "claim_span": { "start": 0, "end": 0 },
+                            "binding": "finding"
+                        }));
+                    }
+                    if !cited.contains(&ordinal) {
+                        cited.push(ordinal);
+                    }
+                }
+                _ => orphaned.push(ordinal),
+            }
+        }
+
+        let mut body = text.to_string();
+        for ordinal in &orphaned {
+            body = body.replace(&format!("[{ordinal}]"), "");
+        }
+        findings.push(json!({
+            "text": body.split_whitespace().collect::<Vec<_>>().join(" "),
+            "citations": cited,
+        }));
+    }
 
     let mut summary = draft["structured_summary"].clone();
     // Measured before the drop below, or the term would always read 1.0.
@@ -461,11 +492,16 @@ fn bind(draft: &Value, passages: &[Value], mode: &str) -> Bound {
         0.0
     } else {
         let total = sentences(&answer).len().max(1) as f64;
-        let supported = total
-            - unsupported
-                .iter()
-                .filter(|u| u["reason"] == "model_knowledge")
-                .count() as f64;
+        // Any sentence carrying an unsupported span is unsupported, whatever the
+        // reason. Counting only `model_knowledge` scored a sentence whose one
+        // marker pointed at no passage as supported, which is the case doc 06
+        // section A10 calls `marker_orphaned`. Counted by distinct span, because
+        // a sentence with two orphaned markers is still one sentence.
+        let unsupported_sentences: std::collections::BTreeSet<(i64, i64)> = unsupported
+            .iter()
+            .filter_map(|u| Some((u["span"]["start"].as_i64()?, u["span"]["end"].as_i64()?)))
+            .collect();
+        let supported = total - unsupported_sentences.len() as f64;
         let sentence_share = (supported / total).clamp(0.0, 1.0);
 
         // Doc 06 section A9: the fraction of structured_summary values that
@@ -483,7 +519,31 @@ fn bind(draft: &Value, passages: &[Value], mode: &str) -> Bound {
             values_kept as f64 / values_drafted as f64
         };
 
-        ((sentence_share * 0.5 + value_share * 0.2 + 0.15 + 0.15) * 100.0).round() / 100.0
+        // Doc 06 section A9's last two terms, which were the literals 0.15 and
+        // 0.15. Confidence could not be docked for a conflict the answer left
+        // open or for leaning on an ancestor whose source had gone stale, which
+        // are the two things a reader most needs the number to reflect.
+        let resolved = if packet["passages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|p| p["source"]["stale"] == json!(true))
+        {
+            0.0
+        } else {
+            0.15
+        };
+        let fresh_ancestors = if packet["plan"]["constraints"]["stale_ancestor_citations"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+        {
+            0.0
+        } else {
+            0.15
+        };
+
+        ((sentence_share * 0.5 + value_share * 0.2 + resolved + fresh_ancestors) * 100.0).round()
+            / 100.0
     };
 
     Bound {
@@ -661,7 +721,7 @@ mod tests {
             "answer": "The buffer rose [1]. The floor fell [9].",
             "structured_summary": {}
         });
-        let bound = bind(&draft, &passages(1), "deep");
+        let bound = bind(&draft, &passages(1), "deep", &json!({}));
         let citations = bound.citations.as_array().expect("citations");
         assert_eq!(citations.len(), 1, "only the real one binds");
         assert_eq!(citations[0]["n"], 1);
@@ -682,7 +742,7 @@ mod tests {
             "answer": "First sentence with no source. Second one has one [1].",
             "structured_summary": {}
         });
-        let bound = bind(&draft, &passages(1), "deep");
+        let bound = bind(&draft, &passages(1), "deep", &json!({}));
         let c = &bound.citations.as_array().expect("citations")[0];
         let start = c["claim_span"]["start"].as_u64().expect("start") as usize;
         let end = c["claim_span"]["end"].as_u64().expect("end") as usize;
@@ -699,7 +759,7 @@ mod tests {
             "findings": ["A finding [1]."],
             "structured_summary": { "values": [{ "label": "x", "value": "1", "citation": 1 }] }
         });
-        let bound = bind(&draft, &[], "fast");
+        let bound = bind(&draft, &[], "fast", &json!({}));
 
         assert_eq!(bound.citations.as_array().map(Vec::len), Some(0));
         assert_eq!(
@@ -731,7 +791,7 @@ mod tests {
                 ]
             }
         });
-        let bound = bind(&draft, &passages(1), "deep");
+        let bound = bind(&draft, &passages(1), "deep", &json!({}));
         let values = bound.summary["values"].as_array().expect("values");
         assert_eq!(values.len(), 1);
         assert_eq!(values[0]["label"], "buffer");

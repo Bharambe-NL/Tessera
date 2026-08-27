@@ -1189,6 +1189,7 @@ fn synthesized(request: &CompletionRequest) -> Value {
     let mut answer = String::new();
     let mut citations = Vec::new();
     let mut findings = Vec::new();
+    let mut values = Vec::new();
     for (ordinal, text) in passages.iter().take(6) {
         let sentence = text.split_whitespace().collect::<Vec<_>>().join(" ");
         answer.push_str(&sentence);
@@ -1196,9 +1197,23 @@ fn synthesized(request: &CompletionRequest) -> Value {
         answer.push(' ');
         citations.push(json!({ "ordinal": ordinal, "binding": "answer" }));
         if findings.len() < 3 {
-            findings.push(json!({
-                "text": sentence.chars().take(200).collect::<String>(),
-                "citations": [ordinal]
+            // A string carrying its own marker, which is the shape
+            // `draft_schema` declares. Objects were silently dropped by the
+            // Synthesizer's `filter_map(Value::as_str)`, so every grounded run
+            // ever recorded produced a card with no findings at all.
+            let short: String = sentence.chars().take(200).collect();
+            findings.push(json!(format!("{short} [{ordinal}]")));
+        }
+        // One value per passage, labelled by the passage it came from and
+        // citing it. Doc 06 section B8.1 builds a table from two or more values,
+        // so this is what gives the Visualizer something to compose. Without it
+        // it declined on every question and the whole of doc 06 part B went
+        // unmeasured while the report said nothing was wrong.
+        if let Some(number) = first_number(&sentence) {
+            values.push(json!({
+                "label": format!("Passage {ordinal}"),
+                "value": number,
+                "citation": ordinal,
             }));
         }
     }
@@ -1208,7 +1223,7 @@ fn synthesized(request: &CompletionRequest) -> Value {
         "findings": findings,
         "citations": citations,
         "structured_summary": {
-            "values": [],
+            "values": values,
             "steps": [],
             "groups": [],
             "relations": []
@@ -1219,14 +1234,63 @@ fn synthesized(request: &CompletionRequest) -> Value {
     })
 }
 
-fn visualised(_request: &CompletionRequest) -> Value {
-    // An empty summary declines a visual, which doc 06 section B10 allows and
-    // which keeps the visual metrics honest: this mock has no structure to
-    // render, so claiming one would be inventing a number.
+/// The first number in a passage, as the mock's stand in for a value worth
+/// tabulating. Deterministic, so two runs of one corpus compose one table.
+fn first_number(text: &str) -> Option<String> {
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || (!current.is_empty() && (ch == '.' || ch == ',')) {
+            current.push(ch);
+        } else if !current.is_empty() {
+            let trimmed = current.trim_end_matches(['.', ',']).to_string();
+            if trimmed.chars().any(|c| c.is_ascii_digit()) {
+                return Some(trimmed);
+            }
+            current.clear();
+        }
+    }
+    let trimmed = current.trim_end_matches(['.', ',']).to_string();
+    trimmed.chars().any(|c| c.is_ascii_digit()).then_some(trimmed)
+}
+
+fn visualised(request: &CompletionRequest) -> Value {
+    // Compose a table from the values the summary carries, in the order the
+    // prompt lists them. The labels have to come back verbatim or doc 06
+    // section B8.3 cannot trace them, which is exactly what this exercises.
+    // The prompt carries the summary as pretty printed json, so the labels are
+    // read back out of it. They have to come back verbatim: doc 06 section B8.3
+    // drops a block whose label traces to nothing in the summary, and this is
+    // what exercises that.
+    let prompt = prompt_of(request);
+    let mut labels = Vec::new();
+    let mut values = Vec::new();
+    for line in prompt.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("\"label\": \"") {
+            labels.push(rest.trim_end_matches([',', '"']).to_string());
+        } else if let Some(rest) = line.strip_prefix("\"value\": \"") {
+            values.push(rest.trim_end_matches([',', '"']).to_string());
+        }
+    }
+
+    if labels.is_empty() {
+        return json!({ "declined": true, "reason": "no_structure", "visual": null });
+    }
+
     json!({
-        "declined": true,
-        "reason": "no_structure",
-        "visual": null
+        "type": "table",
+        "title": "Values by source",
+        "payload": {
+            "columns": ["Source", "Value"],
+            "rows": labels
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    json!([label, values.get(i).cloned().unwrap_or_else(|| label.clone())])
+                })
+                .collect::<Vec<_>>(),
+        },
+        "caveats": []
     })
 }
 

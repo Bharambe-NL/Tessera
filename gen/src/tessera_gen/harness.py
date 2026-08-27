@@ -36,6 +36,12 @@ THRESHOLDS: dict[str, float] = {
     "citation_accuracy_ledger": 0.95,
     "verifier_agreement": 0.90,
     "staleness_detection": 0.95,
+    # Doc 06 section B12: "every block in block_index has at least one supported
+    # citation or is marked no_claim", at 1.00. It computed without a threshold
+    # from the day it was written, and every grounded run declined every visual,
+    # so a rule the Visualizer broke for steps and list visuals went unreported
+    # for as long as nothing drew one.
+    "visual_fidelity": 1.0,
     # Doc 07 section B12: "flag false positive rate per rule under 0.10". It was
     # computed without this, which made it a readout rather than a gate.
     "flag_false_positive_rate": 0.10,
@@ -582,7 +588,20 @@ def score(results: Path, corpus: Path) -> Report:
         total += 1
         if run.get("visual_type") == expected:
             hits += 1
-    report.metrics.append(_ratio("visual_type_match", hits, total))
+    # Doc 06 section B12 gates this at 0.85, and it is left ungated here on
+    # purpose. The type comes from the shape of the summary the model wrote, so
+    # on a scripted provider it measures the script: the grounded mock emits
+    # values and nothing else, which selects a table every time. A gate that
+    # fails every free run is a gate people learn to ignore. It becomes a gate
+    # on a live sweep, where the summary is the model's own.
+    report.metrics.append(
+        _ratio(
+            "visual_type_match",
+            hits,
+            total,
+            "the type follows the summary's shape, so a scripted provider scores its script",
+        )
+    )
 
     # ------------------------------------------------------- honesty -------
     # Not in doc 02's table, but it is what this build's deep path is actually
