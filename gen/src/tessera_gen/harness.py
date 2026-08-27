@@ -1232,7 +1232,11 @@ def score(results: Path, corpus: Path) -> Report:
 
     # Doc 16 section 5's other two. The notebook is 12d, so these have nothing
     # to measure until it lands and they say so rather than reporting 0.
-    waiting = "the notebook view arrives at 12d, and its grounding states with it"
+    # The core of the notebook lands at 12d-i, and the states it records are on
+    # the event log. What is missing is a run that asks notebook questions: the
+    # corpus grows the families at 12a-iv and the eval leg that drives them is
+    # what turns these two into numbers.
+    waiting = "no run asked a notebook question; the eval leg that does lands with 12d"
     report.metrics.append(Metric("grounding_state_accuracy", None, 0, 0, waiting))
     report.metrics.append(Metric("page_sole_support_rate", None, 0, 0, waiting))
 

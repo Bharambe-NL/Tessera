@@ -2293,6 +2293,26 @@ fn synth_output_citing_one() -> Value {
     })
 }
 
+/// A plan that asks every retriever for everything, so what answers is what the
+/// run was allowed to open.
+fn everything_plan_output() -> Value {
+    json!({
+        "sub_questions": [
+            {
+                "text": "What does anything say about the buffer?",
+                "purpose": "Find it wherever it is.",
+                "queries": {
+                    "local": "capital conservation buffer",
+                    "vault": "capital conservation buffer",
+                    "boards": "capital conservation buffer"
+                }
+            }
+        ],
+        "answer_scope": "The buffer, from wherever it is written.",
+        "caveats": []
+    })
+}
+
 /// A plan that reads the profile's own pages.
 fn vault_plan_output() -> Value {
     json!({
@@ -2843,6 +2863,157 @@ fn a_figure_that_rests_on_a_page_alone_is_flagged_and_stands_when_its_source_is_
     assert!(
         flags.iter().any(|f| f == "own_card_sole_support"),
         "a figure resting on a page alone was admitted: {flags:?}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_notebook_question_reads_the_vault_and_never_the_folder() {
+    // Doc 16 section 3.4: "each question runs the normal pipeline at deep depth
+    // with retrievers restricted to `local:vault`, `boards`, and optionally
+    // `local:*`, web off by default". The restriction is the point: a notebook
+    // is a view over what the person wrote, and a question that quietly reached
+    // their whole document folder would answer from somewhere they did not ask
+    // about.
+    let root = std::env::temp_dir().join(format!("tessera-notebook-{}", tessera_store::new_id()));
+    let mut core = core_at_with(
+        &root,
+        Arc::new(
+            MockProvider::new()
+                .on("route", MockResponse::Json(router_output(true)))
+                // A plan that asks for everything. What answers is what the run
+                // was allowed to open, not what the Planner wanted.
+                .on("plan", MockResponse::Json(everything_plan_output()))
+                .on("synthesize", MockResponse::Json(synth_output_citing_one()))
+                .on("visualize", MockResponse::Json(visual_output()))
+                .on("verify", verify_scripted()),
+        ),
+    );
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    // A document in a watched folder, and a page in the vault, both about the
+    // buffer. Only one of them may answer.
+    let folder = std::env::temp_dir().join(format!("tessera-nbdocs-{}", tessera_store::new_id()));
+    std::fs::create_dir_all(&folder).expect("folder");
+    std::fs::write(
+        folder.join("rule.md"),
+        "The capital conservation buffer for a significant institution is 2.5 %.",
+    )
+    .expect("document");
+    let router = build_router();
+    call(
+        &router,
+        &mut core,
+        "profile.watch_folder",
+        json!({ "root": folder.display().to_string(), "label": "Internal documents" }),
+    );
+
+    std::fs::create_dir_all(root.join("vault")).expect("dir");
+    std::fs::write(
+        root.join("vault/buffer.md"),
+        "# Buffer\n\nMy note on the capital conservation buffer: it is 2.5 % for a significant \
+         institution.",
+    )
+    .expect("page");
+    core.sync_vault().expect("sync");
+
+    let opened = call(&router, &mut core, "notebook.open", json!({}));
+    let board_id = opened["board_id"].as_str().expect("a board").to_string();
+    assert_eq!(opened["mode"], "notebook");
+
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("the question runs");
+
+    let classes: Vec<String> = {
+        let conn = core.store.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT s.class FROM citation c
+                   JOIN passage p ON p.id = c.passage_id
+                   JOIN source s ON s.id = p.source_id",
+            )
+            .expect("prepare");
+        stmt.query_map([], |r| r.get(0))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows")
+    };
+    assert!(
+        classes.contains(&"page".to_string()),
+        "the vault was not read: {classes:?}"
+    );
+    assert!(
+        !classes.contains(&"local_document".to_string()),
+        "a notebook question reached the document folder: {classes:?}"
+    );
+
+    // Doc 16 section 3.4's grounding state, recorded rather than inferred.
+    let grounding: Vec<Value> = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .filter(|e| e.event_type == "notebook.grounding.v1")
+        .map(|e| e.payload)
+        .collect();
+    assert_eq!(grounding.len(), 1, "{grounding:?}");
+    assert_eq!(grounding[0]["state"], "grounded");
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+#[test]
+fn a_notebook_question_the_vault_cannot_answer_says_so_rather_than_guessing() {
+    // Doc 16 section 3.4's ungrounded state, and doc 06 section A10's rule that
+    // it rests on: a card that looks answered and is not is worse than one that
+    // says it found nothing. The notebook labels that card rather than replacing
+    // it with an answer from model knowledge.
+    let root = std::env::temp_dir().join(format!("tessera-notebook-{}", tessera_store::new_id()));
+    let mut core = core_at_with(
+        &root,
+        Arc::new(
+            MockProvider::new()
+                .on("route", MockResponse::Json(router_output(true)))
+                .on("plan", MockResponse::Json(vault_plan_output()))
+                .on("synthesize", MockResponse::Json(synth_output()))
+                .on("visualize", MockResponse::Json(visual_output()))
+                .on("verify", verify_scripted()),
+        ),
+    );
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    let router = build_router();
+    let opened = call(&router, &mut core, "notebook.open", json!({}));
+    let board_id = opened["board_id"].as_str().expect("a board").to_string();
+
+    // An empty vault: nothing to find, and nothing invented.
+    core.ask(&board_id, "what did I write about the buffer?", Some("deep"))
+        .expect("the question runs");
+
+    let state = core
+        .store
+        .events(Some(&board_id))
+        .expect("events")
+        .into_iter()
+        .find(|e| e.event_type == "notebook.grounding.v1")
+        .map(|e| e.payload["state"].as_str().unwrap_or_default().to_string())
+        .expect("a grounding state");
+    assert_eq!(state, "ungrounded");
+
+    let answer: Option<String> = core
+        .store
+        .conn()
+        .query_row("SELECT answer FROM card LIMIT 1", [], |r| r.get(0))
+        .expect("card");
+    assert!(
+        answer.unwrap_or_default().contains("No sources were found"),
+        "an ungrounded notebook answer was written from model knowledge"
     );
 
     std::fs::remove_dir_all(&root).ok();

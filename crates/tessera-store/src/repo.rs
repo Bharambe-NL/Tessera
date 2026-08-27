@@ -938,6 +938,27 @@ fn read_flags(store: &Store, card_id: &str) -> Result<Vec<Value>> {
 
 /// The Home grid. Doc 09 section 3: boards with their open flag count and last
 /// activity.
+/// The boards a listing shows. Doc 16 section 3.4 and BN-106.
+///
+/// Home is the boards a person explores and learns on; the Notebook lists its
+/// own sessions; and the Map, when doc 17 builds it, is a board nothing lists
+/// at all. A filter rather than three queries, because the difference between
+/// them is one column.
+pub fn list_boards_in(store: &Store, profile_id: &str, status: &str, modes: &[&str]) -> Result<Vec<Value>> {
+    let all = list_boards(store, profile_id, status)?;
+    if modes.is_empty() {
+        return Ok(all);
+    }
+    Ok(all
+        .into_iter()
+        .filter(|b| {
+            b.get("mode")
+                .and_then(Value::as_str)
+                .is_some_and(|m| modes.contains(&m))
+        })
+        .collect())
+}
+
 pub fn list_boards(store: &Store, profile_id: &str, status: &str) -> Result<Vec<Value>> {
     let conn = store.conn();
     let mut stmt = conn.prepare(
@@ -1007,6 +1028,31 @@ pub fn set_active_pack(store: &Store, profile_id: &str, pack_id: &str) -> Result
     store.conn().execute(
         "UPDATE profile SET default_doctrine_pack_id = ?1, updated_at = ?2 WHERE id = ?3",
         params![pack_id, now_iso8601(), profile_id],
+    )?;
+    Ok(())
+}
+
+/// Open a notebook session on a board. Doc 16 section 3.4.
+///
+/// "Sessions are boards of `mode: notebook` so history, events, memory, and
+/// export come free." The mode is what narrows retrieval, so it moves with the
+/// session rather than being inferred from what the board looks like.
+pub fn start_notebook(store: &mut Store, board_id: &str) -> Result<()> {
+    let (board, now) = (board_id.to_string(), now_iso8601());
+    store.append_with(
+        NewEvent::new(
+            "notebook.asked.v1",
+            json!({ "board_id": board_id, "opened": true }),
+            Provenance::user(),
+        )
+        .on_board(board_id),
+        move |tx| {
+            tx.execute(
+                "UPDATE board SET mode = 'notebook', updated_at = ?1 WHERE id = ?2",
+                params![now, board],
+            )?;
+            Ok(())
+        },
     )?;
     Ok(())
 }

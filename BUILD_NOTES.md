@@ -2712,6 +2712,56 @@ round trip.
 
 ---
 
+### BN-118 The notebook, and the ungrounded answer that stays honest
+
+**Spec** 16 sections 2.1, 3.4 and 4; 06 section A10.
+
+**Built** 2026-08-27, M15 12d-i, the core half.
+
+**A session is a board.** Doc 16 section 3.4: "so history, events, memory, and export come
+free". `notebook.open` creates one of mode `notebook` or converts a board, and `board.list`
+gains a mode filter so Home lists what a person explores and learns on while the Notebook lists
+its own sessions.
+
+**The restriction is a property of the run.** A notebook question narrows the retriever set to
+vault plus boards before the pipeline sees it, using the per-run allowlist M14.2 built. Narrowing
+inside the fan-out would leave the plan-less fallback reading the full set, which is why that
+step put the filter where the set is chosen rather than where it is used. `local:*` is left out
+though doc 16 lists it as optional: a notebook is the view over what the person wrote, and a
+question that quietly reached their whole document folder would answer from somewhere they did
+not ask about.
+
+**Where this build departs from doc 16, and why.** Section 3.4 describes the ungrounded state as
+"`no_passages`; the answer is the model's, marked as such". This build keeps doc 06 section A10's
+card: the answer says no sources were found, and the notebook labels it ungrounded. Section 2.1
+adopts the ungrounded contract on the grounds that "Tessera already has this in the Synthesizer's
+`no_passages` path", which is that card; substituting an uncited model answer into a deep run
+would undo the rule that path exists to enforce, that a card which looks answered and is not is
+worse than one that says it found nothing. An unverified explanation beside the answer is doc 17
+section 5's pattern and arrives with the doctrine flag doc 17 section 8 defines for it, rather
+than by quietly changing what a deep card may do.
+
+**The states are computed from what the run found, not guessed from the card.** `CardOutcome`
+carries `passages_seen` and `unsupported`, because the citations cannot tell you: a card can
+retrieve ten passages and cite none. No passages is ungrounded, unsupported claims are partly
+grounded, neither is grounded, and `notebook.grounding.v1` records which with its counts.
+
+**A schema that had not heard of notebooks.** The Router's packet fixed `board.mode` at explore
+or learn, so the first notebook question failed validation before any model was asked. Widened to
+the four modes the store now allows, `map` included, since doc 17's board is adopted and a
+second widening for it would be the same edit twice.
+
+**What 12d-ii carries.** The chat layout, the three states rendered, Save as page and Open on a
+board, and the dev-server fixtures Playwright needs. "Search the web instead" ships disabled
+until the web retriever exists at 13e. Doc 16 open question 4's superseded rerun goes with the
+affordance that reruns, which is the UI's.
+
+**Verified** Full battery green, 56 Playwright tests, the grounded sweep and the bundle round
+trip. The two grounding metrics still report n/a, and now name what they wait for precisely: a
+run that asks a notebook question, which is an eval leg rather than a missing feature.
+
+---
+
 ---
 
 ## Measured findings

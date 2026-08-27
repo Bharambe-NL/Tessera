@@ -139,7 +139,9 @@
         "mode": {
           "enum": [
             "explore",
-            "learn"
+            "learn",
+            "notebook",
+            "map"
           ]
         },
         "doctrine_pack": {
