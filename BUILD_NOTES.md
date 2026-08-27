@@ -3711,6 +3711,44 @@ unreadable.
 **What it waits for.** Its own step, before the research profile in 13e-ii, since that step gives
 the profile something real to configure and will want the honest answer.
 
+**Resolved** 2026-08-27, in the step below.
+
+---
+
+### BN-141 The Planner now reads the configured set, and fourteen tests said what that changed
+
+**Spec** 04 section 10, doc 05 section 10. Closes BN-140.
+
+**The change is one line.** The Planner's packet marks a retriever enabled when the pack enables it
+**and** the profile has told it where to read. Everything else in this step is the fourteen end to
+end tests that were resting on the other answer.
+
+**What they were resting on.** Each asked a deep question on a profile carrying a finance pack, no
+watched folder and no seed. Under the old rule the Planner was told regulatory, local and web were
+available, planned assignments against all three, and the fan-out then skipped every one as
+`connector_unavailable`. The card came back with no sources and the run looked like doc 06 section
+A10's honest thin card. It was not: doc 06 section A10 is retrieval that found nothing, and this was
+a profile with nothing to retrieve with, which is doc 04 section 10 and names its own fix. Two
+failures that read identically on a board and mean opposite things to the person holding it.
+
+**The fix per test is a premise, not an assertion.** Twelve of them gained `with_empty_folder`,
+which is doc 05 section 10's "configured and empty": a watched folder with nothing indexed, so the
+retriever runs and finds nothing, which is what those tests were always about. Two assert which
+retrievers the Planner picks for a governed domain, which can only be read on a profile where all of
+them are available to pick from, so they gained `with_every_retriever`. One memory test had a
+hand-built set holding `boards` alone; doc 04 section 10 refuses that plan on purpose, because a
+profile that can only read its own prior cards corroborates itself, so it gained `local` beside it.
+
+**What is still not configurable.** `regulatory` has no product path at all: a corpus subscription
+is a later phase, so `assemble` has no arm for it and the one test that needs it says so where it
+adds it by hand. That is doc 05 section 10's "not configured" being honest rather than a gap this
+step left.
+
+**Verified** Full battery green: 71 workspace end to end tests including a new one that fails when
+the line is reverted, clippy at `-D warnings`, fmt, style lint, 89 generator guards, 71 Playwright
+tests, a 40 question grounded sweep with nothing below threshold and 29 of 50 metrics measured, and
+the 20 board bundle round trip whole.
+
 ---
 
 ---
