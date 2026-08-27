@@ -2214,6 +2214,52 @@ pub fn is_user_visible(source: Source) -> bool {
 
 // ------------------------------------------------------------- retrieval ---
 
+/// A folder this profile has pointed a retriever at. Doc 05 section 8.2.
+///
+/// The row is what the local retriever reads from, so the set of retrievers a
+/// profile actually has is this list plus the pack's enabled ones. Reading it
+/// belongs here rather than in the core, because the core would otherwise hold
+/// the only SQL outside this module and the columns would drift.
+#[derive(Debug, Clone)]
+pub struct WatchedFolder {
+    pub id: String,
+    pub root: String,
+    pub label: String,
+    /// Doc 10 section 16: a sensitive folder keeps its text on this machine.
+    pub sensitive: bool,
+    /// `local` or `provider`. Doc 10 section 3 makes provider embeddings opt in
+    /// per folder.
+    pub embeddings: String,
+    pub last_indexed_at: Option<String>,
+}
+
+/// Every folder this profile watches, oldest first.
+///
+/// The boards index lives in the same table because it is an index like any
+/// other (doc 05 section 8.5), and it is returned here with the rest; callers
+/// that mean folders on disk filter it out by id.
+pub fn watched_folders(store: &Store, profile_id: &str) -> Result<Vec<WatchedFolder>> {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, root, label, sensitive, embeddings, last_indexed_at
+           FROM watched_folder
+          WHERE profile_id = ?1
+          ORDER BY created_at, id",
+    )?;
+    Ok(stmt
+        .query_map(params![profile_id], |r| {
+            Ok(WatchedFolder {
+                id: r.get(0)?,
+                root: r.get(1)?,
+                label: r.get(2)?,
+                sensitive: r.get::<_, i64>(3)? == 1,
+                embeddings: r.get(4)?,
+                last_indexed_at: r.get(5)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// Where a retrieval assignment sits. Doc 05 sections 4 and 7.
 #[derive(Clone, Copy)]
 pub struct RetrievalRef<'a> {

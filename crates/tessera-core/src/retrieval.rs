@@ -12,16 +12,18 @@
 //! the Synthesizer prefer the regulation over a blog without knowing which
 //! retriever produced either.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use tessera_doctrine::DoctrinePack;
 use tessera_harness::hooks::{HookContext, HookSet, Phase};
 use tessera_harness::{Admission, Ledger};
 use tessera_retrievers::contract::Packet;
 use tessera_retrievers::embed::Embedder;
 use tessera_retrievers::{IndexedConfig, indexed};
 use tessera_store::Store;
-use tessera_store::repo::{self, NewPassage, RetrievalRef};
+use tessera_store::repo::{self, NewPassage, RetrievalRef, WatchedFolder};
 
 /// What this profile can retrieve from. Built once per run from the pack's
 /// enabled retrievers and the profile's watched folders.
@@ -48,11 +50,86 @@ impl RetrieverSet {
         self.config(retriever_id).is_some()
     }
 
+    /// The view of this set one run is allowed to use.
+    ///
+    /// A run narrows the set rather than the fan-out skipping ids as it goes,
+    /// because the plan-less fallback in `assignments` reads the set too and
+    /// two places deciding what a notebook question may open is how one of them
+    /// ends up opening the web. Doc 16 section 4's notebook is vault plus
+    /// boards; doc 17 section 5's lesson adds the research profile.
+    pub fn restricted(&self, allow: &[&str]) -> RetrieverSet {
+        RetrieverSet {
+            indexed: self
+                .indexed
+                .iter()
+                .filter(|(id, _)| allow.contains(&id.as_str()))
+                .cloned()
+                .collect(),
+            embedder: self.embedder.clone(),
+        }
+    }
+
     fn config(&self, retriever_id: &str) -> Option<&IndexedConfig> {
         self.indexed
             .iter()
             .find(|(id, _)| id == retriever_id)
             .map(|(_, c)| c)
+    }
+}
+
+/// Build the set from the pack's enabled retrievers and the profile's folders.
+///
+/// This is the answer to "what can this profile actually read", and it is
+/// deliberately narrower than the pack's list. Doc 05 section 10 separates a
+/// retriever that is not configured from one that is configured and empty: the
+/// first is a Profile problem the user can fix, and saying a retriever is
+/// configured when nothing has told it where to read would put a
+/// `connector_unavailable` at the bottom of a card instead of on the page that
+/// can fix it.
+///
+/// So `local` appears only once a folder is watched, `boards` only while memory
+/// is on, and `regulatory`, `web` and `structured` do not appear at all yet:
+/// subscriptions and the web retriever are later phases, and until they exist
+/// the honest report is that the pack wants them and the profile has not got
+/// them.
+pub fn assemble(pack: &DoctrinePack, folders: &[WatchedFolder], memory_enabled: bool) -> RetrieverSet {
+    let mut indexed: Vec<(String, IndexedConfig)> = Vec::new();
+    for retriever in &pack.retrievers {
+        if !retriever.enabled_by_default {
+            continue;
+        }
+        match retriever.id.as_str() {
+            "local" => {
+                // Every watched folder, because doc 05 section 8.2's local
+                // retriever reads the folders the profile added and the
+                // Planner narrows to one with a `folder` filter when it wants
+                // one. The boards index shares the table and is not a folder
+                // on disk.
+                let folder_ids: Vec<String> = folders
+                    .iter()
+                    .filter(|f| f.id != tessera_retrievers::boards::BOARDS_FOLDER)
+                    .map(|f| f.id.clone())
+                    .collect();
+                if !folder_ids.is_empty() {
+                    indexed.push(("local".to_string(), IndexedConfig::local(folder_ids)));
+                }
+            }
+            // Doc 15 section 6: memory is a profile switch, and a set built
+            // while it is off must not carry the index a plan-less card would
+            // fall back to.
+            "boards" if memory_enabled => {
+                indexed.push(("boards".to_string(), IndexedConfig::boards()));
+            }
+            _ => {}
+        }
+    }
+    RetrieverSet {
+        indexed,
+        // No embedder in the product yet: the local model is a download the
+        // app does not ship, so retrieval runs the lexical half. The eval
+        // passes one when the machine has it, which is why the number it
+        // reports is the better of the two.
+        embedder: None,
     }
 }
 
@@ -150,6 +227,10 @@ pub fn run(
     question: &str,
     doctrine: &Value,
     must_exclude: &[String],
+    // The retrievers this run may use, or every configured one. A narrowed run
+    // is a policy choice rather than a missing connector, so what it leaves out
+    // is left out silently and no caveat names it.
+    allow: Option<&[&str]>,
 ) -> FanOut {
     let mut out = FanOut {
         passages: Vec::new(),
@@ -158,6 +239,11 @@ pub fn run(
         assignments_run: 0,
         assignments_failed: 0,
     };
+    let set: Cow<'_, RetrieverSet> = match allow {
+        Some(allow) => Cow::Owned(set.restricted(allow)),
+        None => Cow::Borrowed(set),
+    };
+    let set = set.as_ref();
     if set.is_empty() {
         return out;
     }
@@ -372,6 +458,103 @@ fn order(passages: &mut [Value]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn folder(id: &str) -> WatchedFolder {
+        WatchedFolder {
+            id: id.to_string(),
+            root: format!("/tmp/{id}"),
+            label: id.to_string(),
+            sensitive: false,
+            embeddings: "local".to_string(),
+            last_indexed_at: None,
+        }
+    }
+
+    /// The smallest pack that parses, carrying only the field under test.
+    fn pack(retrievers: &[(&str, bool)]) -> DoctrinePack {
+        let retrievers: Vec<Value> = retrievers
+            .iter()
+            .map(|(id, enabled)| json!({ "id": id, "enabled_by_default": enabled }))
+            .collect();
+        serde_json::from_value(json!({
+            "code": "test",
+            "version": "0.1.0",
+            "audiences": [],
+            "source_hierarchy": [],
+            "freshness_classes": {},
+            "flag_rules": [],
+            "retrievers": retrievers,
+            "exercise_templates": [],
+        }))
+        .expect("the fixture pack parses")
+    }
+
+    #[test]
+    fn local_is_configured_once_a_folder_is_watched() {
+        let pack = pack(&[("local", true), ("boards", true)]);
+        let empty = assemble(&pack, &[], true);
+        assert!(
+            !empty.configured("local"),
+            "a local retriever with nowhere to read is not configured"
+        );
+
+        let watched = assemble(&pack, &[folder("f1"), folder("f2")], true);
+        assert!(watched.configured("local"));
+        assert_eq!(
+            watched.config("local").expect("local").folder_ids,
+            vec!["f1".to_string(), "f2".to_string()],
+            "every watched folder, because the Planner narrows with a filter"
+        );
+    }
+
+    #[test]
+    fn the_boards_index_is_not_a_folder_the_local_retriever_reads() {
+        // It shares the table with folders on disk, and a local assignment that
+        // reached it would return prior cards as local documents, which is the
+        // one class doc 15 section 2 will not let stand as evidence.
+        let set = assemble(
+            &pack(&[("local", true)]),
+            &[folder(tessera_retrievers::boards::BOARDS_FOLDER)],
+            true,
+        );
+        assert!(!set.configured("local"));
+    }
+
+    #[test]
+    fn memory_off_leaves_the_boards_index_out_of_the_set() {
+        let pack = pack(&[("boards", true)]);
+        assert!(assemble(&pack, &[], true).configured("boards"));
+        assert!(!assemble(&pack, &[], false).configured("boards"));
+    }
+
+    #[test]
+    fn a_retriever_the_product_has_not_built_is_reported_unconfigured() {
+        // Doc 05 section 10's `connector_unavailable`. The finance pack enables
+        // regulatory, web and structured; none of them has anywhere to read
+        // until subscriptions and the web retriever exist, and claiming
+        // otherwise would put the failure at the bottom of a card instead of on
+        // the page that can fix it.
+        let set = assemble(
+            &pack(&[("regulatory", true), ("web", true), ("structured", true)]),
+            &[folder("f1")],
+            true,
+        );
+        assert!(set.is_empty());
+        for id in ["regulatory", "web", "structured"] {
+            assert!(!set.configured(id), "{id} claimed a connector it has not got");
+        }
+    }
+
+    #[test]
+    fn a_restricted_run_sees_only_what_it_was_allowed() {
+        let set = assemble(&pack(&[("local", true), ("boards", true)]), &[folder("f1")], true);
+        let narrowed = set.restricted(&["boards"]);
+        assert!(narrowed.configured("boards"));
+        assert!(!narrowed.configured("local"));
+        // And the fallback reads the narrowed set, so a plan-less run cannot
+        // reach round it.
+        assert_eq!(assignments(None, "q", &narrowed).len(), 1);
+    }
 
     fn passage(rank: i64, score: f64, id: &str) -> Value {
         json!({ "passage_id": id, "score": score, "source": { "trust_rank": rank } })

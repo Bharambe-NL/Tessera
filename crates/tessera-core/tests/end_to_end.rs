@@ -1880,6 +1880,38 @@ fn plan_output() -> Value {
     })
 }
 
+/// An answer that cites the first passage it was given.
+///
+/// The marker goes before the full stop: the Synthesizer derives citations by
+/// walking sentences and reading the `[n]` in each, so a marker after the stop
+/// is its own sentence and cites nothing.
+fn synth_output_citing_one() -> Value {
+    json!({
+        "answer": "The capital conservation buffer for a significant institution is 2.5 % [1].",
+        "findings": [],
+        "structured_summary": {
+            "entities": ["Capital conservation buffer"],
+            "relations": []
+        }
+    })
+}
+
+/// A plan that reads the folders the profile watches rather than a corpus it
+/// has not subscribed to.
+fn local_plan_output() -> Value {
+    json!({
+        "sub_questions": [
+            {
+                "text": "What does the internal policy say about the buffer?",
+                "purpose": "Establish the current rule.",
+                "queries": { "local": "capital conservation buffer" }
+            }
+        ],
+        "answer_scope": "The current buffer, without recommending an action.",
+        "caveats": []
+    })
+}
+
 #[test]
 fn a_research_card_is_planned_before_it_is_synthesized() {
     // Doc 04: the Planner runs when the Router set plan_required, and its
@@ -2051,6 +2083,87 @@ fn a_deep_card_reaches_the_synthesizer_with_passages_from_the_index() {
         .query_row("SELECT count(*) FROM source", [], |r| r.get(0))
         .expect("count");
     assert_eq!(sources, 1, "the retrieval did not persist a source");
+}
+
+#[test]
+fn a_watched_folder_is_cited_without_the_test_building_a_retriever_set() {
+    // M14.2. Every test above hands the core a `RetrieverSet` it built itself,
+    // which is exactly why the product could ship with `Core::open` leaving the
+    // set empty and nobody noticing: the thing under test was never the wiring.
+    // Here the only inputs are the ones a person has: a pack and a folder.
+    let provider = Arc::new(
+        MockProvider::new()
+            .on("route", MockResponse::Json(router_output(true)))
+            .on("plan", MockResponse::Json(local_plan_output()))
+            .on("synthesize", MockResponse::Json(synth_output_citing_one()))
+            .on("visualize", MockResponse::Json(visual_output()))
+            .on("verify", verify_scripted()),
+    );
+    let mut core = core_with(Arc::clone(&provider));
+    core.use_pack("finance-eu-synthetic").expect("pack");
+
+    let folder = std::env::temp_dir().join(format!("tessera-watched-{}", tessera_store::new_id()));
+    std::fs::create_dir_all(folder.join("Sensitive")).expect("folder");
+    std::fs::write(
+        folder.join("buffer-policy.md"),
+        "The capital conservation buffer for a significant institution is 2.5 %.",
+    )
+    .expect("document");
+    // Doc 05 section 8.2: the finance pack's local retriever must never open a
+    // folder called Sensitive, and the walk that adds the folder is where that
+    // is decided.
+    std::fs::write(folder.join("Sensitive").join("salaries.md"), "Not for the index.").expect("document");
+
+    let router = build_router();
+    let added = call(
+        &router,
+        &mut core,
+        "profile.watch_folder",
+        json!({ "root": folder.display().to_string(), "label": "Internal documents" }),
+    );
+    assert_eq!(added["indexed"], 1, "adding a folder indexes it: {added}");
+    assert_eq!(
+        added["excluded"], 1,
+        "the excluded folder was never opened: {added}"
+    );
+
+    let board_id = core.create_board("Board", "deep").expect("board");
+    core.ask(
+        &board_id,
+        "what is the capital conservation buffer?",
+        Some("deep"),
+    )
+    .expect("the card runs");
+
+    let synth = provider
+        .calls()
+        .into_iter()
+        .find(|c| c.stage == "synthesize")
+        .expect("the synthesizer ran");
+    assert!(
+        synth
+            .prompt
+            .contains("capital conservation buffer for a significant institution"),
+        "the watched folder's document never reached the prompt"
+    );
+
+    // A citation, not just a passage: the card points at the document the
+    // person added, under the class doc 01 section 4.8 gives a file on disk.
+    let cited: i64 = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM citation c
+               JOIN passage p ON p.id = c.passage_id
+               JOIN source s ON s.id = p.source_id
+              WHERE s.class = 'local_document'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert!(cited > 0, "nothing cited the watched folder");
+
+    std::fs::remove_dir_all(&folder).ok();
 }
 
 #[test]

@@ -364,7 +364,11 @@ export class Router {
         label: label.trim() || root.trim(),
         sensitive,
       });
-      this.setup.folderAdded = added.label;
+      this.setup.folderAdded = {
+        label: added.label,
+        indexed: added.indexed,
+        unreadable: added.errors.length,
+      };
     });
   }
 

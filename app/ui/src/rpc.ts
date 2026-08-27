@@ -302,6 +302,11 @@ export class Rpc {
       label: string;
       sensitive: boolean;
       text_leaves_machine: boolean;
+      /** What the walk that added the folder found. Doc 05 sections 8.2 and 11. */
+      indexed: number;
+      chunks: number;
+      excluded: number;
+      errors: { path: string; kind: string; detail: string }[];
     }>('profile.watch_folder', folder);
   }
 

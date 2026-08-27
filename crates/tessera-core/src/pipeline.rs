@@ -1133,6 +1133,9 @@ pub async fn run_card(
             question,
             &doctrine,
             &must_exclude,
+            // Every configured retriever. Doc 16 section 4's notebook and doc
+            // 17 section 5's lesson are the two runs that narrow it.
+            None,
         );
         for caveat in &fan.caveats {
             // Doc 05 section 10: the card says a category was excluded and
