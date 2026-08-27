@@ -86,6 +86,11 @@ THRESHOLDS: dict[str, float] = {
     # distractor that is a true statement from another card in scope is a
     # second right answer, and a reader who knows the material has to guess.
     "exercise_distractor_leakage": 0.0,
+    # Doc 17 section 4's ladder, re-checked from the stored rows. The agent
+    # claims every item it wrote carries the level its exercise was asked at,
+    # and an item stamped with a level nobody asked for is a check the tutor
+    # would then adapt from: pass at n moves to n+1, and n has to be true.
+    "exercise_level_agreement": 1.00,
     # Doc 03 section 12's Router targets, which doc 12 phase 4 accepts on.
     # BN-036, owner decision: the domain_accuracy 0.90 gate is retired with the
     # taxonomy that fed it. stakes_accuracy replaces it as the classification
@@ -604,11 +609,27 @@ def traces(item: dict, cards: dict[str, dict]) -> bool:
     return all(n in have for n in item.get("citation_ordinals") or [])
 
 
-def leaks(item: dict, cards: dict[str, dict]) -> bool:
-    """Doc 08 section 5's distractor rule, re-checked the same way."""
+def leaks(item: dict, cards: dict[str, dict], concepts: list[dict] | None = None) -> bool:
+    """Doc 08 section 5's distractor rule, re-checked the same way.
+
+    Doc 17 section 4 adds one line at level 4: "not a true statement about a
+    neighbouring concept". A discriminate item puts the neighbour on the page by
+    design, so a distractor restating what the neighbour is hands the reader a
+    second answer they can defend. A neighbour is any concept the packet carried
+    that the item does not name, and a concept with no definition says nothing
+    that can leak.
+    """
     answer_id = item.get("answer_id")
     source = item.get("source_card_id")
     others = [_card_text(c) for cid, c in cards.items() if cid != source]
+
+    if item.get("level") == 4:
+        own = set(item.get("concept_ids") or [])
+        others.extend(
+            _flatten(c.get("definition") or "")
+            for c in concepts or []
+            if c.get("concept_id") not in own and (c.get("definition") or "").strip()
+        )
 
     for option in item.get("options") or []:
         if option.get("id") == answer_id:
@@ -1453,14 +1474,19 @@ def score(results: Path, corpus: Path) -> Report:
 
     exercises = load_exercises(results) if exercise else []
     items = [
-        (item, {c["card_id"]: c for c in ex.get("cards") or []})
+        (item, {c["card_id"]: c for c in ex.get("cards") or []}, ex)
         for ex in exercises
         for item in ex.get("items") or []
     ]
+    # Doc 17 section 4's rung, and only over the exercises that named one. An
+    # exercise a board asked for on its own names none, and counting its items
+    # as disagreeing would read as a defect where there was no claim.
+    levelled = [(item, ex) for item, _, ex in items if ex.get("level") is not None]
     if not exercise:
         note = "the Exercise agent arrives at M10; set exercise_enabled when it does"
         report.metrics.append(Metric("exercise_traceability", None, 0, 0, note))
         report.metrics.append(Metric("exercise_distractor_leakage", None, 0, 0, note))
+        report.metrics.append(Metric("exercise_level_agreement", None, 0, 0, note))
     elif not items:
         # The flag is on and no exercise produced an item. That is a run that
         # asked for none or a board with nothing eligible, and both are an
@@ -1468,23 +1494,50 @@ def score(results: Path, corpus: Path) -> Report:
         note = "no exercise in this run produced an item"
         report.metrics.append(Metric("exercise_traceability", None, 0, 0, note))
         report.metrics.append(Metric("exercise_distractor_leakage", None, 0, 0, note))
+        report.metrics.append(Metric("exercise_level_agreement", None, 0, 0, note))
     else:
         report.metrics.append(
             _ratio(
                 "exercise_traceability",
-                sum(1 for item, cards in items if traces(item, cards)),
+                sum(1 for item, cards, _ in items if traces(item, cards)),
                 len(items),
                 "items whose correct answer is stated in the card they name",
             )
         )
+        # Which rungs a run reached belongs on the leakage line, because doc 17
+        # section 4's neighbouring concept rule only bites at level 4: a leakage
+        # of 0.000 over items that were all level 1 has not tested it at all.
+        rungs = sorted({ex.get("level") for _, ex in levelled if ex.get("level")})
+        reached = (
+            " levels asked: " + ", ".join(str(r) for r in rungs) if rungs else " no level asked"
+        )
         report.metrics.append(
             _ratio(
                 "exercise_distractor_leakage",
-                sum(1 for item, cards in items if leaks(item, cards)),
+                sum(1 for item, cards, ex in items if leaks(item, cards, ex.get("concepts") or [])),
                 len(items),
-                "items with a distractor that is true on another card in scope",
+                "items with a distractor that is true elsewhere in scope;" + reached,
             )
         )
+        if not levelled:
+            report.metrics.append(
+                Metric(
+                    "exercise_level_agreement",
+                    None,
+                    0,
+                    0,
+                    "no exercise in this run was asked at a level",
+                )
+            )
+        else:
+            report.metrics.append(
+                _ratio(
+                    "exercise_level_agreement",
+                    sum(1 for item, ex in levelled if item.get("level") == ex.get("level")),
+                    len(levelled),
+                    "items carrying the level their exercise was asked at",
+                )
+            )
 
     # ---------------------------------------------------- cost and latency --
     # Over the questions the run was asked to answer. The verify leg's questions

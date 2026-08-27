@@ -1830,6 +1830,59 @@ fn text_in_an_image_that_reads_as_an_instruction_is_transcribed_and_not_obeyed()
 /// The same contract as the grounded mock in the eval: it invents nothing and it
 /// judges nothing. The correct option is lifted from the card, so doc 08 section
 /// 5's traceability rule passes for a reason rather than by luck.
+/// Doc 17 section 4: the ladder reaches the agent, and what comes back says
+/// which rung it stands on.
+///
+/// The mapping from level to kind is the pack's, never the agent's, so this
+/// asserts the kind the pack put at level 4 rather than a name in code. The
+/// packet schema types `level` as an integer, and the first version of this
+/// wrote a null when nothing asked for a level: every exercise on every board
+/// was refused at the boundary until it wrote no key at all.
+#[test]
+fn an_exercise_asked_at_a_level_comes_back_at_that_level() {
+    let router = build_router();
+    let mut core = core_with(exercise_mock());
+    let board_id = core.create_board("Board", "fast").expect("board");
+    core.ask(&board_id, "what are world models?", None).expect("card");
+
+    let made = call(
+        &router,
+        &mut core,
+        "exercise.create",
+        json!({ "board_id": board_id, "level": 4 }),
+    );
+    assert_eq!(made["items"].as_u64(), Some(1));
+
+    let listed = call(
+        &router,
+        &mut core,
+        "exercise.list",
+        json!({ "board_id": board_id }),
+    );
+    let item = listed["exercises"][0]["items"][0].clone();
+    assert_eq!(item["level"].as_u64(), Some(4));
+
+    let registry = tessera_schema::Registry::load().expect("schemas");
+    let packs = tessera_doctrine::PackLibrary::load_built_in(&registry).expect("packs");
+    let pack = packs.get("general").expect("the pack this profile runs");
+    let kinds = pack.learning_templates.kinds_for(4);
+    assert!(
+        kinds.iter().any(|k| Some(k.as_str()) == item["kind"].as_str()),
+        "level 4 asked for {kinds:?} and the item came back as {:?}",
+        item["kind"]
+    );
+
+    // A board asking for an exercise of its own names no level, and an item
+    // that carried one would be a rung the learner was never put on.
+    let plain = call(
+        &router,
+        &mut core,
+        "exercise.create",
+        json!({ "board_id": board_id }),
+    );
+    assert_eq!(plain["items"].as_u64(), Some(1));
+}
+
 fn exercise_mock() -> Arc<MockProvider> {
     Arc::new(
         MockProvider::new().with_default(MockResponse::Scripted(Arc::new(|request| {
@@ -1852,6 +1905,17 @@ fn exercise_mock() -> Arc<MockProvider> {
                 }
             }
 
+            // The agent names the kinds it will accept and constrains the draft
+            // schema to them, so a mock that always answered `recall` would be
+            // refused the moment a lesson asked at level 4.
+            let kind = prompt
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("Write up to"))
+                .and_then(|l| l.split_once("of these kinds: "))
+                .and_then(|(_, kinds)| kinds.trim_end_matches('.').split(',').next())
+                .map(|k| k.trim().to_string())
+                .unwrap_or_else(|| "recall".to_string());
+
             let mut items = Vec::new();
             let mut card_id: Option<String> = None;
             for line in prompt.lines() {
@@ -1867,7 +1931,7 @@ fn exercise_mock() -> Arc<MockProvider> {
                         .unwrap_or_else(|| answer.to_string());
                     items.push(json!({
                         "id": format!("i{}", items.len() + 1),
-                        "kind": "recall",
+                        "kind": kind.clone(),
                         "prompt": "What does the card say?",
                         "options": [
                             { "id": "a", "text": claim },

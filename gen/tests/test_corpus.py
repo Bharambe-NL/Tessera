@@ -1576,6 +1576,71 @@ def test_the_learning_metrics_wait_for_a_learner_and_then_measure_one(
     )
 
 
+def _exercise_report(tmp_path: Path, corpus: Path, exercises: list[dict]) -> object:
+    results = tmp_path / "exercise"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "runs.jsonl").write_text("", encoding="utf-8")
+    (results / "manifest.json").write_text(
+        json.dumps({"provider": "mock", "snapshot": "T1", "exercise_enabled": True}),
+        encoding="utf-8",
+    )
+    (results / "exercises.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in exercises), encoding="utf-8"
+    )
+    return harness.score(results, corpus)
+
+
+def test_the_level_a_run_asked_at_is_the_level_its_items_carry(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 17 section 4's ladder, re-checked from the stored rows.
+
+    The tutor adapts from the level an item carries: pass at n moves the next
+    check to n+1. An item stamped with a level nobody asked for moves a learner
+    up a ladder they are not standing on.
+    """
+    card = {
+        "card_id": "c1",
+        "question": "q",
+        "answer": "The buffer is 2.5 per cent.",
+        "findings": [],
+        "citations": [],
+    }
+    item = {
+        "id": "i1",
+        "kind": "discriminate",
+        "level": 4,
+        "source_card_id": "c1",
+        "answer_id": "a",
+        "options": [
+            {"id": "a", "text": "2.5 per cent"},
+            {"id": "b", "text": "this card does not say"},
+        ],
+    }
+    agreeing = [{"board_id": "b1", "level": 4, "items": [item], "cards": [card], "concepts": []}]
+    report = _exercise_report(tmp_path / "agree", corpus, agreeing)
+    assert _named(report, "exercise_level_agreement").value == 1.0
+    assert "levels asked: 4" in _named(report, "exercise_distractor_leakage").note
+
+    # The agent stamped a rung nobody asked for.
+    drifted = [dict(agreeing[0], items=[dict(item, level=2)])]
+    assert (
+        _named(
+            _exercise_report(tmp_path / "drift", corpus, drifted), "exercise_level_agreement"
+        ).value
+        == 0.0
+    )
+
+    # An exercise a board asked for on its own names no level, and counting its
+    # items as disagreeing would read as a defect where there was no claim.
+    unlevelled = [{"board_id": "b1", "items": [dict(item, level=None)], "cards": [card]}]
+    metric = _named(
+        _exercise_report(tmp_path / "none", corpus, unlevelled), "exercise_level_agreement"
+    )
+    assert metric.value is None
+    assert "asked at a level" in metric.note
+
+
 def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: Path) -> None:
     """A run with no data must report n/a everywhere, never a score.
 
@@ -1742,6 +1807,63 @@ def test_the_distractor_check_catches_a_second_right_answer() -> None:
     # every other card would drop "no" from any board that contains the word.
     short = dict(leaky, options=[{"id": "a", "text": "2.5 per cent"}, {"id": "b", "text": "no"}])
     assert not harness.leaks(short, cards)
+
+
+def test_a_level_four_distractor_is_checked_against_the_neighbouring_concept() -> None:
+    """Doc 17 section 4: "not a true statement about a neighbouring concept".
+
+    Re-checked here from the persisted exercise, not from the agent's own rule.
+    The agent drops what fails its check, so measuring its output with its own
+    code would report 0.000 leakage whatever the check did.
+    """
+    cards = {
+        "c1": {
+            "question": "q",
+            "answer": "The buffer is 2.5 per cent.",
+            "findings": [],
+            "citations": [],
+        }
+    }
+    concepts = [
+        {
+            "concept_id": "k1",
+            "term": "capital buffer",
+            "definition": "The buffer is 2.5 per cent of risk weighted assets.",
+        },
+        {
+            "concept_id": "k2",
+            "term": "leverage ratio",
+            "definition": "The leverage ratio is capital over total exposure, never risk weighted.",
+        },
+    ]
+    item = {
+        "source_card_id": "c1",
+        "answer_id": "a",
+        "level": 4,
+        "kind": "discriminate",
+        "concept_ids": ["k1"],
+        "options": [
+            {"id": "a", "text": "2.5 per cent"},
+            {"id": "b", "text": "capital over total exposure"},
+        ],
+    }
+    assert harness.leaks(item, cards, concepts)
+
+    # The same distractor at level 1 is measured against the cards alone, which
+    # is doc 08's rule and all it ever was.
+    assert not harness.leaks(dict(item, level=1), cards, concepts)
+
+    # A statement about the concept the item itself checks is not a neighbour's
+    # truth, and naming the neighbour is what a discriminate item is for.
+    assert not harness.leaks(dict(item, concept_ids=["k2"]), cards, concepts)
+    named = dict(
+        item,
+        options=[
+            {"id": "a", "text": "2.5 per cent"},
+            {"id": "b", "text": "the leverage ratio decides it instead"},
+        ],
+    )
+    assert not harness.leaks(named, cards, concepts)
 
 
 def test_every_metric_is_gated_exempted_or_named_a_readout(corpus: Path, tmp_path: Path) -> None:

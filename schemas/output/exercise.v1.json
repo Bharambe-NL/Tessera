@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "tessera:output/exercise.v1",
   "title": "Exercise output",
-  "description": "Doc 08 section 5. Harness rules: answer_id is one of the options; source_card_id is in scope; the correct option's text appears, normalised, in the source card's answer, findings or visual labels; citation_ordinals exist on that card; distractors must not be true statements from any other card in scope.",
+  "description": "Doc 08 section 5. Harness rules: answer_id is one of the options; source_card_id is in scope; the correct option's text appears, normalised, in the source card's answer, findings or visual labels; citation_ordinals exist on that card; distractors must not be true statements from any other card in scope. Doc 17 section 4 adds the ladder: an item may carry the level it checks at, and a level 4 distractor must also not be a true statement about a neighbouring concept.",
   "type": "object",
   "required": [
     "schema_version",
@@ -58,8 +58,17 @@
               "recall",
               "apply",
               "contrast",
-              "trace"
-            ]
+              "trace",
+              "explain",
+              "discriminate"
+            ],
+            "description": "Doc 08 section 5's four kinds, grown additively by doc 17 section 4 with `explain` and `discriminate`. The shipped four keep their names: renaming a value the scorer re-checks independently would break that re-check for every exercise already stored."
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "Doc 17 section 4's ladder, orthogonal to `kind`. Which level a kind sits at is doctrine, not code: the pack's `check_templates` say so, and this field records what the pack decided for the item that was written. Absent when the pack declares no ladder."
           },
           "prompt": {
             "type": "string"
