@@ -64,6 +64,8 @@
         <button id="zoom-in" aria-label="Zoom in">+</button>
         <button id="tidy">Tidy</button>
         <button id="fit">Fit</button>
+        <!-- Doc 09 section 4: the exercise entry sits in the toolbar. -->
+        <button id="check">Check understanding</button>
       </div>
 
       <div id="empty" hidden>Ask something to start a board.</div>
@@ -101,6 +103,18 @@
       </div>
 
       <article id="reading" aria-label="This board as a document" tabindex="-1" data-no-pan hidden></article>
+
+      <!-- Doc 11 section 6: the exercise is a modal over the board, because it
+           is a thing you do to a board rather than a place you go. -->
+      <div id="exercise" role="dialog" aria-modal="true" aria-labelledby="ex-title" tabindex="-1" data-no-pan hidden>
+        <div class="sheet">
+          <header>
+            <h2 id="ex-title">Check your understanding</h2>
+            <button id="ex-dismiss" aria-label="Close">✕</button>
+          </header>
+          <div id="ex-body"></div>
+        </div>
+      </div>
 
       <div id="toasts" role="status" aria-live="polite"></div>
       <pre id="gate" hidden></pre>

@@ -129,6 +129,34 @@ export class Rpc {
     });
   }
 
+  /** Doc 08 section 3: on demand from a board. */
+  makeExercise(boardId: string, audienceId?: string) {
+    return this.call<{ exercise_id: string | null; items: number; dropped: number }>(
+      'exercise.create',
+      { board_id: boardId, audience_id: audienceId },
+    );
+  }
+
+  exercises(boardId: string) {
+    return this.call<{ exercises: ExerciseRow[] }>('exercise.list', { board_id: boardId });
+  }
+
+  /** The score is computed in the store from the exercise's own items. */
+  attempt(exerciseId: string, answers: Record<string, string>) {
+    return this.call<{ attempt_id: string; correct: number; total: number }>('exercise.attempt', {
+      exercise_id: exerciseId,
+      answers,
+    });
+  }
+
+  reportItem(exerciseId: string, itemId: string, reason?: string) {
+    return this.call<{ reported: string }>('exercise.report_item', {
+      exercise_id: exerciseId,
+      item_id: itemId,
+      reason,
+    });
+  }
+
   sources(limit?: number) {
     return this.call<{ sources: SourceRow[] }>('library.sources', limit === undefined ? {} : { limit });
   }
@@ -263,6 +291,27 @@ export interface ConceptRow {
   definition_card_id: string | null;
   updated_at: string;
   links: number;
+}
+
+/** One item of an exercise. Doc 08 section 5. */
+export interface ExerciseItem {
+  id: string;
+  kind: 'recall' | 'apply' | 'contrast' | 'trace';
+  prompt: string;
+  options: { id: string; text: string }[];
+  answer_id: string;
+  explanation: string;
+  source_card_id: string;
+  citation_ordinals?: number[];
+}
+
+export interface ExerciseRow {
+  id: string;
+  items: ExerciseItem[];
+  template_id: string;
+  audience_id: string | null;
+  created_at: string;
+  last_score: { correct: number; total: number } | null;
 }
 
 export interface AskResult {

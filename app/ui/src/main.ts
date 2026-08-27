@@ -22,9 +22,10 @@ import type { Board, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
+import { exerciseHTML, type ExerciseState } from './pages/exercise.js';
 import { Router } from './pages/router.js';
 import { AnchorPopover } from './popover.js';
-import { Rpc, RpcError, type AskAnchor, type Notification } from './rpc.js';
+import { Rpc, RpcError, type AskAnchor, type ExerciseRow, type Notification } from './rpc.js';
 import { COPY, PRODUCT_NAME } from './strings.js';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -43,6 +44,8 @@ const emptyState = el<HTMLElement>('empty');
 const toasts = el<HTMLElement>('toasts');
 const readingEl = el<HTMLElement>('reading');
 const readingToggle = el<HTMLButtonElement>('reading-toggle');
+const exerciseEl = el<HTMLElement>('exercise');
+const exerciseBody = el<HTMLElement>('ex-body');
 
 const rpc = new Rpc();
 const viewport = new ViewportHost({ main, world, onSettled: () => void 0 });
@@ -513,6 +516,116 @@ function wireReadingToggle(): void {
   });
 }
 
+/**
+ * The exercise, as a modal over the board. Doc 08 section 3's on demand trigger.
+ *
+ * State lives here rather than in the page module, because an exercise is a
+ * thing you are part way through: a reader who has answered three of five and
+ * clicks a card behind the modal should find their three still chosen.
+ */
+let exercise: ExerciseRow | null = null;
+let exerciseState: ExerciseState = { answers: {}, graded: null, empty: 'idle' };
+
+function renderExercise(): void {
+  exerciseBody.innerHTML = exerciseHTML(exercise, exerciseState);
+}
+
+function closeExercise(): void {
+  exerciseEl.hidden = true;
+  exercise = null;
+  exerciseState = { answers: {}, graded: null, empty: 'idle' };
+}
+
+async function openExercise(): Promise<void> {
+  if (!boardId) return;
+  const id = boardId;
+  exercise = null;
+  exerciseState = { answers: {}, graded: null, empty: 'working' };
+  exerciseEl.hidden = false;
+  renderExercise();
+  // The dialog takes focus, so Escape reaches it and a screen reader lands
+  // inside rather than staying on the board behind it.
+  exerciseEl.focus();
+
+  try {
+    const made = await rpc.makeExercise(id);
+    // Doc 08 section 9 admits the exercise and names what was dropped, so the
+    // reader is told rather than left to notice a short list.
+    if (made.dropped > 0) toast(COPY.exerciseDropped, 'warn');
+    if (made.exercise_id === null) {
+      // Doc 08 section 10: the board had no card checked against a source. That
+      // is an outcome with a reason, and it is not the same absence as a modal
+      // that has not asked for one.
+      exerciseState.empty = 'none_eligible';
+    } else {
+      const { exercises } = await rpc.exercises(id);
+      exercise = exercises.find((e) => e.id === made.exercise_id) ?? null;
+      if (!exercise) exerciseState.empty = 'failed';
+    }
+  } catch (e) {
+    toast(e instanceof RpcError ? e.message : COPY.exerciseFailed, 'error');
+    // An exercise that could not be generated shows its own empty state rather
+    // than the last one, which would be a different board's questions.
+    exercise = null;
+    exerciseState.empty = 'failed';
+  }
+  renderExercise();
+}
+
+function wireExercise(): void {
+  el<HTMLButtonElement>('check').addEventListener('click', () => void openExercise());
+  el<HTMLButtonElement>('ex-dismiss').addEventListener('click', closeExercise);
+
+  exerciseEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeExercise();
+  });
+
+  exerciseEl.addEventListener('change', (e) => {
+    const input = e.target as HTMLInputElement | null;
+    if (input?.type !== 'radio' || exerciseState.graded) return;
+    exerciseState.answers[input.name] = input.value;
+    renderExercise();
+  });
+
+  exerciseEl.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest('#ex-close')) {
+      closeExercise();
+      return;
+    }
+    if (target.closest('#ex-submit') && exercise) {
+      const id = exercise.id;
+      void rpc
+        .attempt(id, exerciseState.answers)
+        .then((score) => {
+          exerciseState.graded = { correct: score.correct, total: score.total };
+          renderExercise();
+        })
+        .catch(() => toast(COPY.exerciseFailed, 'error'));
+      return;
+    }
+
+    const verb = target.closest<HTMLElement>('[data-item-act]');
+    if (!verb || !exercise) return;
+    if (verb.dataset.itemAct === 'open') {
+      // Doc 08 section 11: the item links to its source card, which is on the
+      // board behind this modal.
+      closeExercise();
+      const card = document.getElementById(`card-${verb.dataset.card}`);
+      card?.scrollIntoView({ block: 'center' });
+      return;
+    }
+    if (verb.dataset.itemAct === 'report' && verb.dataset.item) {
+      void rpc
+        .reportItem(exercise.id, verb.dataset.item)
+        .then(() => toast(COPY.exerciseReported))
+        .catch(() => toast(COPY.exerciseFailed, 'error'));
+    }
+  });
+}
+
 function wireRailToggle(): void {
   const rail = el<HTMLElement>('rail');
   const toggle = el<HTMLButtonElement>('rail-toggle');
@@ -651,6 +764,7 @@ async function boot(): Promise<void> {
 
   wireRailToggle();
   wireReadingToggle();
+  wireExercise();
   wireComposer();
   wireCardActions();
   wireBranching();

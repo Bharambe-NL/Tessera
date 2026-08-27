@@ -117,6 +117,25 @@ export const COPY = {
   readingVisualType: 'The visual is a',
   readingFlags: 'Flags',
 
+  // ------------------------------------------------- the exercise, doc 08 --
+
+  /** Doc 09 section 4 puts this in the toolbar. */
+  exerciseCheck: 'Check understanding',
+  exerciseTitle: 'Check your understanding',
+  exerciseSubmit: 'Check my answers',
+  exerciseScored: 'You got',
+  exerciseDone: 'Close',
+  exerciseOpenCard: 'Open the card',
+  /** Doc 08 section 11: a wrong item is reported for pack maintenance. */
+  exerciseReport: 'Report this question',
+  exerciseReported: 'Reported. It goes to whoever maintains the pack.',
+  exerciseNone: 'No exercise yet.',
+  exerciseNothingToCheck:
+    'No card on this board has been checked against a source yet, so there is nothing to test.',
+  exerciseDropped: 'Some questions were dropped because they could not be traced to a card.',
+  exerciseFailed: 'That exercise could not be generated.',
+  exerciseWorking: 'Writing the questions',
+
   // ------------------------------------------------- the rail, doc 11 section 5 --
 
   railHome: 'Home',
