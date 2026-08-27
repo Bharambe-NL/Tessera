@@ -3121,6 +3121,35 @@ answer came from unrelated notes, and the state it reports is partly grounded ra
 
 ---
 
+### BN-127 The learning layer's tables, and the columns left empty on purpose
+
+**Spec** 17 sections 2.1 to 2.4.
+
+**Built** 2026-08-27, M16 13a-i.
+
+**Six columns, nullable, and that is the design.** Doc 17 section 2.4 says the self rating prior
+applies "only when mastery is null". A default of 0.0 would erase the difference between a concept
+nobody has been checked on and one that failed every check it was given, and the prior would then
+never apply to anyone. `learning_state` is left null rather than defaulted to `unseen` for the same
+reason: 13a-ii makes it a projection, and a row that claims to have been seen and not seen at once
+is the state a replay would have to argue with. Every column is an ADD COLUMN, so nothing is
+rebuilt.
+
+**An edge is not a link.** Doc 17 section 2.1 puts prerequisite structure in its own table on
+purpose. `concept_link` binds a concept to content that mentions it; `concept_edge` says one concept
+has to be understood before another. Folding them together would make "prerequisite of" a relation
+between a concept and a card, which is not a thing anyone could confirm. The pair plus the relation
+is unique, so a planner proposing the same prerequisite twice has proposed it once, and the three
+relations doc 17 names can each hold between the same two concepts.
+
+**A mission is why.** Doc 17 plans every lesson against an active mission so difficulty and examples
+fit a reason rather than a syllabus, which is the whole difference between this and a course.
+
+**Verified** Full battery green, twelve migration tests including the four checks broken on purpose,
+the workspace tests, clippy at `-D warnings`, and the bundle round trip whole at schema version 9.
+
+---
+
 ---
 
 ## Measured findings
