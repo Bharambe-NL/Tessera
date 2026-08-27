@@ -2055,6 +2055,65 @@ above are a direction, not a score.
 
 ---
 
+### BN-106 Docs 16 and 17 adopted, and the decisions their arrival forces
+
+**Spec** 16, 17, HANDOFF second revision (sections 10 to 12).
+
+**Adopted** 2026-08-27. The HANDOFF's consolidated sequence stands: phases 12a to 12f (vault)
+then 13a to 13g (learning system), vault first because learning records are pages. Everything
+runs on the grounded mock and the synthetic corpus; the live sweep stays a parked spend
+decision.
+
+**The identifier stays `tessera`.** HANDOFF section 10 says the code identifier stays `canvas`
+until the trademark clears, and that line was written before BN-001, where the owner chose
+Tessera at planning. A hundred commits carry the name. If the trademark check ever fails, the
+rename is one workspace refactor then, and would have been the same one now.
+
+**Doc 17's open questions resolve as its own proposals.** The learner accepts a proposed
+prerequisite set and corrects on the map. Exposure counts an open, a scroll, or a hover of
+three seconds, behind one named constant so the guess is tunable. Spaced review stays
+deferred, with `decayed` and `last_evidence_at` modelled so a scheduler is additive. A lesson
+board keeps mode `learn` and allows exploration; the map reads both.
+
+**Doc 16's open points resolve as its proposals.** Simultaneous edits keep both: last write
+wins plus a conflict copy, with an event. Page trust rank 4 in the finance pack, recorded as
+the proposal it is. An ungrounded notebook answer that is rerun with web on is superseded,
+never discarded, so the trail shows what was said before sources were found. Save as page is
+a ninth card verb, Save.
+
+**Doc 17's event names map onto the vocabulary rather than duplicating it.** `lesson.planned`,
+`check.asked` and `check.answered` are the existing `learn.planned.v1`,
+`learn.check_asked.v1` and `learn.check_answered.v1` with payloads gaining
+`{concept_id, level}`. Two names for one meaning in an append-only log is the BN-086 failure
+class, so the deviation from doc 17 section 9's spelling is recorded here instead of shipped.
+
+**Exercise kinds grow, they do not rename.** The shipped `kind` vocabulary
+(`recall | apply | contrast | trace`) is in the output schema, the packs and the scorer's
+independent re-check; renaming values there would invalidate recorded runs. Doc 17's ladder
+arrives as an orthogonal `level: 1..4`, the kind enum gains `explain` and `discriminate`
+additively, and the level to kind mapping is 1 recall, 2 explain, 3 apply, 4 discriminate.
+
+**The Map is a board.** Doc 17 says "a board of `mode: map` rendered from concepts", and the
+build takes that literally: one lazily created board per profile backs the rail view, so
+viewport persistence, events and export come free, while the view renders from concept rows
+and edges and never from stored cards. `board.list` gains a mode filter; Home shows explore
+and learn, the Notebook lists its own sessions, and the map board never appears as a row.
+
+**Mastery moves and the old column stays.** `learn_session.mastery` stops being written once
+mastery lives on concept rows; the column remains because dropping it is a table rebuild for
+nothing, and historical sessions stay transcript, never backfilled into the map.
+
+**No filesystem watcher in this stretch.** `vault::sync()` is the reconciliation unit, called
+from app start, page writes and an RPC. A watcher is additive later; during the build it buys
+only CI timing flake.
+
+**Two defects found while planning gate the new work and land first.** `Core.retrievers` is
+never populated from the pack and watched folders in any production path, so a watched folder
+never actually retrieves on the shipped app; and the `note` table has no writer at all, so
+doc 16's "Add note" begins by building the write path its sticky needs.
+
+---
+
 ---
 
 ## Measured findings
