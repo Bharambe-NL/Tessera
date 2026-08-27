@@ -221,6 +221,11 @@ export const COPY = {
   // ------------------------------------------------- the rail, doc 11 section 5 --
 
   railHome: 'Home',
+  // Doc 17 section 6's last line, on Home.
+  homeOf: 'of',
+  homeChecked: 'checked or better',
+  homeFrontier: 'Working on:',
+  homeNoFrontier: 'Nothing is waiting on a check.',
   railFlags: 'Flags',
   railLibrary: 'Library',
   railProfile: 'Profile',

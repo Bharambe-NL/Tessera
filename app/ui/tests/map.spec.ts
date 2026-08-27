@@ -153,3 +153,17 @@ test('a tile can be skipped, and skipping every one leaves the map', async ({ pa
   await page.locator('[data-map-act="place"]').click();
   await expect(page.locator('.place-tile')).toHaveCount(2, { timeout: 30_000 });
 });
+
+test('Home says how far the mission has got and what is next', async ({ page }) => {
+  // Doc 17 section 6's last line: "Home shows, per mission, the fraction of
+  // concepts at checked or better and the current frontier concept". The
+  // fixture rates three of five and checks none, so nothing is checked yet and
+  // the frontier is the shallowest thing claimed.
+  await page.locator('.rail-item[data-view="home"]').click();
+  await expect(page.locator('#page-title')).toHaveText('Home');
+
+  const mission = page.locator('.mission');
+  await expect(mission).toContainText('Understand world models', { timeout: 30_000 });
+  await expect(mission).toContainText('0 of 5 checked or better');
+  await expect(mission).toContainText('Working on: state space');
+});

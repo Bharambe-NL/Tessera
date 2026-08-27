@@ -190,6 +190,20 @@ pub fn frontier(concepts: &[Concept], edges: &[Edge], mastered_at: f64) -> Vec<S
         .unwrap_or_default()
 }
 
+/// Doc 17 section 2.3: whether a concept has reached `checked` or gone past it.
+///
+/// "Checked means at least one passed check at level 1 or 2", and `mastered`
+/// and `decayed` are both further along the same line, so all three count. It
+/// is the same evidence `verified` reads, under the name doc 17 section 6 uses
+/// when it asks Home for "the fraction of concepts at checked or better".
+pub fn at_least_checked(concept: &Concept) -> bool {
+    concept.difficulty_level.is_some()
+        || matches!(
+            State::parse(concept.state.as_deref()),
+            State::Checked | State::Mastered | State::Decayed
+        )
+}
+
 /// Doc 17 section 3: a concept the learner claimed and nobody has checked.
 ///
 /// The frontier's own filter, named and public, because doc 17 section 3 asks
@@ -307,10 +321,18 @@ pub fn state_after_check(
     let current = State::parse(current);
     if !passed {
         // Doc 17 section 2.3: "a failed check can move mastered back to
-        // checked". Never further: the learner has still been checked.
+        // checked". A demotion, and only that: `checked` "means at least one
+        // passed check at level 1 or 2", so a failure can never be what puts a
+        // concept there.
+        //
+        // It read the other way until 13g-ii, and the map state consistency
+        // gate is what found it: a learner who failed six checks in a row had
+        // the concept sitting at `checked` with nothing passed behind it. Worse
+        // than a wrong colour, because `verified` reads that state: one failed
+        // check took the concept off the frontier, so the learner was moved on
+        // from the thing they had just got wrong.
         return match current {
             State::Mastered | State::Decayed => State::Checked,
-            State::Unseen | State::Exposed | State::Rated => State::Checked,
             other => other,
         };
     }
@@ -518,7 +540,20 @@ mod tests {
             state_after_check(Some("mastered"), 0.9, 3, false, 0.8),
             State::Checked
         );
-        assert_eq!(state_after_check(None, 0.1, 1, false, 0.8), State::Checked);
+        // And a failure is never what puts a concept at `checked`. Doc 17
+        // section 2.3 gives that state one meaning, a passed check, so a
+        // learner who has only ever got it wrong is where they were.
+        assert_eq!(state_after_check(None, 0.1, 1, false, 0.8), State::Unseen);
+        assert_eq!(
+            state_after_check(Some("rated"), 0.1, 1, false, 0.8),
+            State::Rated,
+            "a failed check promoted a claim it just contradicted"
+        );
+        assert_eq!(
+            state_after_check(Some("checked"), 0.1, 2, false, 0.8),
+            State::Checked,
+            "a learner who passed once and failed after has still passed once"
+        );
     }
 
     #[test]

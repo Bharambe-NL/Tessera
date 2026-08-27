@@ -1860,6 +1860,76 @@ def test_an_overclaim_is_caught_at_the_level_it_was_claimed_at(
     assert "claimed" in nothing.note
 
 
+def test_the_map_has_to_agree_with_the_log_about_every_concept(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """Doc 17 section 10: "map state consistency with the event log 1.00".
+
+    The map is a projection of the log, so the two saying different things
+    about one learner is the projection being wrong about them. The states past
+    `checked` rest on the same evidence and satisfy it; everything else is
+    exact.
+    """
+    base = {
+        "learner_id": "always-right",
+        "frontier": ["LC-01"],
+        "expected_frontier": ["LC-01"],
+        "confirmed_edges_not_from_the_path": 0,
+        "rated_only": [],
+        "verified_cards": [],
+        "checks": [],
+    }
+    agreed = dict(
+        base,
+        map_states=[
+            {"concept_id": "k1", "state": "checked", "evidence": {"checked": True}},
+            {"concept_id": "k2", "state": "mastered", "evidence": {"checked": True}},
+            {"concept_id": "k3", "state": "rated", "evidence": {"rated": True}},
+            {"concept_id": "k4", "state": "exposed", "evidence": {"viewed": True}},
+            {"concept_id": "k5", "state": "unseen", "evidence": {}},
+        ],
+    )
+    assert _named(
+        _learner_report(tmp_path / "agreed", corpus, [agreed]), "map_state_consistency"
+    ).value == 1.0
+
+    # A concept the log says was only rated, shown as checked. This is the row
+    # the gate found on a real run: a failed check was promoting a claim to
+    # checked, and `verified` reads that state, so one wrong answer took the
+    # concept off the frontier.
+    promoted = dict(
+        base,
+        map_states=[{"concept_id": "k1", "state": "checked", "evidence": {"rated": True}}],
+    )
+    assert (
+        _named(
+            _learner_report(tmp_path / "promoted", corpus, [promoted]),
+            "map_state_consistency",
+        ).value
+        == 0.0
+    )
+
+    # And one the log has nothing about at all, shown as read.
+    invented = dict(
+        base,
+        map_states=[{"concept_id": "k1", "state": "exposed", "evidence": {}}],
+    )
+    assert (
+        _named(
+            _learner_report(tmp_path / "invented", corpus, [invented]),
+            "map_state_consistency",
+        ).value
+        == 0.0
+    )
+
+    # A placement that recorded no map at all waits rather than scoring one.
+    waiting = _named(
+        _learner_report(tmp_path / "nomap", corpus, [base]), "map_state_consistency"
+    )
+    assert waiting.value is None
+    assert "--learner" in waiting.note
+
+
 def _web_report(tmp_path: Path, corpus: Path, rows: list[dict] | None) -> object:
     results = tmp_path / "web"
     results.mkdir(parents=True, exist_ok=True)
