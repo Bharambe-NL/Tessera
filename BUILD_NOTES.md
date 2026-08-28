@@ -4316,6 +4316,81 @@ the test's.
 
 ---
 
+### BN-153 A card moves on its own, and the move outlives the window
+
+**Spec** Doc 01 section 4.2: `position` is a layout slot plus the user's offset, with a `pinned`
+flag.
+
+**What the owner saw.** The boards should be able to move independently and smoothly. Right now
+everything moves together.
+
+**They were right, and half of it was already built.** `position` has carried `dx`, `dy` and
+`pinned` since M0, and `layout` read all three. Nothing ever wrote them. The canvas had exactly one
+drag, in `viewport.ts`, and it panned the world, so every card moved at once and a board could not
+be arranged at all. `renderCards` even carries the comment "position is a separate write so a move
+never touches markup", which is the seam this needed and nobody had used.
+
+**What was missing** A drag, a `card.move` method, and the event and row write behind it. There was
+no `card.move` among the sixty odd registered methods, so a position could not have survived a
+reload even if something had set one.
+
+**Two defects the work uncovered, neither of them predicted.**
+
+First, `layoutSub` wrote `position.x` for every card it walked, pinned or not. `layout` checked
+`pinned` for roots only, so pinning a branch or a follow up appeared to work until the parent's next
+pass put the card back. Fixed by moving the check into `layoutSub`, where the walk actually reaches
+every card.
+
+Second, and this is the same complaint in miniature: `layout` skipped a pinned root entirely, which
+freed its slot and pulled every root after it to the left. Dragging one card moved the cards beside
+it. The test written for the owner's sentence, "one card moves and the others hold still", is what
+caught it. Fixed by laying pinned roots out in order like any other and advancing the cursor by the
+width they would have had, which retires the second pass as well.
+
+**Decision** The head is the handle, not the whole card. Body text stays selectable, which is what
+highlight to branch rests on, and a drag anywhere else still pans. A dropped card is `pinned`, and
+Tidy is its undo; Tidy now persists that release, because an undo that a reload cancels is not one.
+A move raises no board notification: the window that moved the card already knows where it is, and a
+reload on every drop would fight the drag.
+
+**Measured** 2026-08-28, `move.spec.ts`, four cases driven through the pointer rather than the
+store: a card goes where it is dragged and is still there after a reload, one card moves while its
+neighbour holds still, Tidy puts it back and that survives a reload too, and a press that travels
+less than 3px stays a click.
+
+**The pan gate, and what could not be measured.** Doc 12 phase 0's gate wants a foregrounded
+release window, because a window that is not in front schedules no animation frames. This session is
+not interactive: the release build opened, sat at 0.1 seconds of CPU for over three minutes, and
+wrote no result. So the gate was run instead through the UI server harness in headless Chromium,
+where it can be driven, and run twice: once on this branch and once on `main` with the change
+stashed and the bundle rebuilt.
+
+| | `main` | with the drag |
+|---|---|---|
+| pan | 40.8 fps, 17/240 dropped | 40.9 fps, 16/240 dropped |
+| zoom | 48.3 fps, 6/120 dropped | 48.3 fps, 4/120 dropped |
+| first render | 351 ms | 439 ms |
+
+Both runs report FAIL, and the FAIL belongs to the harness: headless Chromium caps near 40 fps here,
+and `main` fails identically. What the pair does establish is that this change does not move the
+number, which is the question a regression gate is being asked. What it does not establish is the
+gate's real verdict, because BN-014 measured 124.2 fps in WebView2 on a release build at 165 Hz and
+none of those three things is true here. That reading is still owed, from a desktop session, with
+`TESSERA_GATE=200 TESSERA_GATE_OUT=<path> tessera-app`.
+
+**A measurement artifact worth recording, because it cost two wrong readings.** Doc 11 section 7's
+card rise runs 360ms from an origin shared by every card, since `--rise-x` and `--rise-y` are never
+set per card. For those 360ms two cards 560px apart are painted on top of each other. Reading a
+position in that window reported cards stacked at one point, and a press aimed at one card landed on
+the other and dragged it, which read exactly like the drag targeting the wrong card. The rule about
+splitting a surprising number is what found it: the written transforms were 560px apart while the
+painted ones were identical, and only one of those two can be the layout's fault. Waiting on
+`getAnimations` did not fix it either, because called between the append and the animation being
+registered it returns nothing and the wait ends before the rise starts. The tests now wait until
+every card is painted where its own transform says it is.
+
+---
+
 
 
 

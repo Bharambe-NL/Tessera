@@ -232,6 +232,10 @@ pub const EVENT_VOCABULARY: &[&str] = &[
     "card.failed.v1",
     "card.superseded.v1",
     "card.blocked.v1",
+    // Doc 01 section 4.2 gives `position` a user offset and a `pinned` flag.
+    // Moving a card is a person arranging their board rather than the pipeline
+    // advancing a card, so it sits after the lifecycle rather than inside it.
+    "card.moved.v1",
     // retrieval
     "retrieval.started.v1",
     "retrieval.completed.v1",

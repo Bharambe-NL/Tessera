@@ -695,6 +695,42 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
     Ok(out)
 }
 
+/// Put a card where the person dropped it.
+///
+/// Doc 01 section 4.2's `position` is a layout slot plus a user offset, and the
+/// offset is the half a person writes. `pinned` is what tells the layout to
+/// leave the card alone. The whole object goes in one write because `x` and
+/// `dx` have to agree: a partial write would leave the card somewhere neither
+/// the person nor the layout chose.
+///
+/// The row is checked inside the transaction rather than before it. A move that
+/// names no card is a caller's bug, and writing the event without the row would
+/// leave an audit trail for something that never happened.
+pub fn move_card(store: &mut Store, board_id: &str, card_id: &str, position: &Value) -> Result<()> {
+    let (id, place, now) = (card_id.to_string(), position.to_string(), now_iso8601());
+    let pinned = position.get("pinned").and_then(Value::as_bool).unwrap_or(false);
+    store.append_with(
+        NewEvent::new(
+            "card.moved.v1",
+            json!({ "card_id": card_id, "pinned": pinned }),
+            Provenance::user(),
+        )
+        .on_board(board_id)
+        .on_card(card_id),
+        move |tx| {
+            let rows = tx.execute(
+                "UPDATE card SET position = ?1, updated_at = ?2 WHERE id = ?3",
+                params![place, now, id],
+            )?;
+            if rows == 0 {
+                return Err(crate::error::StoreError::CardMissing(id));
+            }
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
 fn read_visual(store: &Store, visual_id: &str) -> Result<Option<Value>> {
     Ok(store
         .conn()

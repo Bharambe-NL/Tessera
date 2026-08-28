@@ -33,6 +33,12 @@ pub enum StoreError {
     #[error("this profile's database is damaged and cannot be opened: {detail}")]
     Corrupt { detail: String },
 
+    /// A write that named a card the store does not hold. Its own variant
+    /// because the alternative is an `UPDATE` that matches nothing and reports
+    /// success, which is how a card silently fails to stay where it was put.
+    #[error("card {0} is not in the store")]
+    CardMissing(String),
+
     #[error("blob {0} is not in the store")]
     BlobMissing(String),
 

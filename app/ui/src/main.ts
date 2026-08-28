@@ -20,7 +20,7 @@ import { CARD_W, boundsOf, layout } from './canvas/layout.js';
 import { readingHTML } from './canvas/reading.js';
 import { attachHandles } from './canvas/handles.js';
 import { drawEdges, measureHeights, renderCards, renderNotes, toggleFlags } from './canvas/render.js';
-import type { Board, Depth } from './canvas/types.js';
+import type { Board, Card, Depth } from './canvas/types.js';
 import { ViewportHost } from './canvas/viewport.js';
 import { makeBoard } from './perf/fixture.js';
 import { formatResult, runGate } from './perf/gate.js';
@@ -544,6 +544,133 @@ function wireStickies(): void {
       }
     })();
   });
+}
+
+/**
+ * Move a card by its head, and keep it where it was dropped.
+ *
+ * Doc 01 section 4.2 gives `position` a user offset and a `pinned` flag, and
+ * the layout has honoured both since M0. Nothing ever set them: the canvas had
+ * one drag and it panned the whole world, so every card moved together and a
+ * board could not be arranged at all.
+ *
+ * The head is the handle rather than the whole card. Text in the body stays
+ * selectable, which is what highlight to branch is built on, and a drag that
+ * starts anywhere else still pans, so the gesture the board already had is
+ * unchanged.
+ */
+function wireCardDrag(): void {
+  interface Drag {
+    card: Card;
+    el: HTMLElement;
+    pointerId: number;
+    fromX: number;
+    fromY: number;
+    atX: number;
+    atY: number;
+    moved: boolean;
+  }
+  let drag: Drag | null = null;
+  let frame = 0;
+
+  // Edges are redrawn on a frame rather than on every pointer event, because a
+  // pointer fires faster than the screen and the edge layer is one SVG for the
+  // whole board.
+  const redrawEdges = () => {
+    if (frame || !board) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (board) drawEdges(board.cards, edgesEl, heightOf, board.notes ?? []);
+    });
+  };
+
+  cardsEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (!target?.closest('.head')) return;
+    // The head carries verbs of its own, and a press on one is not a drag.
+    if (target.closest('button, a, input, [data-act]')) return;
+    const el = target.closest<HTMLElement>('.card');
+    const card = board?.cards.find((c) => c.id === el?.dataset.cardId);
+    if (!el || !card) return;
+
+    // The viewport pans from `main`, and this gesture is not a pan.
+    e.stopPropagation();
+    e.preventDefault();
+    drag = {
+      card,
+      el,
+      pointerId: e.pointerId,
+      fromX: e.clientX,
+      fromY: e.clientY,
+      atX: card.position.x,
+      atY: card.position.y,
+      moved: false,
+    };
+    // Capture keeps the drag alive when the pointer leaves the card, and a
+    // browser that refuses it still drags: the card simply stops following if
+    // the pointer runs off it. A throw here would strand `drag` set with no way
+    // to clear it, so the drag is worth more than the capture.
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* the drag works without it */
+    }
+    el.classList.add('dragging');
+  });
+
+  cardsEl.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    // A screen pixel is a world pixel divided by the zoom.
+    const k = viewport.view.k || 1;
+    const dx = (e.clientX - drag.fromX) / k;
+    const dy = (e.clientY - drag.fromY) / k;
+    // A press that never travels is a click on the head, not a move.
+    if (!drag.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    drag.moved = true;
+    drag.card.position.x = drag.atX + dx;
+    drag.card.position.y = drag.atY + dy;
+    // The transform is written straight, the way `renderCards` writes it, so
+    // the card tracks the pointer without a relayout on every frame.
+    drag.el.style.transform = `translate3d(${drag.card.position.x}px, ${drag.card.position.y}px, 0)`;
+    redrawEdges();
+  });
+
+  const drop = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const d = drag;
+    drag = null;
+    d.el.classList.remove('dragging');
+    try {
+      if (d.el.hasPointerCapture(e.pointerId)) d.el.releasePointerCapture(e.pointerId);
+    } catch {
+      /* it was never captured */
+    }
+    if (!d.moved) return;
+
+    // `dx` is the offset from the slot the layout would have given this card,
+    // so it accumulates the move rather than replacing it.
+    d.card.position.dx += d.card.position.x - d.atX;
+    d.card.position.dy += d.card.position.y - d.atY;
+    d.card.position.pinned = true;
+    if (board) renderBoard(board);
+
+    const id = boardId;
+    if (!id) return;
+    void (async () => {
+      try {
+        await rpc.moveCard(id, d.card.id, d.card.position);
+      } catch {
+        // The board on screen disagrees with the board in the core, and the
+        // core is the one that survives a reload.
+        toast(COPY.moveFailed, 'error');
+        await reload();
+      }
+    })();
+  };
+
+  cardsEl.addEventListener('pointerup', drop);
+  cardsEl.addEventListener('pointercancel', drop);
 }
 
 function wireCardActions(): void {
@@ -1130,14 +1257,30 @@ function wireComposer(): void {
   el<HTMLButtonElement>('fit').addEventListener('click', () => {
     if (board) viewport.fit(boundsOf(board.cards, heightOf));
   });
+  // Tidy is the undo a drag has, so the release has to outlive the window the
+  // same way the drag does. Only the cards that were pinned have anything to
+  // write, and the write happens after the relayout so it carries the slot the
+  // layout just chose rather than the place the card was dragged to.
   el<HTMLButtonElement>('tidy').addEventListener('click', () => {
     if (!board) return;
+    const released = board.cards.filter((c) => c.position.pinned);
     for (const c of board.cards) {
       c.position.dx = 0;
       c.position.dy = 0;
       c.position.pinned = false;
     }
     renderBoard(board);
+
+    const id = boardId;
+    if (!id || released.length === 0) return;
+    void (async () => {
+      try {
+        await Promise.all(released.map((c) => rpc.moveCard(id, c.id, c.position)));
+      } catch {
+        toast(COPY.moveFailed, 'error');
+        await reload();
+      }
+    })();
   });
 }
 
@@ -1228,6 +1371,7 @@ async function boot(): Promise<void> {
   wireLearn();
   wireComposer();
   wireCardActions();
+  wireCardDrag();
   wireStickies();
   wireHandles();
   wireBranching();

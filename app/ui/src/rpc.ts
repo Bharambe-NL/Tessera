@@ -7,7 +7,7 @@
  * this one transport for a socket and changes nothing above it.
  */
 
-import type { Board, Severity } from './canvas/types.js';
+import type { Board, Position, Severity } from './canvas/types.js';
 import { COPY } from './strings.js';
 
 export interface RpcErrorShape {
@@ -376,6 +376,20 @@ export class Rpc {
       text,
       ...(options.cardId ? { card_id: options.cardId } : {}),
       ...(options.position ? { position: options.position } : {}),
+    });
+  }
+
+  /**
+   * Keep a card where it was dropped. Doc 01 section 4.2's `position`.
+   *
+   * The whole position goes over, not the delta, because `x` and `dx` have to
+   * agree and the core is not the thing that ran the layout.
+   */
+  moveCard(boardId: string, cardId: string, position: Position) {
+    return this.call<{ card_id: string }>('card.move', {
+      board_id: boardId,
+      card_id: cardId,
+      position,
     });
   }
 
