@@ -68,8 +68,16 @@ struct Args {
     mock: bool,
 
     /// A label for the results directory, naming the model policy under test.
-    #[arg(long, default_value = "mock")]
-    policy: String,
+    ///
+    /// Left alone it follows the run: `mock` for a mock run, and the bulk
+    /// provider's name for a live one. It defaulted to the literal `mock`,
+    /// which meant a live sweep nobody relabelled was written to
+    /// `eval/results/<seed>/mock/` and recorded `"policy": "mock"` in its own
+    /// manifest. The results of a run against a real provider would then read,
+    /// to the scorer and to anybody opening the directory, as results from no
+    /// provider at all.
+    #[arg(long)]
+    policy: Option<String>,
 
     /// Leave the retrievers unconfigured, which is what every run before M6
     /// did. Kept so a run can be compared against those, and so a failure in
@@ -416,7 +424,7 @@ fn run_web(args: &Args) -> std::process::ExitCode {
     let dir = args
         .out
         .join(corpus_name(&args.corpus))
-        .join(&args.policy)
+        .join(args.policy_label())
         .join(stamp());
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("could not write the results: {e}");
@@ -568,7 +576,7 @@ fn main() -> std::process::ExitCode {
         let dir = args
             .out
             .join(corpus_name(&args.corpus))
-            .join(&args.policy)
+            .join(args.policy_label())
             .join(stamp());
         if let Err(e) = write_records(&dir, &records, &[], &[], &args, &pack, records.len(), failures) {
             eprintln!("could not write the results: {e}");
@@ -598,7 +606,7 @@ fn main() -> std::process::ExitCode {
         let dir = args
             .out
             .join(corpus_name(&args.corpus))
-            .join(&args.policy)
+            .join(args.policy_label())
             .join(stamp());
         if let Err(e) = write_records(&dir, &records, &[], &[], &args, &pack, records.len(), failures) {
             eprintln!("could not write the results: {e}");
@@ -784,7 +792,7 @@ fn main() -> std::process::ExitCode {
     let dir = args
         .out
         .join(corpus_name(&args.corpus))
-        .join(&args.policy)
+        .join(args.policy_label())
         .join(stamp());
     let exercises = exercises
         .lock()
@@ -1142,7 +1150,7 @@ fn run_learners(args: &Args, pack: &str, plan: &Plan) -> std::process::ExitCode 
     let dir = args
         .out
         .join(corpus_name(&args.corpus))
-        .join(&args.policy)
+        .join(args.policy_label())
         .join(stamp());
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("could not write the results: {e}");
@@ -2185,6 +2193,19 @@ fn first_line(prompt: &str) -> String {
         .unwrap_or_else(|| "the question".to_string())
 }
 
+impl Args {
+    /// What to call this run's results. See `policy`.
+    fn policy_label(&self) -> String {
+        if let Some(label) = &self.policy {
+            return label.clone();
+        }
+        if self.mock {
+            return "mock".to_string();
+        }
+        self.bulk_provider.clone()
+    }
+}
+
 fn build_plan(args: &Args, questions: &[Question], total: usize) -> Result<Plan, String> {
     if args.mock {
         // Garbage by default, which proves the pipeline fails closed at scale.
@@ -2223,21 +2244,42 @@ fn build_plan(args: &Args, questions: &[Question], total: usize) -> Result<Plan,
         )
     })?;
 
-    let endpoint = endpoint_for(&args.bulk_provider)
-        .ok_or_else(|| format!("No adapter for `{}`.", args.bulk_provider))?;
-    let bulk = Leg {
-        name: args.bulk_provider.clone(),
-        provider: Arc::new(
-            OpenAiCompatProvider::new(endpoint, bulk_secret)
-                .map_err(|e| format!("Could not build the {} client: {e}", args.bulk_provider))?,
-        ),
-        policy: ModelPolicy::single_provider(
-            &args.bulk_provider,
-            &args.bulk_key_ref,
-            &args.bulk_small,
-            &args.bulk_medium,
-            &args.bulk_frontier,
-        ),
+    // Anthropic can carry the bulk as well as the reference. It has its own
+    // adapter rather than an OpenAI compatible one, so it needs its own arm
+    // here, and without it the only way to put a whole sweep on one provider
+    // was to name a second key and set `--sample-per-depth` past the question
+    // count. That worked and read like a trick.
+    //
+    // Why the tier flags are ignored on this arm: their defaults are Moonshot
+    // model ids, so carrying them across would ask Anthropic for `kimi-k2.6`
+    // and take a 404 that reads like an outage. The three tiers come from the
+    // policy that has been run against a real account instead. BN-105.
+    let bulk = if args.bulk_provider == "anthropic" {
+        Leg {
+            name: "anthropic".to_string(),
+            provider: Arc::new(
+                AnthropicProvider::new(bulk_secret)
+                    .map_err(|e| format!("Could not build the Anthropic client: {e}"))?,
+            ),
+            policy: ModelPolicy::default_anthropic(&args.bulk_key_ref),
+        }
+    } else {
+        let endpoint = endpoint_for(&args.bulk_provider)
+            .ok_or_else(|| format!("No adapter for `{}`.", args.bulk_provider))?;
+        Leg {
+            name: args.bulk_provider.clone(),
+            provider: Arc::new(
+                OpenAiCompatProvider::new(endpoint, bulk_secret)
+                    .map_err(|e| format!("Could not build the {} client: {e}", args.bulk_provider))?,
+            ),
+            policy: ModelPolicy::single_provider(
+                &args.bulk_provider,
+                &args.bulk_key_ref,
+                &args.bulk_small,
+                &args.bulk_medium,
+                &args.bulk_frontier,
+            ),
+        }
     };
 
     if args.sample_per_depth == 0 {
@@ -2584,7 +2626,7 @@ fn write_records(
 
     let manifest = json!({
         "corpus": corpus_name(&args.corpus),
-        "policy": args.policy,
+        "policy": args.policy_label(),
         "pack": pack,
         "snapshot": args.snapshot,
         // What was configured. `questions_by_provider` below says where the
