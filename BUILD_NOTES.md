@@ -4273,6 +4273,49 @@ records the behaviour and claims nothing about why. Worth a look before it is tr
 
 ---
 
+### BN-152 The rail gets the icons doc 11 asked for
+
+**Spec** Doc 11 section 8: "Line icons, 1.8 stroke, 24 grid, drawn in the prototype's style. No icon
+font. No illustration anywhere."
+
+**What the owner saw.** The icons are hideous. Then a question: is there no house style for this.
+
+**There is, and the rail was not following it.** The nine rail icons were Unicode characters in
+markup: `▣` board, `▤` home, `▲` flags, `▥` library, `▧` notebook, `▦` pages, `◈` map, `◍` profile,
+`»` collapse. That is an icon font by another name, which section 8 rules out by name. Three things
+follow from it, and all three were visible on the owner's screen. The shapes belong to whichever
+face the system resolved, so they are not the same drawing on two machines. Six of the nine are
+squares with different interior rules, so at 16px they read as one shape repeated. And none of them
+depicts its section: a dotted circle does not say profile.
+
+**A correction carried forward.** An earlier session told the owner these were inline SVG and that a
+redesign meant swapping path data. That was wrong. There were no paths. This is the first icon in
+the product.
+
+**Decision** Draw all nine as symbols in one inline sprite and reference them with `<use>`. Set the
+stroke, the grid and the caps once in CSS rather than per path, so the tenth icon inherits the
+weight instead of guessing it.
+
+**Reason** A sprite keeps the rail's own markup at one short line per item, which is what the shell
+already diffs. Setting the stroke in CSS is what makes section 8 a rule the code enforces rather
+than a sentence someone has to remember.
+
+**What each one draws** Board is three cards on a canvas, home a house, flags a flag, library an
+open book, notebook a spine with two ruled lines, pages a sheet with a folded corner, map a folded
+map, profile a person, collapse a chevron that turns when the rail opens.
+
+**Measured** 2026-08-28. All nine paint as `svg` at 20 by 20 with a computed stroke width of 1.8,
+read out of the running UI rather than assumed. Nothing asserts the old characters, so no test
+changed.
+
+**More on BN-151's flaky test.** CI settled it. The push and the pull request ran the same commit
+twice: `ui` passed one run with 76 of 76 and failed the other with 75 passed and one failed, and the
+failure was `pages.spec.ts:213` both times it fell over. Same commit, same Linux runner, opposite
+results, which is stronger than the local evidence BN-151 was written from. Still nobody's fault but
+the test's.
+
+---
+
 
 
 

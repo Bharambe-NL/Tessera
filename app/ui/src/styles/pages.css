@@ -76,10 +76,37 @@ body.rail-open {
   font-size: 13px;
 }
 
+/* The sprite defines the symbols and draws nothing itself. */
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+/*
+ * Doc 11 section 8's stroke and grid, set once here rather than on every path,
+ * so an icon added later inherits the weight instead of guessing it. The stroke
+ * is 1.8 in the symbol's 24 unit space, which is what the doc asks for; a 20px
+ * box draws it at 1.5 real pixels.
+ */
 .rail-item .glyph {
   flex: none;
-  width: 16px;
-  text-align: center;
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The chevron points the way the rail is about to move. */
+#rail-toggle .glyph {
+  transition: transform var(--t-rise) var(--ease);
+}
+
+body.rail-open #rail-toggle .glyph {
+  transform: rotate(180deg);
 }
 
 /* The label is present for a screen reader whatever the rail's width, and
