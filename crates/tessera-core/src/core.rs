@@ -1783,6 +1783,53 @@ pub fn build_router() -> Router<Core> {
     // written down as a named constant rather than a rule the core can check.
     // What the core owns is the rest: the event is the only writer of the
     // learning columns, so the fold happens where every other one does.
+    // Doc 01 section 4.2: `position` carries the user's offset and whether the
+    // card is pinned. The layout has honoured both since M0 and nothing ever set
+    // them, because the canvas had one drag and it panned the whole world.
+    r.register("card.move", |core: &mut Core, p| {
+        /// Validated rather than passed through as free JSON. Doc 12 operating
+        /// principle 1 validates at every boundary, and `position` is read back
+        /// by the layout, so a malformed one puts a card nowhere.
+        #[derive(Deserialize)]
+        struct Position {
+            x: f64,
+            y: f64,
+            dx: f64,
+            dy: f64,
+            pinned: bool,
+        }
+        #[derive(Deserialize)]
+        struct Move {
+            board_id: String,
+            card_id: String,
+            position: Position,
+        }
+        let p: Move = params(p)?;
+        // A card of this board's, for the reason `card.viewed` gives: the
+        // payload names a card and moving somebody else's is not this call.
+        let exists: i64 = core
+            .store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM card WHERE id = ?1 AND board_id = ?2",
+                rusqlite::params![p.card_id, p.board_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if exists == 0 {
+            return Err(RpcError::core("no_such_card", "That card is not on this board."));
+        }
+        let position = json!({
+            "x": p.position.x,
+            "y": p.position.y,
+            "dx": p.position.dx,
+            "dy": p.position.dy,
+            "pinned": p.position.pinned,
+        });
+        repo::move_card(&mut core.store, &p.board_id, &p.card_id, &position).map_err(store_error)?;
+        Ok(json!({ "card_id": p.card_id }))
+    });
+
     r.register("card.viewed", |core: &mut Core, p| {
         #[derive(Deserialize)]
         struct Viewed {

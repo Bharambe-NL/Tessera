@@ -52,6 +52,21 @@ function indexChildren(cards: Card[]): Index {
 }
 
 function layoutSub(card: Card, x: number, y: number, idx: Index, h: HeightLookup): Box {
+  // A pinned card holds where it was dropped, and its subtree lays out beneath
+  // that rather than beneath the slot it would otherwise have had. Without this
+  // the check belongs to roots alone: `layout` skips a pinned root, but a
+  // parent's pass walks into its branches and follow-ups and writes their
+  // positions anyway, so pinning a child looked like it worked until the next
+  // relayout put the card back.
+  //
+  // The box this returns is still the subtree's own size, so siblings keep the
+  // spacing they would have had. A pinned card is out of the flow by choice,
+  // and reflowing its siblings around it would move cards the person did not
+  // touch.
+  if (card.position.pinned) {
+    x = card.position.x - card.position.dx;
+    y = card.position.y - card.position.dy;
+  }
   card.position.x = x + card.position.dx;
   card.position.y = y + card.position.dy;
 
@@ -97,19 +112,20 @@ function layoutSub(card: Card, x: number, y: number, idx: Index, h: HeightLookup
 export function layout(cards: Card[], heightOf: HeightLookup = () => DEFAULT_CARD_H): void {
   const idx = indexChildren(cards);
 
+  // Every root lays out in order, the pinned ones included. `layoutSub` leaves a
+  // pinned card where it was dropped, and the cursor still advances by the width
+  // that card would have had, so its slot stays reserved.
+  //
+  // Skipping a pinned root instead, which is what this did, freed its slot and
+  // pulled every root after it to the left. Dragging one card moved the cards
+  // beside it, which is the complaint the drag exists to answer, in miniature.
+  // The second pass this replaces is gone with it: a pinned card is now handled
+  // wherever the walk reaches it, so a pinned branch holds too.
   let x = 0;
   for (const root of cards) {
-    if (root.parent_card_id !== null || root.position.pinned) continue;
+    if (root.parent_card_id !== null) continue;
     const box = layoutSub(root, x, 0, idx, heightOf);
     x += box.w + BRANCH_X;
-  }
-
-  for (const pinned of cards) {
-    if (!pinned.position.pinned) continue;
-    const hasChildren =
-      (idx.branches.get(pinned.id)?.length ?? 0) > 0 || (idx.follows.get(pinned.id)?.length ?? 0) > 0;
-    if (!hasChildren) continue;
-    layoutSub(pinned, pinned.position.x - pinned.position.dx, pinned.position.y - pinned.position.dy, idx, heightOf);
   }
 }
 

@@ -321,6 +321,7 @@ export const COPY = {
   addSticky: 'Keep as a sticky',
   stickyKept: 'On the board',
   stickyFailed: 'That sticky was not kept.',
+  moveFailed: 'That card did not stay where it was put.',
   /** The undo Add note has: the words were the person's and so is taking them back. */
   removeSticky: 'Take this sticky off',
 

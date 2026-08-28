@@ -104,12 +104,32 @@ body {
   }
 }
 
+/* The head is the card's handle, so it says so before it is pressed. */
 .card .head {
   display: flex;
   align-items: center;
   gap: var(--s2);
   padding: var(--s4) var(--s5);
   border-bottom: 1px solid var(--line);
+  cursor: grab;
+}
+
+.card.dragging {
+  cursor: grabbing;
+  /* Above its neighbours while it is being carried, and above the edges, so a
+     card is never dragged underneath the board it is being arranged on. */
+  z-index: 1;
+  box-shadow: var(--shadow-popover);
+}
+
+.card.dragging .head {
+  cursor: grabbing;
+}
+
+/* The verbs in the head keep their own pointer: a press on one is a press on a
+   button, and the drag handler lets it through. */
+.card .head button {
+  cursor: pointer;
 }
 
 .card .head .title {
