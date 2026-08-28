@@ -4228,6 +4228,51 @@ recovered from the worker stores.
 
 ---
 
+### BN-151 The page padding named an id the markup no longer carried
+
+**Spec** Doc 11 section 5, the rail and the page beside it.
+
+**What the owner saw.** Every section except the board looked cramped. Their words: the writeup
+starts right at the border, there is no space, while the screen has width going spare.
+
+**The cause, measured.** `#page-body` is the container every page renders into, and its computed
+padding was `0px`. The rule meant for it reads `#page-text`, and the Pages editor took that id for
+its textarea in the commit that added the view. So the container has had no padding since, and the
+declaration that was supposed to give it some has been styling a textarea, where
+`.page-edit #page-text` overrides it anyway. The rule was dead in both directions.
+
+**Split by dimension, as the rule asks.** The surprising number was zero padding, so it was split by
+page before anything was built. All seven pages render into the same container, so all seven were
+flush. Splitting by element found the second half of the defect: the head kept `padding: 14px 18px`
+of its own, so a heading sat at 74px while its own rows sat at 56px. The complaint reads as one
+problem about space. It was two, and the misalignment is the one nobody had named.
+
+| | Before | After |
+|---|---|---|
+| heading left edge | 74px | 80px |
+| content left edge | 56px | 80px |
+| container padding | 0px | 24px, 40px past 1200px |
+| content column | unbounded | 1200px |
+
+**Decision** Name the gutter and the column once on `body`, and have the head's inner column and the
+body read both. They cannot drift apart while they read the same two properties, which is the
+failure this had. The head keeps its full width so its rule still spans the window.
+
+**Reason** A shared constant is what the rail already does for its own width, and the comment at
+`--rail-w` records the same class of bug: three things that had to agree on a number and did not.
+This is that lesson applied to the page.
+
+**Measured** 2026-08-28, Windows 11, in the UI server harness at a 1000px viewport. Playwright
+finished 76 passed and 0 failed on the run this change was pushed from.
+
+**A flaky test, named so it is not rediscovered.** `pages.spec.ts:213`, the pack update, failed
+three runs and then passed. It failed twice with this change applied and once on `origin/main` with
+the change stashed and the bundle rebuilt, which is what rules out this change as the cause. It
+passes when run alone. Three failures and two passes is not enough to name the mechanism, so this
+records the behaviour and claims nothing about why. Worth a look before it is trusted as a gate.
+
+---
+
 
 
 

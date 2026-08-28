@@ -10,6 +10,26 @@
  */
 body {
   --rail-w: 56px;
+
+  /*
+   * The page gutter and the page column. Two properties, because the head and
+   * the body have to agree on both. The body's padding rule named `#page-text`,
+   * which the Pages editor later took for its textarea, so the container every
+   * page renders into carried no padding at all: the head kept its own 18px and
+   * the body sat at zero, and every heading stood proud of its own content while
+   * the text began at the rail. Naming the gutter once is what stops that
+   * happening again.
+   */
+  --page-gutter: var(--s8);
+  --page-col: 1200px;
+}
+
+/* A wider window earns a wider gutter, so prose breathes rather than stretching
+   to the glass. */
+@media (min-width: 1200px) {
+  body {
+    --page-gutter: var(--s9);
+  }
 }
 
 body.rail-open {
@@ -122,15 +142,35 @@ body.rail-open .rail-item .label {
   display: none;
 }
 
+/* The rule under the head spans the window; the words above it do not. */
 .page-head {
   position: sticky;
   top: 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+/*
+ * The head's column and the body's column carry identical inline padding and an
+ * identical maximum, so a heading and the rows beneath it share one left edge at
+ * every window width.
+ */
+.page-head-inner,
+#page-body {
+  max-width: var(--page-col);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
+}
+
+.page-head-inner {
   display: flex;
   align-items: center;
   gap: var(--s5);
-  padding: var(--s6) var(--s7) var(--s5);
-  background: var(--bg);
-  border-bottom: 1px solid var(--line);
+  padding-block: var(--s6) var(--s5);
+}
+
+#page-body {
+  padding-block: var(--s8) var(--s9);
 }
 
 .page-head h1 {
@@ -144,10 +184,6 @@ body.rail-open .rail-item .label {
   align-items: center;
   gap: var(--s3);
   margin-left: auto;
-}
-
-#page-text {
-  padding: var(--s6) var(--s7) var(--s9);
 }
 
 .page-empty {
