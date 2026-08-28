@@ -6,24 +6,18 @@
  * keeps its camera, its cards and its in flight run while a page is open, and
  * coming back is instant rather than a reload.
  *
- * Every page follows the same shape: a title, a tool strip in the header, and a
- * body rendered from one read. State that survives a page switch lives here,
- * because a filter or a tab the user chose should still be chosen when they
- * come back to it.
+ * Drawing a page lives in render.ts; what stays here is navigation, the state
+ * that survives a page switch, and the verbs a page's elements carry.
  */
 
 import { esc } from '../canvas/visual.js';
 import type { Rpc } from '../rpc.js';
 import { RpcError } from '../rpc.js';
 import { COPY } from '../strings.js';
-import { flagsHTML, bulkHTML } from './flags.js';
-import { homeHTML, homeToolsHTML, type HomeFilter } from './home.js';
-import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './library.js';
-import { mapHTML, mapToolsHTML, placementTiles, type MapFilter, type MapState } from './map.js';
-import { notebookHTML, notebookToolsHTML, type NotebookState } from './notebook.js';
-import { pagesHTML, pagesToolsHTML, type PagesState } from './pages.js';
-import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
-import { setupHTML, type SetupState } from './setup.js';
+import { bulkHTML } from './flags.js';
+import type { MapFilter } from './map.js';
+import type { ProfileTab } from './profile.js';
+import { renderPage, type PageState } from './render.js';
 
 /**
  * Setup is a view rather than a modal, so it uses the page layer the other four
@@ -69,31 +63,30 @@ export interface RouterActions {
 
 export class Router {
   view: View = 'board';
-  private homeFilter: HomeFilter = 'active';
-  private libraryTab: LibraryTab = 'sources';
-  private profileTab: ProfileTab = 'context';
-  private pages: PagesState = { open: null, editing: false };
-  private notebook: NotebookState = { session: null, asking: false };
-  private map: MapState = {
-    map: null,
-    open: null,
-    links: null,
-    filter: 'all',
-    missionOnly: false,
-    placing: null,
-    skipped: [],
-  };
-  /** Flags selected for a bulk decision, kept across a re-render. */
-  private picked = new Set<string>();
-  /** Doc 09 section 6: bulk Dismiss takes a second click with the count shown. */
-  private confirmingDismiss = false;
-  /** What the first run screen is showing, on top of what the core reports. */
-  readonly setup: SetupState = {
-    run: null,
-    keySaved: false,
-    folderAdded: null,
-    busy: false,
-    error: null,
+  private readonly state: PageState = {
+    homeFilter: 'active',
+    libraryTab: 'sources',
+    profileTab: 'context',
+    pages: { open: null, editing: false },
+    notebook: { session: null, asking: false },
+    map: {
+      map: null,
+      open: null,
+      links: null,
+      filter: 'all',
+      missionOnly: false,
+      placing: null,
+      skipped: [],
+    },
+    picked: new Set<string>(),
+    confirmingDismiss: false,
+    setup: {
+      run: null,
+      keySaved: false,
+      folderAdded: null,
+      busy: false,
+      error: null,
+    },
   };
 
   constructor(
@@ -119,113 +112,12 @@ export class Router {
 
   /** Re-read and redraw whatever page is open. */
   async render(): Promise<void> {
-    const { title, tools, body } = this.hosts;
     try {
-      switch (this.view) {
-        case 'home': {
-          title.textContent = COPY.railHome;
-          tools.innerHTML = homeToolsHTML(this.homeFilter);
-          const { boards } = await this.rpc.listBoards(this.homeFilter);
-          // Doc 17 section 6's last line. A profile with no mission has no
-          // summary rather than an empty one, and a read that failed is not
-          // worth taking Home down for.
-          const mission = await this.rpc.missionSummary().catch(() => null);
-          body.innerHTML = homeHTML(boards, this.homeFilter, mission);
-          break;
-        }
-        case 'flags': {
-          title.textContent = COPY.railFlags;
-          const { flags } = await this.rpc.flags();
-          // A flag decided elsewhere should not stay selected here.
-          const live = new Set(flags.map((f) => f.id));
-          for (const id of [...this.picked]) if (!live.has(id)) this.picked.delete(id);
-          tools.innerHTML = bulkHTML(this.picked.size, this.confirmingDismiss);
-          body.innerHTML = flagsHTML(flags, this.picked);
-          this.setFlagCount(flags.length);
-          break;
-        }
-        case 'library': {
-          title.textContent = COPY.railLibrary;
-          tools.innerHTML = libraryToolsHTML(this.libraryTab);
-          if (this.libraryTab === 'sources') {
-            const { sources } = await this.rpc.sources();
-            body.innerHTML = sourcesHTML(sources);
-          } else {
-            const { concepts } = await this.rpc.concepts();
-            body.innerHTML = conceptsHTML(concepts);
-          }
-          break;
-        }
-        case 'notebook': {
-          // Doc 16 section 3.4. One session at a time, the most recent unless
-          // the person started another, because a chat with three histories on
-          // screen is not a chat.
-          title.textContent = COPY.railNotebook;
-          if (!this.notebook.session) {
-            const { sessions } = await this.rpc.notebookSessions();
-            if (sessions.length > 0) {
-              this.notebook = {
-                session: await this.rpc.notebookSession(sessions[0].id),
-                asking: false,
-              };
-            }
-          }
-          tools.innerHTML = notebookToolsHTML(this.notebook);
-          body.innerHTML = notebookHTML(this.notebook);
-          break;
-        }
-        case 'pages': {
-          // Doc 16 section 3.7. One view with two states: the explorer, and one
-          // page open. The list is re-read on every render rather than kept,
-          // because a page saved from a card arrives without this view knowing.
-          title.textContent = COPY.railPages;
-          tools.innerHTML = pagesToolsHTML(this.pages);
-          const { pages } = await this.rpc.pages();
-          body.innerHTML = pagesHTML(pages, this.pages);
-          break;
-        }
-        case 'map': {
-          // Doc 17 section 6. The read is whole every time: a rating, a check
-          // or a lesson elsewhere changes what a node is, and a map that kept
-          // its last answer would show a state the learner had already left.
-          title.textContent = COPY.railMap;
-          this.map.map = await this.rpc.readMap();
-          // Doc 17 section 3: placement opens itself the first time there is
-          // something to rate, and never again once the learner has left it.
-          // Null means nobody has decided yet, which is only true of the first
-          // read: a learner who went to the map has decided.
-          if (this.map.placing === null) this.map.placing = placementTiles(this.map).length > 0;
-          if (this.map.open) {
-            const fresh = this.map.map.concepts.find(
-              (c) => c.concept_id === this.map.open?.concept_id,
-            );
-            this.map.open = fresh ?? null;
-            if (!this.map.open) this.map.links = null;
-          }
-          tools.innerHTML = mapToolsHTML(this.map);
-          body.innerHTML = mapHTML(this.map);
-          break;
-        }
-        case 'profile': {
-          title.textContent = COPY.railProfile;
-          tools.innerHTML = profileToolsHTML(this.profileTab);
-          body.innerHTML = profileHTML(await this.rpc.profile(), this.profileTab);
-          break;
-        }
-        case 'setup': {
-          title.textContent = COPY.setupTitle;
-          tools.innerHTML = '';
-          // Re-read on every render, so a key added in one step shows as done
-          // in the next without this screen keeping its own idea of the truth.
-          this.setup.run = await this.rpc.firstRun();
-          body.innerHTML = setupHTML(this.setup);
-          break;
-        }
-      }
+      await renderPage(this.view, this.hosts, this.rpc, this.state, (n) => this.setFlagCount(n));
     } catch (e) {
       // A page that could not read says so rather than showing the last page's
       // rows under this page's title.
-      body.innerHTML = `<p class="page-empty">${esc(
+      this.hosts.body.innerHTML = `<p class="page-empty">${esc(
         e instanceof RpcError ? e.message : COPY.pageUnread,
       )}</p>`;
     }
@@ -251,13 +143,13 @@ export class Router {
 
   /** Doc 17 section 6's node panel, with its links read as it opens. */
   private async openNode(conceptId: string): Promise<void> {
-    const concept = this.map.map?.concepts.find((c) => c.concept_id === conceptId);
+    const concept = this.state.map.map?.concepts.find((c) => c.concept_id === conceptId);
     if (!concept) return;
-    this.map.open = concept;
-    this.map.links = null;
+    this.state.map.open = concept;
+    this.state.map.links = null;
     await this.render();
     try {
-      this.map.links = await this.rpc.mapConcept(conceptId);
+      this.state.map.links = await this.rpc.mapConcept(conceptId);
       await this.render();
     } catch {
       // The panel stands without its links rather than closing: the rating and
@@ -267,26 +159,26 @@ export class Router {
 
   private async mapVerb(verb: string): Promise<void> {
     if (verb === 'close') {
-      this.map.open = null;
-      this.map.links = null;
+      this.state.map.open = null;
+      this.state.map.links = null;
       await this.render();
       return;
     }
     if (verb === 'mission') {
-      this.map.missionOnly = !this.map.missionOnly;
+      this.state.map.missionOnly = !this.state.map.missionOnly;
       await this.render();
       return;
     }
     if (verb === 'place' || verb === 'placed') {
-      this.map.placing = verb === 'place';
+      this.state.map.placing = verb === 'place';
       // Going back into placement brings the skipped tiles with it: a skip is
       // "not now" rather than "never ask me", and the learner asked again.
-      if (verb === 'place') this.map.skipped = [];
+      if (verb === 'place') this.state.map.skipped = [];
       await this.render();
       return;
     }
 
-    const concept = this.map.open;
+    const concept = this.state.map.open;
     if (!concept) return;
     try {
       // Doc 17 section 6's three verbs, each of which lands the learner on a
@@ -309,7 +201,7 @@ export class Router {
   /** Doc 17 section 3: one tile of the placement pass, rated or passed over. */
   private async place(conceptId: string, rating: number | null): Promise<void> {
     if (rating === null) {
-      this.map.skipped = [...this.map.skipped, conceptId];
+      this.state.map.skipped = [...this.state.map.skipped, conceptId];
       await this.render();
       return;
     }
@@ -323,7 +215,7 @@ export class Router {
 
   /** Doc 17 section 2.1: the learner rates, and it is a claim, never evidence. */
   private async rate(rating: number): Promise<void> {
-    const concept = this.map.open;
+    const concept = this.state.map.open;
     if (!concept || !Number.isFinite(rating)) return;
     try {
       await this.rpc.rateConcept(concept.concept_id, rating);
@@ -335,7 +227,7 @@ export class Router {
 
   private async openPageFromMap(pageId: string): Promise<void> {
     try {
-      this.pages = { open: await this.rpc.page(pageId), editing: false };
+      this.state.pages = { open: await this.rpc.page(pageId), editing: false };
       await this.go('pages');
     } catch (e) {
       this.actions.toast(e instanceof RpcError ? e.message : COPY.pageUnread, 'error');
@@ -346,8 +238,8 @@ export class Router {
     if (ids.length === 0) return;
     try {
       await this.rpc.decideFlags(ids, decision);
-      for (const id of ids) this.picked.delete(id);
-      this.confirmingDismiss = false;
+      for (const id of ids) this.state.picked.delete(id);
+      this.state.confirmingDismiss = false;
       await this.render();
     } catch (e) {
       this.actions.toast(e instanceof RpcError ? e.message : COPY.flagsFailed, 'error');
@@ -380,7 +272,7 @@ export class Router {
       // ---- Home
       const filter = target.closest<HTMLElement>('[data-home-filter]')?.dataset.homeFilter;
       if (filter === 'active' || filter === 'trashed') {
-        this.homeFilter = filter;
+        this.state.homeFilter = filter;
         void this.render();
         return;
       }
@@ -405,7 +297,7 @@ export class Router {
         for (const row of this.hosts.body.querySelectorAll<HTMLElement>(
           `.flag-group[data-board="${CSS.escape(selectBoard.dataset.selectBoard ?? '')}"] .flag-row`,
         )) {
-          if (row.dataset.flag) this.picked.add(row.dataset.flag);
+          if (row.dataset.flag) this.state.picked.add(row.dataset.flag);
         }
         void this.render();
         return;
@@ -419,7 +311,7 @@ export class Router {
       // ---- Library
       const libTab = target.closest<HTMLElement>('[data-library-tab]')?.dataset.libraryTab;
       if (libTab === 'sources' || libTab === 'concepts') {
-        this.libraryTab = libTab;
+        this.state.libraryTab = libTab;
         void this.render();
         return;
       }
@@ -437,7 +329,7 @@ export class Router {
       // ---- Profile
       const profTab = target.closest<HTMLElement>('[data-profile-tab]')?.dataset.profileTab;
       if (profTab) {
-        this.profileTab = profTab as ProfileTab;
+        this.state.profileTab = profTab as ProfileTab;
         void this.render();
         return;
       }
@@ -469,7 +361,7 @@ export class Router {
       // ---- Map
       const mapFilter = target.closest<HTMLElement>('[data-map-filter]')?.dataset.mapFilter;
       if (mapFilter) {
-        this.map.filter = mapFilter as MapFilter;
+        this.state.map.filter = mapFilter as MapFilter;
         void this.render();
         return;
       }
@@ -575,10 +467,10 @@ export class Router {
       if (!box?.classList.contains('pick')) return;
       const id = box.closest<HTMLElement>('[data-flag]')?.dataset.flag;
       if (!id) return;
-      if (box.checked) this.picked.add(id);
-      else this.picked.delete(id);
-      this.confirmingDismiss = false;
-      this.hosts.tools.innerHTML = bulkHTML(this.picked.size, this.confirmingDismiss);
+      if (box.checked) this.state.picked.add(id);
+      else this.state.picked.delete(id);
+      this.state.confirmingDismiss = false;
+      this.hosts.tools.innerHTML = bulkHTML(this.state.picked.size, this.state.confirmingDismiss);
     });
   }
 
@@ -590,13 +482,13 @@ export class Router {
     const input = this.hosts.body.querySelector<HTMLInputElement>('#setup-secret');
     const secret = input?.value.trim() ?? '';
     if (!secret) return;
-    const keyRef = this.setup.run?.key_refs[0] ?? '';
+    const keyRef = this.state.setup.run?.key_refs[0] ?? '';
     // Cleared before the call rather than after. The field holds the only copy
     // of the secret in this process, and a failed call leaves the screen up.
     if (input) input.value = '';
     await this.setupStep(async () => {
       await this.rpc.setKey(keyRef, secret);
-      this.setup.keySaved = true;
+      this.state.setup.keySaved = true;
     });
   }
 
@@ -608,19 +500,25 @@ export class Router {
    * page chip is on the card.
    */
   private async notebookVerb(verb: string, cardId?: string): Promise<void> {
-    const boardId = this.notebook.session?.board_id;
+    const boardId = this.state.notebook.session?.board_id;
     try {
       switch (verb) {
         case 'new': {
           const { board_id } = await this.rpc.openNotebook();
-          this.notebook = { session: await this.rpc.notebookSession(board_id), asking: false };
+          this.state.notebook = {
+            session: await this.rpc.notebookSession(board_id),
+            asking: false,
+          };
           break;
         }
         case 'save': {
           if (!boardId || !cardId) return;
           const saved = await this.rpc.saveAsPage(boardId, cardId);
           if (saved.created) this.actions.toast(`${COPY.savedAsPage}: ${saved.title ?? ''}`.trim());
-          this.notebook = { session: await this.rpc.notebookSession(boardId), asking: false };
+          this.state.notebook = {
+            session: await this.rpc.notebookSession(boardId),
+            asking: false,
+          };
           break;
         }
         case 'open-board': {
@@ -636,7 +534,10 @@ export class Router {
           if (!boardId || !cardId) return;
           this.actions.toast(COPY.notebookWebSearching);
           await this.rpc.searchWeb(boardId, cardId);
-          this.notebook = { session: await this.rpc.notebookSession(boardId), asking: false };
+          this.state.notebook = {
+            session: await this.rpc.notebookSession(boardId),
+            asking: false,
+          };
           break;
         }
         default:
@@ -656,15 +557,18 @@ export class Router {
 
     // A session on the first question, so a person who types before pressing
     // the button gets what they asked for rather than a refusal.
-    let boardId = this.notebook.session?.board_id;
+    let boardId = this.state.notebook.session?.board_id;
     try {
       if (!boardId) boardId = (await this.rpc.openNotebook()).board_id;
-      this.notebook = { ...this.notebook, asking: true };
+      this.state.notebook = { ...this.state.notebook, asking: true };
       await this.render();
       await this.rpc.ask(boardId, question, 'deep');
-      this.notebook = { session: await this.rpc.notebookSession(boardId), asking: false };
+      this.state.notebook = {
+        session: await this.rpc.notebookSession(boardId),
+        asking: false,
+      };
     } catch (e) {
-      this.notebook = { ...this.notebook, asking: false };
+      this.state.notebook = { ...this.state.notebook, asking: false };
       this.actions.toast(e instanceof RpcError ? e.message : COPY.askFailed, 'error');
     }
     await this.render();
@@ -681,7 +585,7 @@ export class Router {
         case 'new':
           // An unsaved page rather than a written one: a person who changes
           // their mind should not leave an empty page behind.
-          this.pages = {
+          this.state.pages = {
             open: {
               id: '',
               title: '',
@@ -698,34 +602,37 @@ export class Router {
           break;
         case 'open':
           if (!pageId) return;
-          this.pages = { open: await this.rpc.page(pageId), editing: false };
+          this.state.pages = { open: await this.rpc.page(pageId), editing: false };
           break;
         case 'close':
-          this.pages = { open: null, editing: false };
+          this.state.pages = { open: null, editing: false };
           break;
         case 'edit':
-          this.pages = { ...this.pages, editing: true };
+          this.state.pages = { ...this.state.pages, editing: true };
           break;
         case 'preview':
           // Read what the core holds rather than what the textarea shows: the
           // preview is of the page, and the page is what was saved.
-          if (this.pages.open?.id) {
-            this.pages = { open: await this.rpc.page(this.pages.open.id), editing: false };
+          if (this.state.pages.open?.id) {
+            this.state.pages = {
+              open: await this.rpc.page(this.state.pages.open.id),
+              editing: false,
+            };
           } else {
-            this.pages = { ...this.pages, editing: false };
+            this.state.pages = { ...this.state.pages, editing: false };
           }
           break;
         case 'remove': {
           if (!pageId) return;
           await this.rpc.deletePage(pageId);
-          this.pages = { open: null, editing: false };
+          this.state.pages = { open: null, editing: false };
           break;
         }
         case 'follow-link': {
           if (!title) return;
           const { pages } = await this.rpc.pages();
           const found = pages.find((p) => p.title.toLowerCase() === title.toLowerCase());
-          if (found) this.pages = { open: await this.rpc.page(found.id), editing: false };
+          if (found) this.state.pages = { open: await this.rpc.page(found.id), editing: false };
           break;
         }
         case 'create-link': {
@@ -733,7 +640,7 @@ export class Router {
           // and lands the person in it.
           if (!title) return;
           const made = await this.rpc.createPageFromLink(title);
-          this.pages = { open: await this.rpc.page(made.page_id), editing: true };
+          this.state.pages = { open: await this.rpc.page(made.page_id), editing: true };
           break;
         }
         default:
@@ -748,14 +655,14 @@ export class Router {
   private async savePage(): Promise<void> {
     const title = this.hosts.body.querySelector<HTMLInputElement>('#page-name')?.value ?? '';
     const body = this.hosts.body.querySelector<HTMLTextAreaElement>('#page-text')?.value ?? '';
-    const open = this.pages.open;
+    const open = this.state.pages.open;
     try {
       const saved = await this.rpc.writePage({
         page_id: open?.id || undefined,
         title,
         body,
       });
-      this.pages = { open: await this.rpc.page(saved.page_id), editing: false };
+      this.state.pages = { open: await this.rpc.page(saved.page_id), editing: false };
       await this.render();
     } catch (e) {
       this.actions.toast(e instanceof RpcError ? e.message : COPY.pagesWriteFailed, 'error');
@@ -801,7 +708,7 @@ export class Router {
         label: label.trim() || root.trim(),
         sensitive,
       });
-      this.setup.folderAdded = {
+      this.state.setup.folderAdded = {
         label: added.label,
         indexed: added.indexed,
         unreadable: added.errors.length,
@@ -815,15 +722,15 @@ export class Router {
    * the step it belongs to.
    */
   private async setupStep(work: () => Promise<void>): Promise<void> {
-    this.setup.busy = true;
-    this.setup.error = null;
+    this.state.setup.busy = true;
+    this.state.setup.error = null;
     await this.render();
     try {
       await work();
     } catch (e) {
-      this.setup.error = e instanceof RpcError ? e.message : COPY.pageUnread;
+      this.state.setup.error = e instanceof RpcError ? e.message : COPY.pageUnread;
     }
-    this.setup.busy = false;
+    this.state.setup.busy = false;
     await this.render();
   }
 
@@ -870,7 +777,7 @@ export class Router {
   }
 
   private async bulk(action: string): Promise<void> {
-    const ids = [...this.picked];
+    const ids = [...this.state.picked];
     switch (action) {
       case 'accept':
         // Doc 09 section 6: bulk Accept needs no confirmation, because the flag
@@ -879,15 +786,15 @@ export class Router {
         return;
       case 'dismiss':
         // The first click asks; the second decides.
-        this.confirmingDismiss = true;
-        this.hosts.tools.innerHTML = bulkHTML(this.picked.size, true);
+        this.state.confirmingDismiss = true;
+        this.hosts.tools.innerHTML = bulkHTML(this.state.picked.size, true);
         return;
       case 'dismiss-confirm':
         await this.decide(ids, 'dismiss');
         return;
       case 'clear':
-        this.picked.clear();
-        this.confirmingDismiss = false;
+        this.state.picked.clear();
+        this.state.confirmingDismiss = false;
         await this.render();
     }
   }
