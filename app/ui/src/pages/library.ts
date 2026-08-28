@@ -13,39 +13,45 @@
 import { esc } from '../canvas/visual.js';
 import type { ConceptRow, SourceRow } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
+import { chip } from '../ui/chip.js';
+import { segmented } from '../ui/segmented.js';
 import { ago, emptyState } from './shared.js';
 
 export type LibraryTab = 'sources' | 'concepts';
 
 export function libraryToolsHTML(tab: LibraryTab): string {
-  const on = (t: LibraryTab) => (t === tab ? ' class="on"' : '');
-  return (
-    `<div class="seg" role="group" aria-label="${COPY.libraryTabsLabel}">` +
-    `<button data-library-tab="sources"${on('sources')}>${COPY.librarySources}</button>` +
-    `<button data-library-tab="concepts"${on('concepts')}>${COPY.libraryConcepts}</button>` +
-    `</div>`
+  return segmented(
+    [
+      { label: COPY.librarySources, on: tab === 'sources', data: { 'library-tab': 'sources' } },
+      { label: COPY.libraryConcepts, on: tab === 'concepts', data: { 'library-tab': 'concepts' } },
+    ],
+    { ariaLabel: COPY.libraryTabsLabel },
   );
 }
 
 function sourceRow(s: SourceRow): string {
   const stale = s.stale
-    ? `<span class="chip stale" title="${esc(s.stale_reason ?? '')}">${COPY.staleTag}</span>`
+    ? chip(COPY.staleTag, { classes: 'stale', title: s.stale_reason ?? '' })
     : '';
   const verified = s.last_verified_at ? ago(s.last_verified_at) : COPY.libraryNeverVerified;
   return (
     `<li class="lib-row" data-source="${esc(s.id)}">` +
     `<div class="what">` +
     `<div class="line"><span class="title">${esc(s.title)}</span>${stale}` +
-    `<span class="chip">${esc(s.class)}</span>` +
-    `<span class="chip" title="${COPY.libraryTrustRank}">${s.trust_rank}</span></div>` +
+    chip(s.class) +
+    chip(String(s.trust_rank), { title: COPY.libraryTrustRank }) +
+    `</div>` +
     `<p class="meta">${esc(s.issuer ?? COPY.libraryNoIssuer)}, ` +
     `${s.cards} ${COPY.libraryCitedOn}, ${COPY.libraryVerified} ${esc(verified)}</p>` +
     `</div>` +
     `<div class="verbs">` +
-    `<button data-source-act="open">${COPY.libraryOpen}</button>` +
-    `<button data-source-act="ask">${COPY.libraryAsk}</button>` +
+    button(COPY.libraryOpen, { data: { 'source-act': 'open' } }) +
+    button(COPY.libraryAsk, { data: { 'source-act': 'ask' } }) +
     // Doc 09 section 5: Remove on a source only if it is uncited.
-    (s.cards === 0 ? `<button class="danger" data-source-act="remove">${COPY.libraryRemove}</button>` : '') +
+    (s.cards === 0
+      ? button(COPY.libraryRemove, { variant: 'danger', data: { 'source-act': 'remove' } })
+      : '') +
     `</div>` +
     `</li>`
   );
@@ -57,14 +63,14 @@ export function sourcesHTML(sources: SourceRow[]): string {
 }
 
 function conceptRow(c: ConceptRow): string {
-  const status = `<span class="chip status-${esc(c.status)}">${esc(c.status)}</span>`;
+  const status = chip(c.status, { classes: `status-${c.status}` });
   const definition = c.definition
     ? `<p class="reason">${esc(c.definition)}</p>`
     : `<p class="reason muted">${COPY.libraryNoDefinition}</p>`;
   const decide =
     c.status === 'proposed'
-      ? `<button data-concept-act="accept">${COPY.libraryAccept}</button>` +
-        `<button data-concept-act="dismiss">${COPY.libraryDismiss}</button>`
+      ? button(COPY.libraryAccept, { data: { 'concept-act': 'accept' } }) +
+        button(COPY.libraryDismiss, { data: { 'concept-act': 'dismiss' } })
       : '';
   return (
     `<li class="lib-row" data-concept="${esc(c.id)}">` +
@@ -75,7 +81,7 @@ function conceptRow(c: ConceptRow): string {
     `</div>` +
     `<div class="verbs">` +
     decide +
-    `<button data-concept-act="ask">${COPY.libraryAsk}</button>` +
+    button(COPY.libraryAsk, { data: { 'concept-act': 'ask' } }) +
     `</div>` +
     `</li>`
   );

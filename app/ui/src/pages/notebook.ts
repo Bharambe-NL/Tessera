@@ -15,6 +15,8 @@
 import { esc } from '../canvas/visual.js';
 import type { NotebookSession, NotebookTurn } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
+import { chip } from '../ui/chip.js';
 import { emptyState } from './shared.js';
 
 export interface NotebookState {
@@ -26,22 +28,18 @@ export interface NotebookState {
 
 export function notebookToolsHTML(state: NotebookState): string {
   if (!state.session) return '';
-  return (
-    `<div class="seg">` +
-    `<button data-notebook-act="new">${COPY.notebookNew}</button>` +
-    `</div>`
-  );
+  return button(COPY.notebookNew, { data: { 'notebook-act': 'new' } });
 }
 
 /** Doc 16 section 3.4's three states, as the chip a person reads. */
 function groundingChip(turn: NotebookTurn): string {
   switch (turn.grounding) {
     case 'grounded':
-      return `<span class="chip grounded">${COPY.notebookGrounded}</span>`;
+      return chip(COPY.notebookGrounded, { classes: 'grounded' });
     case 'partly_grounded':
-      return `<span class="chip partly">${COPY.notebookPartly}</span>`;
+      return chip(COPY.notebookPartly, { classes: 'partly' });
     case 'ungrounded':
-      return `<span class="chip ungrounded">${COPY.notebookUngrounded}</span>`;
+      return chip(COPY.notebookUngrounded, { classes: 'ungrounded' });
     default:
       return '';
   }
@@ -55,7 +53,8 @@ function sources(turn: NotebookTurn): string {
       .map(
         (c) =>
           `<li><span class="ord">${c.ordinal}</span> ${esc(c.source_title)}` +
-          `<span class="chip">${esc(c.source_class)}</span></li>`,
+          chip(c.source_class) +
+          `</li>`,
       )
       .join('') +
     `</ul>`
@@ -69,7 +68,7 @@ function turnHTML(turn: NotebookTurn): string {
     `<p class="asked">${esc(turn.question)}</p>` +
     `<div class="said">` +
     `<div class="line">${groundingChip(turn)}` +
-    (turn.page_id ? `<span class="chip page">${COPY.savedAsPage}</span>` : '') +
+    (turn.page_id ? chip(COPY.savedAsPage, { classes: 'page' }) : '') +
     `</div>` +
     `<p class="answer">${esc(turn.answer ?? COPY.notebookThinking)}</p>` +
     sources(turn) +
@@ -78,14 +77,12 @@ function turnHTML(turn: NotebookTurn): string {
         // Doc 16 section 3.4's one click way out, live now that doc 05 section
         // 8.1's web retriever exists. A profile with no web source set up is
         // told so when it is pressed, on the page that can fix it.
-        `<button data-notebook-act="search-web">${COPY.notebookSearchWeb}</button>`
+        button(COPY.notebookSearchWeb, { data: { 'notebook-act': 'search-web' } })
       : '') +
     (answered
       ? `<div class="verbs">` +
-        (turn.page_id
-          ? ''
-          : `<button data-notebook-act="save">${COPY.saveAsPage}</button>`) +
-        `<button data-notebook-act="open-board">${COPY.notebookOpenOnBoard}</button>` +
+        (turn.page_id ? '' : button(COPY.saveAsPage, { data: { 'notebook-act': 'save' } })) +
+        button(COPY.notebookOpenOnBoard, { data: { 'notebook-act': 'open-board' } }) +
         `</div>`
       : '') +
     `</div></li>`
@@ -96,8 +93,9 @@ export function notebookHTML(state: NotebookState): string {
   if (!state.session) {
     return (
       emptyState(COPY.notebookEmpty) +
-      `<div class="setup-acts"><button class="primary" data-notebook-act="new">` +
-      `${COPY.notebookStart}</button></div>`
+      `<div class="setup-acts">` +
+      button(COPY.notebookStart, { variant: 'primary', data: { 'notebook-act': 'new' } }) +
+      `</div>`
     );
   }
 
@@ -109,8 +107,11 @@ export function notebookHTML(state: NotebookState): string {
     `<form id="notebook-ask" class="notebook-ask">` +
     `<input id="notebook-question" placeholder="${COPY.notebookPlaceholder}" ` +
     `aria-label="${COPY.notebookPlaceholder}" autocomplete="off"${state.asking ? ' disabled' : ''} />` +
-    `<button type="submit" class="primary"${state.asking ? ' disabled' : ''}>` +
-    `${state.asking ? COPY.notebookAsking : COPY.notebookAsk}</button>` +
+    button(state.asking ? COPY.notebookAsking : COPY.notebookAsk, {
+      variant: 'primary',
+      submit: true,
+      disabled: state.asking,
+    }) +
     `</form>`
   );
 }

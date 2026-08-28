@@ -10,6 +10,9 @@
 import { esc } from '../canvas/visual.js';
 import type { BoardSummary, MissionSummary } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
+import { chip } from '../ui/chip.js';
+import { segmented } from '../ui/segmented.js';
 import { ago, emptyState } from './shared.js';
 
 export type HomeFilter = 'active' | 'trashed';
@@ -39,16 +42,16 @@ function missionHTML(summary: MissionSummary): string {
 function card(board: BoardSummary, filter: HomeFilter): string {
   const flags =
     board.open_flags > 0
-      ? `<span class="chip flag warn" title="${COPY.homeOpenFlags}">${board.open_flags}</span>`
+      ? chip(String(board.open_flags), { classes: 'flag warn', title: COPY.homeOpenFlags })
       : '';
   // Doc 09 section 5: Remove on a board goes to Trash, and only a trashed board
   // can be purged. The verbs a row offers are the verbs its filter allows.
   const verbs =
     filter === 'active'
-      ? `<button data-board-act="open" data-board="${esc(board.id)}">${COPY.homeOpen}</button>` +
-        `<button data-board-act="trash" data-board="${esc(board.id)}">${COPY.homeTrash}</button>`
-      : `<button data-board-act="restore" data-board="${esc(board.id)}">${COPY.homeRestore}</button>` +
-        `<button class="danger" data-board-act="purge" data-board="${esc(board.id)}">${COPY.homePurge}</button>`;
+      ? button(COPY.homeOpen, { data: { 'board-act': 'open', board: board.id } }) +
+        button(COPY.homeTrash, { data: { 'board-act': 'trash', board: board.id } })
+      : button(COPY.homeRestore, { data: { 'board-act': 'restore', board: board.id } }) +
+        button(COPY.homePurge, { variant: 'danger', data: { 'board-act': 'purge', board: board.id } });
 
   return (
     `<article class="board-card" data-board="${esc(board.id)}">` +
@@ -76,12 +79,13 @@ export function homeHTML(
 
 /** The filter toggle and the create button, which live in the page header. */
 export function homeToolsHTML(filter: HomeFilter): string {
-  const on = (f: HomeFilter) => (f === filter ? ' class="on"' : '');
   return (
-    `<div class="seg" role="group" aria-label="${COPY.homeFilterLabel}">` +
-    `<button data-home-filter="active"${on('active')}>${COPY.homeActive}</button>` +
-    `<button data-home-filter="trashed"${on('trashed')}>${COPY.homeTrashed}</button>` +
-    `</div>` +
-    `<button id="home-create" class="primary">${COPY.homeCreate}</button>`
+    segmented(
+      [
+        { label: COPY.homeActive, on: filter === 'active', data: { 'home-filter': 'active' } },
+        { label: COPY.homeTrashed, on: filter === 'trashed', data: { 'home-filter': 'trashed' } },
+      ],
+      { ariaLabel: COPY.homeFilterLabel },
+    ) + button(COPY.homeCreate, { variant: 'primary', id: 'home-create' })
   );
 }

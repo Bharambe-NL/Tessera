@@ -10,6 +10,7 @@
 
 import './styles/fonts.css';
 import './styles/tokens.css';
+import './styles/components.css';
 import './styles/board.css';
 import './styles/chrome.css';
 import './styles/pages.css';

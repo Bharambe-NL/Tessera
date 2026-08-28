@@ -1,0 +1,272 @@
+/* The shared component layer. Doc 11 section 4: hand built components in the
+   prototype's style, shared primitives only. What every surface has to agree
+   on lives here once: the button, the text input, the chip, the segmented
+   control, focus, and the beat their state changes move at. A surface that
+   needs a different shape (the toolbar, the composer, the rail) writes its
+   own rules on top; a surface that needs a different colour is wrong. */
+
+/* ---- motion ----
+   One duration for control state changes, from tokens.css. --t-hover is 0ms
+   under reduced motion, so no media query is needed here. */
+
+button,
+.chip,
+.badge,
+input,
+textarea,
+summary,
+.wikilink {
+  transition:
+    background-color var(--t-hover) var(--ease),
+    color var(--t-hover) var(--ease),
+    border-color var(--t-hover) var(--ease),
+    opacity var(--t-hover) var(--ease);
+}
+
+/* ---- focus ----
+   Doc 11 section 10: every action keyboard reachable, focus ring in accent.
+   One rule, so a control added later cannot forget it. */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- buttons ---- */
+
+button {
+  font: inherit;
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--r-button);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The workhorse: a quiet bordered control that says it is pressable. */
+.btn {
+  border: 1px solid var(--line);
+  padding: var(--s2) var(--s3);
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--line);
+}
+
+/* Doc 11 section 3 gives the accent to "focus, links, selected", and the one
+   action a view leads with is its selection. The old primary wore --user,
+   which is the user message pill's token and nobody else's. */
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--surface);
+  padding: var(--s2) var(--s4);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: oklch(from var(--accent) calc(l - 0.06) c h);
+}
+
+.btn.primary:disabled {
+  background: var(--line);
+  color: var(--ink-3);
+  opacity: 1;
+}
+
+/* A destructive verb warns in rust before it acts. */
+.btn.danger {
+  color: var(--rust-ink);
+  border-color: var(--rust-ink);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--rust);
+  border-color: transparent;
+}
+
+/* A dismissal or an icon: no border until the pointer arrives. */
+.btn.quiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.btn.quiet:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* ---- text inputs ----
+   On --surface, not --bg: a field is a place to write, and it reads as one by
+   being the lightest thing in its row. The focus state moves to the border so
+   the ring rule above does not double up on a box that already has an edge. */
+
+input:not([type]),
+input[type='text'],
+input[type='password'],
+textarea {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-node);
+  padding: var(--s2) var(--s3);
+}
+
+input:not([type]):hover,
+input[type='text']:hover,
+input[type='password']:hover,
+textarea:hover {
+  border-color: var(--line-strong);
+}
+
+input:not([type]):focus-visible,
+input[type='text']:focus-visible,
+input[type='password']:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+::placeholder {
+  color: var(--ink-3);
+}
+
+/* ---- chips and badges ----
+   One shape, four hues, and every semantic name the product uses mapped onto
+   them here, so a chip added later picks a meaning rather than a colour. */
+
+.badge,
+.chip,
+.alias {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px var(--s2);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  background: transparent;
+  flex: none;
+}
+
+/* Olive: nothing is wrong. A page, a confirmed concept, a grounded answer. */
+.chip.page,
+.chip.ok,
+.chip.grounded,
+.chip.status-confirmed {
+  background: var(--olive);
+  color: var(--olive-ink);
+  border-color: transparent;
+}
+
+/* Amber: worth a look. Warnings, stale sources, proposals, missing keys. */
+.chip.flag.warn,
+.chip.sev.warn,
+.chip.stale,
+.chip.missing,
+.chip.status-proposed,
+.chip.ungrounded {
+  background: var(--amber);
+  color: var(--amber-ink);
+  border-color: transparent;
+}
+
+/* Rust: something is blocked. */
+.chip.flag.block,
+.chip.sev.block,
+.badge.research {
+  background: var(--rust);
+  color: var(--rust-ink);
+  border-color: transparent;
+}
+
+/* Slate: a fact about depth or provenance, not a verdict. */
+.badge.deep,
+.chip.partly {
+  background: var(--slate);
+  color: var(--slate-ink);
+  border-color: transparent;
+}
+
+/* ---- segmented control ---- */
+
+.seg {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-button);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.seg button {
+  padding: var(--s2) var(--s4);
+  font-size: 12px;
+  border: 0;
+  border-radius: 0;
+}
+
+.seg button:hover:not(.on) {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* Doc 11 section 3: selected is the accent's job, not ink's. */
+.seg button.on {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+/* ---- disclosure ----
+   The sources and the build trail open and close; the chevron says which state
+   they are in before they are pressed, and turns as they change. */
+
+.sources summary,
+.built summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  cursor: pointer;
+  color: var(--ink-2);
+  user-select: none;
+}
+
+.sources summary::-webkit-details-marker,
+.built summary::-webkit-details-marker {
+  display: none;
+}
+
+.sources summary::before,
+.built summary::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--t-hover) var(--ease);
+}
+
+.sources[open] > summary::before,
+.built[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.sources summary:hover,
+.built summary:hover {
+  color: var(--ink);
+}
