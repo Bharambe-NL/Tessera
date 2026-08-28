@@ -16,38 +16,92 @@
     <!-- Doc 11 section 5: left rail 56px collapsed, 240px open. Doc 09 open
          question 1, adopted by doc 11: Trash is a filter on Home, so it is
          absent here and present as a toggle on the Home page. -->
+  <!--
+    The rail's icons. Doc 11 section 8 asks for line icons on a 24 grid at 1.8
+    stroke and rules out an icon font. The rail carried Unicode geometry instead
+    (a white square, a dotted circle), which is an icon font by another name: the
+    shapes belong to whichever face the system picked, six of the nine read as
+    the same box at 16px, and none of them names its section. These are drawn, so
+    they scale, they take the ink colour, and Board looks nothing like Pages.
+
+    One sprite of symbols, referenced by <use>, so the rail's own markup stays
+    the short line the shell already diffs.
+  -->
+  <svg class="sprite" aria-hidden="true">
+    <defs>
+      <symbol id="i-board" viewBox="0 0 24 24">
+        <rect x="3.5" y="4" width="7" height="16" rx="1.6" />
+        <rect x="13.5" y="4" width="7" height="7" rx="1.6" />
+        <rect x="13.5" y="13" width="7" height="7" rx="1.6" />
+      </symbol>
+      <symbol id="i-home" viewBox="0 0 24 24">
+        <path d="M3.8 10.4 12 3.9l8.2 6.5V19a1.6 1.6 0 0 1-1.6 1.6H5.4A1.6 1.6 0 0 1 3.8 19z" />
+        <path d="M9.6 20.6v-6h4.8v6" />
+      </symbol>
+      <symbol id="i-flags" viewBox="0 0 24 24">
+        <path d="M6.2 20.8V3.9" />
+        <path d="M6.2 5h11.3l-2.4 3.6 2.4 3.6H6.2z" />
+      </symbol>
+      <symbol id="i-library" viewBox="0 0 24 24">
+        <path d="M12 7.2v12.6" />
+        <path d="M12 7.2C10.4 5.5 8.3 4.9 4.2 4.9v12.6c4.1 0 6.2.6 7.8 2.3 1.6-1.7 3.7-2.3 7.8-2.3V4.9c-4.1 0-6.2.6-7.8 2.3z" />
+      </symbol>
+      <symbol id="i-notebook" viewBox="0 0 24 24">
+        <rect x="5.4" y="3.4" width="13.2" height="17.2" rx="2" />
+        <path d="M9.2 3.4v17.2" />
+        <path d="M12.2 8.4h3.6M12.2 12h3.6" />
+      </symbol>
+      <symbol id="i-pages" viewBox="0 0 24 24">
+        <path d="M8.4 3.4h5.8l5 4.9V18a2.6 2.6 0 0 1-2.6 2.6H8.4A2.6 2.6 0 0 1 5.8 18V6a2.6 2.6 0 0 1 2.6-2.6z" />
+        <path d="M14 3.5v5.1h5.1" />
+      </symbol>
+      <symbol id="i-map" viewBox="0 0 24 24">
+        <path d="M9.2 4.2 3.6 6.5v13.3l5.6-2.3 5.6 2.3 5.6-2.3V4.2l-5.6 2.3z" />
+        <path d="M9.2 4.2v13.3" />
+        <path d="M14.8 6.5v13.3" />
+      </symbol>
+      <symbol id="i-profile" viewBox="0 0 24 24">
+        <circle cx="12" cy="8.6" r="3.7" />
+        <path d="M5.2 20.1a6.8 6.8 0 0 1 13.6 0" />
+      </symbol>
+      <symbol id="i-collapse" viewBox="0 0 24 24">
+        <path d="M9.4 6.2 15.2 12l-5.8 5.8" />
+      </symbol>
+    </defs>
+  </svg>
+
     <nav id="rail" aria-label="Sections" data-no-pan>
       <button class="rail-item on" data-view="board" aria-current="page">
-        <span class="glyph" aria-hidden="true">▣</span><span class="label">Board</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-board" /></svg><span class="label">Board</span>
       </button>
       <button class="rail-item" data-view="home">
-        <span class="glyph" aria-hidden="true">▤</span><span class="label">Home</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-home" /></svg><span class="label">Home</span>
       </button>
       <button class="rail-item" data-view="flags">
-        <span class="glyph" aria-hidden="true">▲</span><span class="label">Flags</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-flags" /></svg><span class="label">Flags</span>
         <span class="count" id="rail-flags" hidden></span>
       </button>
       <button class="rail-item" data-view="library">
-        <span class="glyph" aria-hidden="true">▥</span><span class="label">Library</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-library" /></svg><span class="label">Library</span>
       </button>
       <button class="rail-item" data-view="notebook">
-        <span class="glyph" aria-hidden="true">▧</span><span class="label">Notebook</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-notebook" /></svg><span class="label">Notebook</span>
       </button>
       <!-- Doc 16 section 3.7: the rail gains Pages. Doc 16 section 7 point 1
            keeps the words apart: a sticky is on a board, a page is in the vault. -->
       <button class="rail-item" data-view="pages">
-        <span class="glyph" aria-hidden="true">▦</span><span class="label">Pages</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-pages" /></svg><span class="label">Pages</span>
       </button>
       <!-- Doc 17 section 6: the rail gains the Map, which is the learner's own
            view of what they know rather than a list of what the product holds. -->
       <button class="rail-item" data-view="map">
-        <span class="glyph" aria-hidden="true">◈</span><span class="label">Map</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-map" /></svg><span class="label">Map</span>
       </button>
       <button class="rail-item" data-view="profile">
-        <span class="glyph" aria-hidden="true">◍</span><span class="label">Profile</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-profile" /></svg><span class="label">Profile</span>
       </button>
       <button id="rail-toggle" class="rail-item wide" aria-expanded="false">
-        <span class="glyph" aria-hidden="true">»</span><span class="label">Collapse</span>
+        <svg class="glyph" aria-hidden="true"><use href="#i-collapse" /></svg><span class="label">Collapse</span>
       </button>
     </nav>
 
