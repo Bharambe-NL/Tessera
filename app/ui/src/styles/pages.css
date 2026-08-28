@@ -225,52 +225,8 @@ body.rail-open .rail-item .label {
   font-size: 12px;
 }
 
-/* ---- segmented control, shared by Home, Library and Profile ---- */
-
-.seg {
-  display: flex;
-  border: 1px solid var(--line);
-  border-radius: var(--r-button);
-  overflow: hidden;
-}
-
-.seg button {
-  padding: var(--s2) var(--s4);
-  font-size: 12px;
-  border-radius: 0;
-}
-
-.seg button.on {
-  background: var(--ink);
-  color: var(--surface);
-}
-
-#page button {
-  border: 1px solid var(--line);
-  border-radius: var(--r-button);
-  padding: var(--s2) var(--s3);
-  font-size: 12px;
-}
-
-#page .seg button {
-  border: 0;
-}
-
-#page button.primary {
-  background: var(--user);
-  color: var(--surface);
-  border-color: transparent;
-}
-
-#page button.danger {
-  color: var(--rust-ink);
-  border-color: var(--rust-ink);
-}
-
-#page :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
+/* The segmented control, the buttons and the chips a page renders are the
+   shared layer in components.css; nothing page shaped is left to say here. */
 
 /* ---- Home ---- */
 
@@ -422,33 +378,6 @@ body.rail-open .rail-item .label {
   color: var(--ink-2);
 }
 
-.chip.sev.warn,
-.chip.stale {
-  background: var(--amber);
-  color: var(--amber-ink);
-  border-color: transparent;
-}
-
-.chip.sev.block {
-  background: var(--rust);
-  color: var(--rust-ink);
-  border-color: transparent;
-}
-
-.chip.ok,
-.chip.status-confirmed {
-  background: var(--olive);
-  color: var(--olive-ink);
-  border-color: transparent;
-}
-
-.chip.missing,
-.chip.status-proposed {
-  background: var(--amber);
-  color: var(--amber-ink);
-  border-color: transparent;
-}
-
 /* ---- the bulk bar ---- */
 
 .bulk {
@@ -484,13 +413,6 @@ body.rail-open .rail-item .label {
 
 .facts dd {
   margin: 0;
-}
-
-/* A flag row is a focus stop of its own, so a reader moves between rows with
-   arrows and tabs into one only when they mean to act on it. */
-.flag-row:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 /* ---- the exercise, doc 08 and doc 11 section 6 ---- */
@@ -620,23 +542,6 @@ body.rail-open .rail-item .label {
 .ex-foot .progress {
   font-size: 12px;
   color: var(--ink-2);
-}
-
-#exercise button {
-  border: 1px solid var(--line);
-  border-radius: var(--r-button);
-  padding: var(--s2) var(--s4);
-  font-size: 12px;
-}
-
-#exercise button.primary {
-  background: var(--user);
-  color: var(--surface);
-  border-color: transparent;
-}
-
-#exercise button:disabled {
-  opacity: 0.4;
 }
 
 /* ---- the Tutor panel, doc 14 section 3.9 ---- */
@@ -799,18 +704,6 @@ body.learning #main {
 
 .tutor-say input {
   width: 100%;
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--r-node);
-  padding: var(--s2) var(--s3);
-}
-
-#tutor :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 #learn[aria-pressed='true'] {
@@ -899,18 +792,6 @@ ol.setup .note {
   color: var(--ink);
 }
 
-.setup-key input,
-.setup-folder input[type='text'],
-.setup-folder input:not([type]) {
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--r-node);
-  padding: var(--s3);
-}
-
 .check {
   display: flex;
   align-items: center;
@@ -940,20 +821,6 @@ ol.setup .note {
   border: 1px solid var(--line);
   border-left: 3px solid var(--rust-ink);
   border-radius: var(--r-button);
-}
-
-#page button.primary {
-  background: var(--user);
-  color: var(--surface);
-  border-color: transparent;
-  padding: var(--s3) var(--s5);
-  border-radius: var(--r-button);
-  font-size: 13px;
-}
-
-#page button.primary:disabled {
-  background: var(--line);
-  color: var(--ink-3);
 }
 
 /* ---- Pages, doc 16 section 3.7 ---- */
@@ -1105,12 +972,6 @@ ol.setup .note {
 
 .notebook-ask input {
   flex: 1;
-  font: inherit;
-  padding: var(--s2) var(--s3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-node);
-  background: var(--surface);
-  color: var(--ink);
 }
 
 /* A control that is not ready says why rather than failing when pressed. */

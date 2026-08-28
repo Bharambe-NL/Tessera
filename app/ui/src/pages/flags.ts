@@ -14,6 +14,7 @@
 import { esc } from '../canvas/visual.js';
 import type { FlagRow } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
 import { ago, emptyState, evidenceLine, severityChip } from './shared.js';
 
 function row(flag: FlagRow, selected: boolean): string {
@@ -35,10 +36,10 @@ function row(flag: FlagRow, selected: boolean): string {
     (evidence ? `<p class="evidence">${esc(evidence)}</p>` : '') +
     `</div>` +
     `<div class="verbs">` +
-    `<button data-flag-act="open">${COPY.flagsOpen}</button>` +
-    `<button data-flag-act="accept">${COPY.flagsAccept}</button>` +
-    `<button data-flag-act="dismiss">${COPY.flagsDismiss}</button>` +
-    `<button data-flag-act="rerun">${COPY.flagsRerun}</button>` +
+    button(COPY.flagsOpen, { data: { 'flag-act': 'open' } }) +
+    button(COPY.flagsAccept, { data: { 'flag-act': 'accept' } }) +
+    button(COPY.flagsDismiss, { data: { 'flag-act': 'dismiss' } }) +
+    button(COPY.flagsRerun, { data: { 'flag-act': 'rerun' } }) +
     `</div>` +
     `</li>`
   );
@@ -61,7 +62,11 @@ export function flagsHTML(flags: FlagRow[], selected: Set<string>): string {
       ([boardId, group]) =>
         `<section class="flag-group" data-board="${esc(boardId)}">` +
         `<h2>${esc(group.title)}` +
-        `<button class="select-board" data-select-board="${esc(boardId)}">${COPY.flagsSelectBoard}</button>` +
+        button(COPY.flagsSelectBoard, {
+          variant: 'quiet',
+          classes: 'select-board',
+          data: { 'select-board': boardId },
+        }) +
         `</h2>` +
         `<ul>${group.rows.map((f) => row(f, selected.has(f.id))).join('')}</ul>` +
         `</section>`,
@@ -80,14 +85,17 @@ export function flagsHTML(flags: FlagRow[], selected: Set<string>): string {
 export function bulkHTML(selected: number, confirmingDismiss: boolean): string {
   if (selected === 0) return '';
   const dismiss = confirmingDismiss
-    ? `<button class="danger" data-bulk="dismiss-confirm">${COPY.flagsDismissConfirm} ${selected}</button>`
-    : `<button data-bulk="dismiss">${COPY.flagsDismiss}</button>`;
+    ? button(`${COPY.flagsDismissConfirm} ${selected}`, {
+        variant: 'danger',
+        data: { bulk: 'dismiss-confirm' },
+      })
+    : button(COPY.flagsDismiss, { data: { bulk: 'dismiss' } });
   return (
     `<div class="bulk" role="group" aria-label="${COPY.flagsBulkLabel}">` +
     `<span class="count">${selected} ${COPY.flagsSelected}</span>` +
-    `<button data-bulk="accept">${COPY.flagsAccept}</button>` +
+    button(COPY.flagsAccept, { data: { bulk: 'accept' } }) +
     dismiss +
-    `<button data-bulk="clear">${COPY.flagsClear}</button>` +
+    button(COPY.flagsClear, { variant: 'quiet', data: { bulk: 'clear' } }) +
     `</div>`
   );
 }

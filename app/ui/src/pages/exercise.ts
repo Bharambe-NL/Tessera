@@ -11,6 +11,7 @@
 import { esc } from '../canvas/visual.js';
 import type { ExerciseItem, ExerciseRow } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
 
 /** What the reader has chosen so far, and what the grader said. */
 export interface ExerciseState {
@@ -51,8 +52,8 @@ function itemHTML(item: ExerciseItem, index: number, state: ExerciseState): stri
     ? `<p class="explanation">${esc(item.explanation)}</p>` +
       // Doc 08 section 11: the item links to its source card.
       `<div class="verbs">` +
-      `<button data-item-act="open" data-card="${esc(item.source_card_id)}">${COPY.exerciseOpenCard}</button>` +
-      `<button data-item-act="report" data-item="${esc(item.id)}">${COPY.exerciseReport}</button>` +
+      button(COPY.exerciseOpenCard, { data: { 'item-act': 'open', card: item.source_card_id } }) +
+      button(COPY.exerciseReport, { data: { 'item-act': 'report', item: item.id } }) +
       `</div>`
     : '';
 
@@ -81,10 +82,12 @@ export function exerciseHTML(exercise: ExerciseRow | null, state: ExerciseState)
   const answered = Object.keys(state.answers).length;
   const foot = state.graded
     ? `<p class="score">${COPY.exerciseScored} ${state.graded.correct} ${COPY.builtOf} ${state.graded.total}</p>` +
-      `<button id="ex-close" class="primary">${COPY.exerciseDone}</button>`
-    : `<button id="ex-submit" class="primary" ${answered === exercise.items.length ? '' : 'disabled'}>` +
-      `${COPY.exerciseSubmit}</button>` +
-      `<span class="progress">${answered} ${COPY.builtOf} ${exercise.items.length}</span>`;
+      button(COPY.exerciseDone, { variant: 'primary', id: 'ex-close' })
+    : button(COPY.exerciseSubmit, {
+        variant: 'primary',
+        id: 'ex-submit',
+        disabled: answered !== exercise.items.length,
+      }) + `<span class="progress">${answered} ${COPY.builtOf} ${exercise.items.length}</span>`;
 
   return (
     `<ol class="ex-items">${exercise.items.map((i, n) => itemHTML(i, n, state)).join('')}</ol>` +

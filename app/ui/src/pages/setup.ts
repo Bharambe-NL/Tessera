@@ -16,6 +16,8 @@
 import { esc } from '../canvas/visual.js';
 import type { FirstRun } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
+import { segmented } from '../ui/segmented.js';
 
 /** What the screen is showing on top of what the core reported. */
 export interface SetupState {
@@ -42,13 +44,13 @@ export function setupHTML(state: SetupState): string {
   const run = state.run;
   if (!run) return `<p class="page-empty">${COPY.setupLoading}</p>`;
 
-  const packs = run.packs
-    .map(
-      (code) =>
-        `<button data-setup-pack="${esc(code)}"${code === run.active_pack ? ' class="on"' : ''}>` +
-        `${esc(code)}</button>`,
-    )
-    .join('');
+  const packs = segmented(
+    run.packs.map((code) => ({
+      label: code,
+      on: code === run.active_pack,
+      data: { 'setup-pack': code },
+    })),
+  );
 
   // The key_ref the aliases want, shown so a person can see which entry they
   // are filling rather than pasting into an unlabelled box.
@@ -59,7 +61,7 @@ export function setupHTML(state: SetupState): string {
       `<label for="setup-secret">${COPY.setupKeyLabel} <code>${esc(keyRef)}</code></label>` +
       `<input id="setup-secret" type="password" autocomplete="off" spellcheck="false" ` +
       `placeholder="${COPY.setupKeyPlaceholder}" aria-label="${COPY.setupKeyLabel}" />` +
-      `<button type="submit" class="primary">${COPY.setupKeySave}</button>` +
+      button(COPY.setupKeySave, { variant: 'primary', submit: true }) +
       `</form>`;
 
   const folderBody = state.folderAdded
@@ -76,7 +78,7 @@ export function setupHTML(state: SetupState): string {
       `aria-label="${COPY.setupFolderLabel}" autocomplete="off" />` +
       `<label class="check"><input id="setup-folder-sensitive" type="checkbox" /> ` +
       `${COPY.setupFolderSensitive}</label>` +
-      `<button type="submit">${COPY.setupFolderAdd}</button>` +
+      button(COPY.setupFolderAdd, { submit: true }) +
       `</form>`;
 
   const ready = run.has_key || state.keySaved;
@@ -85,7 +87,7 @@ export function setupHTML(state: SetupState): string {
     `<h2>${COPY.setupTitle}</h2>` +
     `<p class="lede">${COPY.setupLede}</p>` +
     `<ol class="setup">` +
-    step(1, COPY.setupPackTitle, true, `<div class="seg">${packs}</div>`, COPY.setupPackNote) +
+    step(1, COPY.setupPackTitle, true, packs, COPY.setupPackNote) +
     step(2, COPY.setupKeyTitle, ready, keyBody, COPY.setupKeyNote) +
     step(
       3,
@@ -98,7 +100,7 @@ export function setupHTML(state: SetupState): string {
     (state.error ? `<p class="setup-error" role="alert">${esc(state.error)}</p>` : '') +
     (state.busy ? `<p class="page-empty">${COPY.setupWorking}</p>` : '') +
     `<div class="setup-acts">` +
-    `<button id="setup-done" class="primary"${ready ? '' : ' disabled'}>${COPY.setupDone}</button>` +
+    button(COPY.setupDone, { variant: 'primary', id: 'setup-done', disabled: !ready }) +
     // Doc 11 section 9: an empty state instructs. Saying why the button is off
     // beats a person clicking a dead control and guessing.
     (ready ? '' : `<span class="note">${COPY.setupNeedsKey}</span>`) +
