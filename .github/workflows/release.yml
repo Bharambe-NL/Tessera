@@ -32,6 +32,9 @@ jobs:
   bundle:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
+    # tauri-action opens the draft release, which is a write to the repository.
+    permissions:
+      contents: write
     strategy:
       # One platform failing should not cancel the other: knowing that the msi
       # built and the dmg did not is what tells you where to look.
@@ -75,28 +78,48 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      # An empty secret is still a defined environment variable, and the Tauri
+      # bundler reads presence rather than emptiness: the first run that got
+      # this far ran `security import` on a blank certificate and failed
+      # codesign after a clean six minute compile. So the answer becomes an
+      # output and the signing variables are attached to one step or the other,
+      # never set to nothing.
       - name: say whether this build will be signed
+        id: signing
         shell: bash
+        env:
+          APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          WINDOWS_CERT: ${{ secrets.WINDOWS_CERTIFICATE }}
         run: |
           if [ "${{ matrix.label }}" = "macos" ]; then
-            if [ -n "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+            if [ -n "$APPLE_CERT" ]; then
               echo "signing and notarising with the Apple certificate"
+              echo "signed=true" >> "$GITHUB_OUTPUT"
             else
               echo "::warning::no Apple certificate: this dmg is unsigned and Gatekeeper will refuse it"
+              echo "signed=false" >> "$GITHUB_OUTPUT"
             fi
           else
-            if [ -n "${{ secrets.WINDOWS_CERTIFICATE }}" ]; then
+            if [ -n "$WINDOWS_CERT" ]; then
               echo "signing with the Windows certificate"
+              echo "signed=true" >> "$GITHUB_OUTPUT"
             else
               echo "::warning::no Windows certificate: this msi is unsigned and SmartScreen will warn"
+              echo "signed=false" >> "$GITHUB_OUTPUT"
             fi
           fi
 
-      - uses: tauri-apps/tauri-action@v0
+      # Two bundle steps rather than one with conditional variables, because
+      # there is no way to leave an `env` key unset from an expression.
+      #
+      # GITHUB_TOKEN is what opens the draft release. Without it the Windows
+      # job built `Tessera_0.1.0_x64_en-US.msi`, found it, and then failed on
+      # `GITHUB_TOKEN is required`: an installer built and thrown away.
+      - name: bundle, signed
+        if: steps.signing.outputs.signed == 'true'
+        uses: tauri-apps/tauri-action@v0
         env:
-          # Absent on a fork and on any run whose repository has no certificate
-          # loaded. `tauri-action` signs when it finds these and does not when
-          # it does not, which is why the step above says which happened.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -115,13 +138,30 @@ jobs:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: Tessera ${{ inputs.tag || github.ref_name }}
 
+      - name: bundle, unsigned
+        if: steps.signing.outputs.signed == 'false'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app/src-tauri
+          args: --target ${{ matrix.target }}
+          releaseDraft: true
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: Tessera ${{ inputs.tag || github.ref_name }}
+
       - name: keep the installer
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tessera-${{ matrix.label }}
+          # `app/src-tauri` is a member of the root workspace, so cargo writes
+          # to `<repo>/target`, not to a target directory beside the crate.
+          # This looked in the second place and found nothing on a run where
+          # the msi had been built and named in the log directly above.
           path: |
-            app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            app/src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/msi/*.msi
+            target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
           if-no-files-found: warn
           retention-days: 14
