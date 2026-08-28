@@ -209,6 +209,10 @@
   color: var(--ink-3);
 }
 
+#modes button:hover:not(.on) {
+  color: var(--ink);
+}
+
 #modes button.on {
   background: var(--surface);
   color: var(--ink);
