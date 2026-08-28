@@ -43,7 +43,17 @@ async function importPack(page: import('@playwright/test').Page, file: string): 
   await page.locator('#rail [data-view="profile"]').click();
   await page.locator('[data-profile-tab="doctrine"]').click();
   await page.locator('#pack-path').fill(file);
+  // The import is a fetch the click starts, and the caller's next move may be a
+  // reload that tears the page down. A navigation aborts an in flight request
+  // the server has not read yet, so the pack this test wrote would never land:
+  // the response arriving is the core saying it has it. Armed before the click,
+  // because a response cannot be waited for after it has been received.
+  const landed = page.waitForResponse(
+    (r) => r.request().postData()?.includes('"pack.import"') ?? false,
+    { timeout: 30_000 },
+  );
   await page.locator('#pack-import button[type="submit"]').click();
+  await landed;
 }
 
 test.beforeEach(async ({ page }) => {
