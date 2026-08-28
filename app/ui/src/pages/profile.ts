@@ -11,6 +11,9 @@
 import { esc } from '../canvas/visual.js';
 import type { ProfileSummary } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
+import { chip } from '../ui/chip.js';
+import { segmented } from '../ui/segmented.js';
 import { emptyState } from './shared.js';
 
 export type ProfileTab = 'context' | 'models' | 'retrievers' | 'doctrine' | 'diagnostics';
@@ -24,12 +27,9 @@ const TABS: { id: ProfileTab; label: () => string }[] = [
 ];
 
 export function profileToolsHTML(tab: ProfileTab): string {
-  return (
-    `<div class="seg" role="group" aria-label="${COPY.profileTabsLabel}">` +
-    TABS.map(
-      (t) => `<button data-profile-tab="${t.id}"${t.id === tab ? ' class="on"' : ''}>${t.label()}</button>`,
-    ).join('') +
-    `</div>`
+  return segmented(
+    TABS.map((t) => ({ label: t.label(), on: t.id === tab, data: { 'profile-tab': t.id } })),
+    { ariaLabel: COPY.profileTabsLabel },
   );
 }
 
@@ -54,13 +54,16 @@ function models(profile: ProfileSummary): string {
           `<li class="lib-row" data-key-ref="${esc(a.key_ref)}">` +
           `<div class="what"><div class="line">` +
           `<span class="title">${esc(a.alias)}</span>` +
-          `<span class="chip">${esc(a.provider)}</span>` +
-          `<span class="chip ${a.key_present ? 'ok' : 'missing'}">` +
-          `${a.key_present ? COPY.profileKeySaved : COPY.profileKeyMissing}</span>` +
+          chip(a.provider) +
+          chip(a.key_present ? COPY.profileKeySaved : COPY.profileKeyMissing, {
+            classes: a.key_present ? 'ok' : 'missing',
+          }) +
           `</div>` +
           `<p class="meta">${esc(a.model)}, ${COPY.profileKeyRef} ${esc(a.key_ref)}</p></div>` +
           `<div class="verbs">` +
-          `<button data-key-act="edit">${a.key_present ? COPY.profileKeyReplace : COPY.profileKeyAdd}</button>` +
+          button(a.key_present ? COPY.profileKeyReplace : COPY.profileKeyAdd, {
+            data: { 'key-act': 'edit' },
+          }) +
           `</div></li>`,
       )
       .join('') +
@@ -80,10 +83,11 @@ function retrievers(profile: ProfileSummary): string {
         (r) =>
           `<li class="lib-row"><div class="what"><div class="line">` +
           `<span class="title">${esc(r.id)}</span>` +
-          `<span class="chip ${r.configured ? 'ok' : 'missing'}">` +
           // Doc 05 section 10 separates these two, and so does this row.
-          `${r.configured ? COPY.profileConfigured : COPY.profileUnconfigured}</span>` +
-          (r.enabled_by_default ? `<span class="chip">${COPY.profileOnByDefault}</span>` : '') +
+          chip(r.configured ? COPY.profileConfigured : COPY.profileUnconfigured, {
+            classes: r.configured ? 'ok' : 'missing',
+          }) +
+          (r.enabled_by_default ? chip(COPY.profileOnByDefault) : '') +
           `</div></div></li>`,
       )
       .join('') +
@@ -113,12 +117,12 @@ function doctrine(profile: ProfileSummary): string {
         (p) =>
           `<li class="lib-row" data-pack="${esc(p.code)}"><div class="what"><div class="line">` +
           `<span class="title">${esc(p.code)}</span>` +
-          `<span class="chip">${p.built_in ? COPY.profilePackBuiltIn : COPY.profilePackImported}</span>` +
-          (p.active ? `<span class="chip ok">${COPY.profilePackActive}</span>` : '') +
+          chip(p.built_in ? COPY.profilePackBuiltIn : COPY.profilePackImported) +
+          (p.active ? chip(COPY.profilePackActive, { classes: 'ok' }) : '') +
           `</div></div>` +
           (p.active
             ? ''
-            : `<div class="verbs"><button data-pack-act="use">${COPY.profilePackUse}</button></div>`) +
+            : `<div class="verbs">${button(COPY.profilePackUse, { data: { 'pack-act': 'use' } })}</div>`) +
           `</li>`,
       )
       .join('') +
@@ -141,7 +145,7 @@ function doctrine(profile: ProfileSummary): string {
     `<form id="pack-import" class="setup-folder">` +
     `<input id="pack-path" placeholder="${COPY.profilePackPath}" ` +
     `aria-label="${COPY.profilePackPath}" autocomplete="off" />` +
-    `<button type="submit">${COPY.profilePackImport}</button>` +
+    button(COPY.profilePackImport, { submit: true }) +
     `</form>` +
     `<p class="page-note">${COPY.profilePackImportNote}</p>`
   );

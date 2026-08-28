@@ -193,10 +193,6 @@
   max-height: 160px;
 }
 
-#ask::placeholder {
-  color: var(--ink-3);
-}
-
 #modes {
   display: flex;
   gap: 2px;
@@ -330,17 +326,7 @@
 }
 
 #anchor-pop button {
-  padding: var(--s2) var(--s3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-button);
-  font-size: 12px;
   flex: none;
-}
-
-#anchor-pop button.primary {
-  background: var(--user);
-  color: var(--surface);
-  border-color: transparent;
 }
 
 #anchor-pop .compose {
@@ -350,16 +336,6 @@
 
 #anchor-pop .compose[hidden] {
   display: none;
-}
-
-#anchor-pop input {
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--r-node);
-  padding: var(--s2) var(--s3);
 }
 
 #anchor-pop .acts {
@@ -429,10 +405,6 @@
 
 #reading-toggle,
 #pack-update {
-  padding: var(--s2) var(--s3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-button);
-  font-size: 12px;
   white-space: nowrap;
 }
 

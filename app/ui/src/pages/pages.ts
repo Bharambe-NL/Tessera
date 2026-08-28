@@ -15,6 +15,8 @@
 import { esc } from '../canvas/visual.js';
 import type { PageDetail, PageRow } from '../rpc.js';
 import { COPY } from '../strings.js';
+import { button } from '../ui/button.js';
+import { chip } from '../ui/chip.js';
 import { ago, emptyState } from './shared.js';
 
 export interface PagesState {
@@ -25,15 +27,16 @@ export interface PagesState {
 }
 
 export function pagesToolsHTML(state: PagesState): string {
+  // Verbs, not a selection: the seg wrapper these wore made "New page" read
+  // as a tab with nothing beside it.
   if (!state.open) {
-    return `<div class="seg"><button data-page-act="new">${COPY.pagesNew}</button></div>`;
+    return button(COPY.pagesNew, { data: { 'page-act': 'new' } });
   }
   return (
-    `<div class="seg">` +
-    `<button data-page-act="close">${COPY.pagesBack}</button>` +
-    `<button data-page-act="${state.editing ? 'preview' : 'edit'}"${state.editing ? '' : ' class="on"'}>` +
-    `${state.editing ? COPY.pagesPreview : COPY.pagesEdit}</button>` +
-    `</div>`
+    button(COPY.pagesBack, { variant: 'quiet', data: { 'page-act': 'close' } }) +
+    (state.editing
+      ? button(COPY.pagesPreview, { data: { 'page-act': 'preview' } })
+      : button(COPY.pagesEdit, { data: { 'page-act': 'edit' } }))
   );
 }
 
@@ -47,8 +50,8 @@ function row(p: PageRow): string {
   const carried = !p.from_card
     ? ''
     : p.citations_carried > 0
-      ? `<span class="chip">${p.citations_carried} ${COPY.pagesCarried}</span>`
-      : `<span class="chip">${COPY.pagesFromCard}</span>`;
+      ? chip(`${p.citations_carried} ${COPY.pagesCarried}`)
+      : chip(COPY.pagesFromCard);
   return (
     `<li class="lib-row" data-page="${esc(p.id)}">` +
     `<div class="what"><div class="line">` +
@@ -56,8 +59,8 @@ function row(p: PageRow): string {
     `<p class="meta">${esc(p.file_path)}, ${COPY.pagesEdited} ${esc(ago(p.updated_at))}</p>` +
     `</div>` +
     `<div class="verbs">` +
-    `<button data-page-act="open">${COPY.pagesOpen}</button>` +
-    `<button class="danger" data-page-act="remove">${COPY.pagesRemove}</button>` +
+    button(COPY.pagesOpen, { data: { 'page-act': 'open' } }) +
+    button(COPY.pagesRemove, { variant: 'danger', data: { 'page-act': 'remove' } }) +
     `</div></li>`
   );
 }
@@ -142,7 +145,7 @@ function backlinksPanel(page: PageDetail): string {
           `<li class="lib-row" data-page="${esc(b.page_id)}"><div class="what"><div class="line">` +
           `<span class="title">${esc(b.title)}</span></div>` +
           `<p class="meta">${esc(b.display_text)}</p></div>` +
-          `<div class="verbs"><button data-page-act="open">${COPY.pagesOpen}</button></div></li>`,
+          `<div class="verbs">${button(COPY.pagesOpen, { data: { 'page-act': 'open' } })}</div></li>`,
       )
       .join('') +
     `</ul>`
@@ -163,7 +166,8 @@ export function pagesHTML(rows: PageRow[], state: PagesState): string {
       `autocomplete="off" />` +
       `<textarea id="page-text" rows="18" aria-label="${COPY.pagesBody}" ` +
       `spellcheck="false">${esc(page.body)}</textarea>` +
-      `<div class="setup-acts"><button type="submit" class="primary">${COPY.pagesSave}</button>` +
+      `<div class="setup-acts">` +
+      button(COPY.pagesSave, { variant: 'primary', submit: true }) +
       `<span class="note page-file">${COPY.pagesFileNote} ${esc(page.file_path)}</span></div>` +
       `</form>`
     );

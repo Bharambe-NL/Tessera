@@ -8,6 +8,7 @@
 
 import { esc } from '../canvas/visual.js';
 import { COPY } from '../strings.js';
+import { chip } from '../ui/chip.js';
 
 /** A page that has nothing to show says what would put something there. */
 export function emptyState(message: string): string {
@@ -36,7 +37,7 @@ export function ago(iso: string, now = Date.now()): string {
 
 /** The severity chip doc 09 section 6 puts at the head of every flag row. */
 export function severityChip(severity: string): string {
-  return `<span class="chip sev ${esc(severity)}">${esc(severity)}</span>`;
+  return chip(severity, { classes: `sev ${severity}` });
 }
 
 /**

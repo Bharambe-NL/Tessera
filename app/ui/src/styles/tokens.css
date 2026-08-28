@@ -60,11 +60,14 @@
   --gap-y: 90px;
   --branch-x: 120px;
 
-  /* motion. Doc 11 section 7. */
+  /* motion. Doc 11 section 7. --t-hover is the one addition: a control's
+     hover and focus states move at a beat the section's three named times are
+     too slow for, and a state change with no time at all is a flicker. */
   --ease: cubic-bezier(0.165, 0.84, 0.44, 1);
   --t-rise: 360ms;
   --t-layout: 380ms;
   --t-view: 420ms;
+  --t-hover: 140ms;
 
   /* stacking */
   --z-sticky: 20;
@@ -126,5 +129,6 @@
     --t-rise: 0ms;
     --t-layout: 0ms;
     --t-view: 0ms;
+    --t-hover: 0ms;
   }
 }

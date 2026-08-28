@@ -136,10 +136,10 @@
         <!-- Doc 11 section 10: the canvas list view alternative, reachable from
              the title. A canvas is a spatial arrangement and a screen reader
              has no way to convey one, so the same cards render as a document. -->
-        <button id="reading-toggle" aria-pressed="false">Read as a document</button>
+        <button id="reading-toggle" class="btn" aria-pressed="false">Read as a document</button>
         <!-- Doc 10 section 9: a pack update never rewrites a board's pinned
              version; the board offers "update pack", which reruns verify_only. -->
-        <button id="pack-update" hidden></button>
+        <button id="pack-update" class="btn" hidden></button>
       </div>
 
       <div id="toolbar" data-no-pan>
@@ -176,16 +176,16 @@
       <div id="anchor-pop" role="dialog" aria-label="Ask about this" data-no-pan hidden>
         <div class="offer">
           <span class="anchor-label"></span>
-          <button id="anchor-ask" type="button"></button>
+          <button id="anchor-ask" class="btn" type="button"></button>
           <!-- Doc 16 section 3.6: "Add note" from the highlight menu, with the
                quote prefilled. -->
-          <button id="anchor-note" type="button" hidden></button>
+          <button id="anchor-note" class="btn" type="button" hidden></button>
         </div>
         <form class="compose" hidden>
           <input id="anchor-question" aria-label="Ask about this" autocomplete="off" />
           <div class="acts">
-            <button id="anchor-cancel" type="button">Not now</button>
-            <button id="anchor-branch" type="submit" class="primary">Branch here</button>
+            <button id="anchor-cancel" class="btn quiet" type="button">Not now</button>
+            <button id="anchor-branch" type="submit" class="btn primary">Branch here</button>
           </div>
         </form>
       </div>
@@ -197,7 +197,7 @@
       <aside id="tutor" aria-label="Tutor" data-no-pan hidden>
         <header>
           <span id="tutor-stage"></span>
-          <button id="tutor-close" aria-label="End the session">✕</button>
+          <button id="tutor-close" class="btn quiet" aria-label="End the session">✕</button>
         </header>
         <div id="tutor-body"></div>
       </aside>
@@ -208,7 +208,7 @@
         <div class="sheet">
           <header>
             <h2 id="ex-title">Check your understanding</h2>
-            <button id="ex-dismiss" aria-label="Close">✕</button>
+            <button id="ex-dismiss" class="btn quiet" aria-label="Close">✕</button>
           </header>
           <div id="ex-body"></div>
         </div>
