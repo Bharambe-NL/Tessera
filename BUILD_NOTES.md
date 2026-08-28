@@ -1910,7 +1910,7 @@ unexplained silence.
 
 ---
 
-### BN-102 Kimi is unreachable from the build container, and that is a policy denial
+### BN-102 Kimi is unreachable from one environment, and that is a policy denial
 
 **Measured** 2026-08-27. `api.moonshot.ai:443` answers 403 to CONNECT through
 the session's egress proxy. `api.anthropic.com` is on the proxy's bypass list
@@ -1928,6 +1928,28 @@ or route around it. Recorded rather than solved.
 **What this does not say.** Nothing about whether the Kimi key is valid. The
 request never reached a Moonshot server, so the key is untested and stays that
 way until the sweep runs somewhere that can reach one.
+
+**Amended 2026-08-28: the title is wrong and this entry misled its own author.**
+Kimi is not unreachable from "the build container". It is unreachable from *an
+environment whose network policy is allowlist only*, and Tessera has run two
+full four hundred question sweeps against `api.moonshot.ai` from an environment
+that was not: `eval/results/42/kimi-bulk/run-1787660259` and `run-1787665281`,
+2026-08-25 12:17 and 13:41 UTC, 398 of 400 and 400 of 400 cards produced on
+`kimi-k2.6` and `kimi-k3`.
+
+What settles it is that nothing about Moonshot was singled out. In the blocked
+environment `api.openai.com`, `example.com` and `www.google.com` answer 403 to
+CONNECT as well, and what answers normally is exactly the proxy's bypass list:
+the Anthropic API and the package registries. So this is one environment
+setting, not a standing denial, and the fix is to run the sweep from an
+environment with open network access rather than to work around anything.
+
+Recorded because this entry was read a day later as evidence that the ninety
+five percent leg could never run, and the owner had to say "it worked
+yesterday" twice before anyone checked the results tree sitting next to it. A
+measurement of one environment written as a property of the product is the
+failure here, and it is the same class as a metric reporting a number for
+something it never measured.
 
 ---
 
