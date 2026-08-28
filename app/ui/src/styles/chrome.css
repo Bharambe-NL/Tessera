@@ -102,20 +102,74 @@
 
 /* ---- composer ---- */
 
+/*
+ * Doc 11 section 5 puts the composer bottom centre. Centre of what was the
+ * question: `left: 50%` measures the window, and the canvas starts where the
+ * rail ends, so the composer sat half a rail to the left of the space it
+ * belongs in. With the rail open that is 120px, and its left edge landed at
+ * 160px under a 240px rail, so the rail was drawn on top of the composer.
+ *
+ * Anchoring to `--rail-w` on one side and the window on the other, with an auto
+ * margin either side, centres it on the canvas at every rail width and needs no
+ * number of its own.
+ */
 #composer {
   bottom: var(--s8);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(680px, calc(100vw - var(--s9)));
+  left: var(--rail-w);
+  right: 0;
+  margin-inline: auto;
+  width: min(680px, calc(100vw - var(--rail-w) - var(--s9)));
+
+  /*
+   * The question owns the top row and the controls sit under it. Four children
+   * were being laid into three columns, so `#send` wrapped to a second row and
+   * landed back under the textarea, and the three that did fit were aligned
+   * only at their bottoms, which is why a 19px Learn button appeared to hang
+   * between a 32px field and a 26px group of pills.
+   *
+   * Areas rather than an added wrapper, because the markup stays as it is.
+   */
   display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: end;
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-areas:
+    'ask ask ask ask'
+    'learn modes . send';
+  align-items: center;
   gap: var(--s3);
-  padding: var(--s4) var(--s4) var(--s4) var(--s6);
+  padding: var(--s4) var(--s5);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-composer);
   box-shadow: var(--shadow-popover);
+
+  /* The rail's own 360ms, so the composer travels with the rail instead of
+     jumping when it lands. Doc 11 section 7 adds no motion here: this is the
+     move the rail was already making. */
+  transition:
+    left var(--t-rise) var(--ease),
+    width var(--t-rise) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #composer {
+    transition: none;
+  }
+}
+
+#ask {
+  grid-area: ask;
+}
+
+#learn {
+  grid-area: learn;
+}
+
+#modes {
+  grid-area: modes;
+}
+
+#send {
+  grid-area: send;
 }
 
 #composer.busy {
