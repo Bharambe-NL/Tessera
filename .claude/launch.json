@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "app/ui", "dev"],
       "port": 5183
+    },
+    {
+      "name": "tessera-ui-server",
+      "runtimeExecutable": "target/debug/tessera-ui-server.exe",
+      "runtimeArgs": ["--ui", "app/ui/dist", "--port", "8734"],
+      "port": 8734
     }
   ]
 }
