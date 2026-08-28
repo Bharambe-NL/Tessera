@@ -4120,6 +4120,64 @@ the 20 board bundle round trip whole.
 
 ---
 
+### BN-149 The first build anybody ever ran, and the four things between it and an installer
+
+**Spec** Doc 12 phase 11, the packaging nobody had executed.
+
+**What landed.** A macOS installer. `tessera-macos`, 10.6 MB, built on `macos-14` from
+`dc380ea`, and the first artifact this project has ever produced.
+
+**None of the four failures were in the product.** Every one was in a workflow written at M13a and
+never once executed. The product compiled and passed its whole test suite on both platforms at the
+first attempt: `cargo test --workspace` green on macOS and on Windows, and a release compile of
+5m55s and 10m12s. That is the first cross platform evidence this codebase has, and it cost nothing
+to get because it was right already.
+
+**One: the CI had never run at all.** 194 workflow runs, every one a failure, every one ending in
+two seconds with no runner assigned and no logs. BN-095 diagnosed this at M13a as "what an account
+with no Actions minutes looks like" and it stayed true for a day and a half while every push went
+red unwatched. Making the repository public gave it runners. Worth naming: the diagnosis was
+correct and written down, and nobody, this author included, went back to look at whether a red
+tick meant anything.
+
+**Two: `beforeBuildCommand` pointed at a directory that has never existed.** Tauri resolves it from
+the project root, which is `app/`, not from the directory holding `tauri.conf.json`, so
+`pnpm --dir ../ui build` named `<repo>/ui`. The ui is at `app/ui`. `frontendDist` in the same file
+is `../ui/dist` and is correct, because *config paths* resolve from `tauri.conf.json` instead. Two
+resolution rules in one file, and the one that was never exercised was the one that was wrong.
+
+**Three: an installer built and thrown away.** Windows compiled for ten minutes, produced
+`Tessera_0.1.0_x64_en-US.msi`, printed its path, listed it under "Found artifacts", and then failed
+on `GITHUB_TOKEN is required`. The workflow had never passed the token, so tauri-action could not
+open the draft release it was told to make.
+
+**Four: an empty certificate is still a certificate.** `APPLE_CERTIFICATE: ${{ secrets.X }}` with
+no secret set yields an empty string that is nonetheless a *defined* variable, and the Tauri
+bundler reads presence rather than emptiness. macOS compiled cleanly and then ran `security import`
+on a blank certificate. There is no way to leave an `env` key unset from an expression, so the
+signing decision became a step output and the certificate variables now attach to one of two bundle
+steps.
+
+**And a fifth, latent.** The artifact upload looked under `app/src-tauri/target`. That crate is a
+member of the root workspace, so cargo writes to `<repo>/target`, and the step reported "no files
+were found" on a run whose own log had named the msi three lines above. It would have swallowed
+every future build silently.
+
+**What this says about the record.** Four of the five were visible in a log the moment they
+happened, and the fifth in the workspace manifest. None was found by reasoning about the code; each
+was found by reading the failure. The pattern this session keeps repeating is that a written down
+diagnosis nobody revisits is worth about as much as no diagnosis at all.
+
+**Still unsigned.** Gatekeeper refuses the dmg until an Apple certificate exists, and the job says
+so in its own output rather than letting the learner discover it. Right click and Open gets past it.
+
+**Measured** 2026-08-28, run 33148080955.
+
+**Verified** macOS job green end to end, artifact uploaded and downloadable.
+
+---
+
+
 
 
 ---
