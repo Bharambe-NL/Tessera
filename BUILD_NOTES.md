@@ -4177,6 +4177,58 @@ so in its own output rather than letting the learner discover it. Right click an
 
 ---
 
+### BN-150 A second model says the Router finding was half wrong
+
+**Spec** Doc 03 section 8.2, correcting BN-148.
+
+**What ran.** The 95/5 sweep, stopped at 78 questions after three hours and fifty two minutes. It
+was going to need sixteen more. Kimi is a reasoning model now: a probe spent 74 of 81 output tokens
+reasoning before answering, and at roughly six calls a question that is a tenth of Anthropic's
+throughput. The same models did four hundred questions in about eighty minutes on 2026-08-25, so
+this is a change at the provider rather than in this code.
+
+**Nothing was written.** The runner writes `runs.jsonl` when the whole sweep finishes, so an
+interrupted run of any length produces no output at all. The 78 questions were recovered by reading
+the worker stores directly. A run that costs hours and cannot be stopped without losing everything
+is a design worth revisiting before the next long one.
+
+**The correction.** BN-148 read `route_accuracy` 0.675 at n=40 on Anthropic and concluded that
+`research` was structurally unreachable because the only rule that opens it needs
+`comparative && entities >= 3`, and Anthropic returned zero entities on all forty questions. That
+was the wrong cause, and one more model was enough to show it.
+
+Kimi fills `entities`: one to five of them on 74 of 78 questions. And `research` is still missed on
+all eight questions that want it. Split by what the Router actually said, every one of those eight
+came back `regulatory` or `definitional` with three or four entities, and the single question that
+did reach `research` was `exploratory` with two. The entity count never decided anything.
+
+So the trigger is the problem, not the field: the rule opens `research` for `comparative` or
+`exploratory`, and neither model calls these questions either of those things. The fix BN-148
+proposed, making `entities` required, would have changed nothing.
+
+**What holds on both models.** `regulatory_stakes` saturates: 37 of 40 on Anthropic, 72 of 78 on
+Kimi, 92 percent both times. The finance pack hints `deep` for those and nothing in `resolve_depth`
+ever lowers a recommendation, so `deep` is a floor and `fast` is unreachable. Zero of four on
+Anthropic, zero of four on Kimi.
+
+| | Anthropic n=40 | Kimi n=78 |
+|---|---|---|
+| `regulatory_stakes` true | 0.925 | 0.923 |
+| `fast` recommended correctly | 0/4 | 0/4 |
+| `research` recommended correctly | 0/6 | 0/8 |
+| `route_accuracy` | 0.675 | 0.756 |
+
+**Why this was worth the hours.** One model is a sample of one. The half of BN-148 that survived
+contact with a second model is the half about doctrine and the ladder, which is code; the half that
+did not was an inference about a model's habits dressed up as a structural claim. Two models is
+still two, and the next reading of this should say so.
+
+**Measured** 2026-08-28, `--bulk-provider moonshot --sample-per-depth 7`, stopped at 78 of 400,
+recovered from the worker stores.
+
+---
+
+
 
 
 
