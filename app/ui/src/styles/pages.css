@@ -121,13 +121,16 @@ body.rail-open .rail-item .label {
   opacity: 1;
 }
 
+/* The rail sits on --surface, and --bg against it is a hover nobody can see.
+   The soft accent is visible in both themes; the open section keeps it and
+   adds weight, which is what aria-current already says. */
 .rail-item:hover {
-  background: var(--bg);
+  background: var(--accent-soft);
   color: var(--ink);
 }
 
 .rail-item.on {
-  background: var(--bg);
+  background: var(--accent-soft);
   color: var(--ink);
   font-weight: 600;
 }
@@ -204,6 +207,7 @@ body.rail-open .rail-item .label {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+  text-wrap: balance;
 }
 
 #page-tools {
@@ -214,9 +218,11 @@ body.rail-open .rail-item .label {
 }
 
 .page-empty {
-  margin: var(--s7) 0;
+  margin: var(--s8) 0;
+  max-width: 60ch;
   color: var(--ink-2);
   font-size: 13px;
+  line-height: 1.55;
 }
 
 .page-note {
@@ -243,6 +249,9 @@ body.rail-open .rail-item .label {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-card);
+  transition:
+    border-color var(--t-hover) var(--ease),
+    box-shadow var(--t-hover) var(--ease);
 }
 
 .board-card header {
@@ -310,6 +319,18 @@ body.rail-open .rail-item .label {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-node);
+  transition:
+    border-color var(--t-hover) var(--ease),
+    box-shadow var(--t-hover) var(--ease);
+}
+
+/* A row under the pointer firms its edge rather than changing colour: the
+   rows sit on --bg already, so a background hover would sink them. */
+.flag-row:hover,
+.lib-row:hover,
+.board-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card);
 }
 
 .flag-row .what,
@@ -501,6 +522,14 @@ body.rail-open .rail-item .label {
   cursor: pointer;
 }
 
+.opt {
+  transition: border-color var(--t-hover) var(--ease);
+}
+
+.opt:hover {
+  border-color: var(--line-strong);
+}
+
 .opt.chosen {
   border-color: var(--ink-2);
 }
@@ -563,7 +592,10 @@ body.learning {
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border-left: 1px solid var(--line);
+  /* A dock is a layer over the board, and doc 11 section 3's elevation rules
+     give a layer its edge and its one shadow. */
+  border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-popover);
 }
 
 #tutor[hidden] {
@@ -641,6 +673,11 @@ body.learning #main {
   border: 1px solid var(--line);
   border-radius: var(--r-node);
   font-size: 12.5px;
+}
+
+.tutor-log .opts button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--bg);
 }
 
 /* Doc 14 section 3.9: olive for right, amber for wrong, and only after the
@@ -857,10 +894,25 @@ ol.setup .note {
   max-width: 62ch;
 }
 
+/* Doc 11 section 3's display ceiling is 20px; the browser's default h2 sits
+   right against it, so the page prose gets its own short scale. */
 .page-read h2,
 .page-read h3,
 .page-read h4 {
   margin: var(--s4) 0 var(--s2);
+  text-wrap: balance;
+}
+
+.page-read h2 {
+  font-size: 17px;
+}
+
+.page-read h3 {
+  font-size: 15px;
+}
+
+.page-read h4 {
+  font-size: 13px;
 }
 
 .page-read p,

@@ -147,7 +147,8 @@ body {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  padding: 2px;
+  padding: var(--s1);
+  border-radius: var(--r-node);
   flex: none;
 }
 
@@ -161,6 +162,7 @@ body {
 .card .head .rerun:hover:not(:disabled),
 .card .head .save:hover:not(:disabled) {
   color: var(--ink);
+  background: var(--bg);
 }
 
 .dot {
@@ -381,6 +383,13 @@ table.cmp td {
   text-align: left;
 }
 
+/* The header row reads as one before the columns are read. No zebra: the
+   table is generated content, and stripes are chrome. */
+table.cmp th {
+  background: var(--bg);
+  font-weight: 600;
+}
+
 .vis .bottom {
   margin-top: var(--s4);
   padding-top: var(--s3);
@@ -524,7 +533,8 @@ table.cmp td {
   border-radius: var(--r-node);
   background: var(--amber);
   color: var(--amber-ink);
-  box-shadow: 0 2px 6px oklch(0 0 0 / 0.08);
+  /* The token, so the sticky keeps a shadow in both themes. */
+  box-shadow: var(--shadow-card);
   font-size: 12px;
   line-height: 1.45;
 }
