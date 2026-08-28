@@ -4031,6 +4031,74 @@ round trip whole.
 
 ---
 
+### BN-148 The first live sweep past a dozen questions, and a gate that was measuring nothing
+
+**Spec** Doc 02 section 10, the parked full sweep.
+
+**What ran.** Forty questions on Anthropic, the first live measurement since BN-105's twelve.
+Haiku 4.5, Sonnet 5 and Opus 5 across the tiers, 226 model calls, 501k input and 138k output
+tokens, about 14 dollars at BN-105's rate. Thirty nine of forty produced a card. The fortieth,
+`Q-0010` at deep, died on `schema_violation`: the provider returned no parsable json object, which
+is BN-103's class and still the one failure only a live run can show.
+
+**Kimi carried none of it.** Doc 02's design is 95 percent bulk on Kimi with a 5 percent Anthropic
+reference sample to calibrate against. `api.moonshot.ai:443` is refused by the session's egress
+policy, so the bulk leg could not run and this is the reference leg standing alone. That makes these
+product quality numbers rather than calibration numbers: calibration is the comparison, and there
+is nothing yet to compare against. Reported here as what it is rather than filed as the sweep.
+
+**The Router collapses toward deep.** `route_accuracy` reads 0.675 against a 0.85 gate, and split
+by the depth the corpus expected it is one behaviour rather than thirteen errors:
+
+| Expected | Recommended | |
+|---|---|---|
+| deep | deep 27, fast 3 | 27/30 |
+| research | deep 6 | 0/6 |
+| fast | deep 4 | 0/4 |
+
+Every research and every fast question was recommended deep. The Router is good at the middle and
+recommends nothing else at the edges. Six and four are small denominators, but a miss rate of one
+with a consistent direction is a finding rather than noise.
+
+**A gate that could not have passed.** `flag_false_positive_rate` read 1.000 against a 0.10 gate and
+named nine rules as crying wolf. Split by rule, every one of them fired on cards where the corpus
+had planted no expectation at all: `expected_flags` was empty on all thirty nine answered cards.
+The corpus plants exactly one rule, `advice_request`, on twenty of four hundred questions, all at
+indices 160 to 179, and a run of the first forty carries none of them. The metric compared flags
+that fired against a ground truth that did not exist, so it was pinned at maximum badness before
+the run started.
+
+Fixed at the metric: a false positive is a flag that fired where the corpus says it should not
+have, so only rules the corpus plants somewhere in the run can be scored, and a run that plants
+none reports n/a naming what it waits for. This is the governing metric rule in its own mirror.
+Reporting the worst possible value with nothing to measure is the same error as reporting zero, and
+it cost nine Verifier rules a false accusation.
+
+**Where the visuals are.** `visual_type_match` reads 0.051, and its own split says why: table 0/22,
+tree 0/10, list 0/5, steps 2/2. Twenty two of thirty nine cards expected a table and none got one.
+That is the metric M14.5 already diagnosed at 0.083 on twelve questions, holding at forty, and it is
+one type dominating rather than a spread.
+
+**Three near misses on thin denominators**, reported rather than acted on. `citation_accuracy_ledger`
+0.923 against 0.95, `retriever_assignment_accuracy` 0.915 against 0.95, and `verifier_agreement`
+0.750 against 0.90 where `citations_the_ledger_can_judge` is only 0.209, so the denominator is a
+fifth of the citations and one disagreement moves it a long way.
+
+**What held.** `fact_recall_deep` 0.966, `forbidden_fact_rate` 0.000, `forbidden_fact_unflagged`
+0.000, `injection_resistance` 1.000 with three hostile documents demonstrably seen and none cited,
+`must_exclude_compliance` 1.000, `visual_fidelity` 1.000, `own_card_sole_support_rate` 0.000 and
+`source_hierarchy_compliance` 1.000.
+
+**Measured** 2026-08-27, `tessera-eval --corpus synthetic/42 --limit 40 --bulk-provider anthropic
+--sample-per-depth 0`, results at `eval/results/42/anthropic/run-1787884598`.
+
+**Verified** Full battery green: workspace tests, clippy at `-D warnings`, fmt, style lint, 93
+generator guards, 76 Playwright tests, the grounded sweep rescored with nothing below threshold, and
+the 20 board bundle round trip whole.
+
+---
+
+
 
 ---
 

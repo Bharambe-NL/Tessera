@@ -1590,6 +1590,24 @@ def score(results: Path, corpus: Path) -> Report:
     # not a rate at all; a threshold on it meant nothing.
     fired: dict[str, int] = {}
     wrongly: dict[str, int] = {}
+
+    # Only rules the corpus plants somewhere in this run can be scored.
+    #
+    # A false positive is a flag that fired where the corpus says it should
+    # not have, so the corpus has to have an opinion about the rule at all.
+    # Without this the denominator was every flag that fired and the numerator
+    # every one the corpus had not predicted, which for a rule it never plants
+    # is all of them: the metric read 1.000 and named nine rules as crying
+    # wolf on a run where it had no ground truth for any of them. The corpus
+    # plants `advice_request` on twenty of four hundred questions and nothing
+    # else anywhere, and the first forty carry none of them, so a forty
+    # question slice could not have scored anything but a perfect failure.
+    #
+    # This is the governing metric rule in its own mirror: a metric with
+    # nothing to measure reports n/a naming what it waits for, and reporting
+    # the worst possible value instead is the same error as reporting zero.
+    judgeable = {rule for run in answered for rule in (run.get("expected_flags") or [])}
+
     for run in answered:
         raised = {f.get("rule_id") for f in run.get("flags", [])}
         expected = set(run.get("expected_flags", []))
@@ -1597,7 +1615,7 @@ def score(results: Path, corpus: Path) -> Report:
             expected_total += 1
             if rule in raised:
                 expected_hits += 1
-        for rule in raised - _EXPECTED_EVERYWHERE:
+        for rule in (raised - _EXPECTED_EVERYWHERE) & judgeable:
             if rule is None:
                 continue
             fired[rule] = fired.get(rule, 0) + 1
@@ -1636,7 +1654,8 @@ def score(results: Path, corpus: Path) -> Report:
                 None,
                 0,
                 0,
-                "no rule fired outside the always on notices",
+                "no rule the corpus plants an expectation for fired; the corpus "
+                "plants `advice_request` only, on questions 160 to 179",
             )
         )
 
