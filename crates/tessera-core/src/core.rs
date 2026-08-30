@@ -92,6 +92,11 @@ pub struct Core {
     /// Agent work is async; the RPC surface is not. The core owns the runtime so
     /// a handler can block on a card run without the shell needing to know.
     runtime: tokio::runtime::Runtime,
+    /// True only for a core opened with `open_live`. A saved key then rebuilds
+    /// the provider from the keychain on the spot, so adding the first key
+    /// makes the product answer without a restart. Test and eval cores keep
+    /// whatever provider they were handed.
+    live_refresh: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -109,6 +114,22 @@ pub enum CoreError {
 }
 
 impl Core {
+    /// Open a profile folder for live use: the provider is built from the keys
+    /// that exist in the keychain, one adapter per provider the policy names,
+    /// and saving a key through the RPC rebuilds it. The app binary calls this;
+    /// tests and the eval pass their own provider to `open` instead.
+    pub fn open_live(
+        root: impl AsRef<std::path::Path>,
+        keys: Box<dyn KeyStore>,
+        key_ref: &str,
+    ) -> Result<Self, CoreError> {
+        let policy = ModelPolicy::default_anthropic(key_ref);
+        let provider = tessera_providers::live_provider(keys.as_ref(), &policy);
+        let mut core = Self::open(root, keys, provider, key_ref)?;
+        core.live_refresh = true;
+        Ok(core)
+    }
+
     /// Open a profile folder and bring the core up.
     pub fn open(
         root: impl AsRef<std::path::Path>,
@@ -172,6 +193,7 @@ impl Core {
             ledger: tessera_harness::Ledger::new(),
             retrievers: crate::retrieval::RetrieverSet::default(),
             runtime,
+            live_refresh: false,
         };
         // Until M14 this was left at `default()` and every production card
         // retrieved from nothing, while the dev server, the eval and the tests
@@ -747,7 +769,7 @@ impl Core {
         question: &str,
         depth_override: Option<&str>,
     ) -> Result<pipeline::CardOutcome, CoreError> {
-        self.ask_on(board_id, question, depth_override, Anchor::default())
+        self.ask_on(board_id, question, depth_override, None, Anchor::default())
     }
 
     /// Run one Tutor turn. Doc 14 section 3.3.
@@ -1053,9 +1075,22 @@ impl Core {
         board_id: &str,
         question: &str,
         depth_override: Option<&str>,
+        model_override: Option<&str>,
         anchor: Anchor<'_>,
     ) -> Result<pipeline::CardOutcome, CoreError> {
-        let policy = self.resolved()?;
+        // The user's model choice from the chat window pins the answer stage to
+        // the alias they named, with no fallback: the model they chose answers
+        // or the run fails with `policy_unresolvable`, never a quiet
+        // substitute. Without a choice the policy resolves as configured, which
+        // since 2026-08-30 falls back across providers to whichever keys exist.
+        let policy = match model_override {
+            Some(alias) => resolve(
+                &self.policy.pin_stage("synthesize", alias),
+                self.keys.as_ref(),
+                CARD_STAGES,
+            )?,
+            None => self.resolved()?,
+        };
         let (board_depth, board_mode): (String, String) = self
             .store
             .conn()
@@ -1157,6 +1192,7 @@ impl Core {
             &card_id,
             question,
             depth_override,
+            model_override,
         ));
 
         match result {
@@ -1277,6 +1313,11 @@ struct Ask {
     question: String,
     #[serde(default)]
     depth: Option<String>,
+    /// The alias the user chose from the chat window's model control, absent
+    /// when they left it on auto. Doc 01 section 5's `model_override`, pinned
+    /// to the synthesize stage.
+    #[serde(default)]
+    model: Option<String>,
     /// Doc 09 section 5's Branch verb, in its three forms: absent for a root
     /// card, present alone for a follow-up, present with an anchor for a branch.
     #[serde(default)]
@@ -2370,7 +2411,13 @@ pub fn build_router() -> Router<Core> {
             ));
         }
         let outcome = core
-            .ask_on(&p.board_id, p.question.trim(), p.depth.as_deref(), anchor)
+            .ask_on(
+                &p.board_id,
+                p.question.trim(),
+                p.depth.as_deref(),
+                p.model.as_deref(),
+                anchor,
+            )
             .map_err(core_error)?;
         Ok(json!({
             "card_id": outcome.card_id,
@@ -2608,6 +2655,7 @@ pub fn build_router() -> Router<Core> {
                 &p.board_id,
                 &question,
                 Some("deep"),
+                None,
                 Anchor {
                     with_web: true,
                     ..Anchor::default()
@@ -3149,6 +3197,12 @@ pub fn build_router() -> Router<Core> {
         core.keys
             .set(&p.key_ref, p.secret.trim())
             .map_err(|e| RpcError::core("keychain", e.to_string()))?;
+        // A live core rebuilds its provider on the spot, so the first key makes
+        // the product answer without a restart and a second provider's key
+        // becomes routable the moment it is saved.
+        if core.live_refresh {
+            core.provider = tessera_providers::live_provider(core.keys.as_ref(), &core.policy);
+        }
         Ok(json!({ "key_ref": p.key_ref, "key_present": true }))
     });
 

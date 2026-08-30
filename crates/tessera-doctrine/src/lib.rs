@@ -320,11 +320,6 @@ pub struct DoctrinePack {
     pub domains: Vec<String>,
     #[serde(default)]
     pub domain_vocabulary: BTreeMap<String, Vec<String>>,
-    #[serde(default)]
-    pub depth_hints: BTreeMap<String, String>,
-    /// Doc 03 open question 3: the pack may set a minimum the user cannot lower.
-    #[serde(default)]
-    pub minimum_depth: BTreeMap<String, String>,
 
     pub audiences: Vec<Audience>,
     pub source_hierarchy: Vec<SourceRank>,
@@ -376,28 +371,6 @@ impl DoctrinePack {
             code,
             detail: e.to_string(),
         })
-    }
-
-    /// Doc 03 section 8.2 step 3, and open question 3 resolved as proposed: a
-    /// pack may set a minimum depth the user cannot lower.
-    pub fn floor_depth(&self, domain: &str, chosen: &str) -> &str {
-        let rank = |d: &str| match d {
-            "fast" => 0,
-            "deep" => 1,
-            _ => 2,
-        };
-        match self.minimum_depth.get(domain) {
-            Some(min) if rank(min) > rank(chosen) => match min.as_str() {
-                "fast" => "fast",
-                "deep" => "deep",
-                _ => "research",
-            },
-            _ => match chosen {
-                "fast" => "fast",
-                "deep" => "deep",
-                _ => "research",
-            },
-        }
     }
 
     /// The trust rank doctrine assigns a source. Doc 05 section 5: never the
@@ -941,15 +914,22 @@ mod tests {
     }
 
     #[test]
-    fn a_pack_minimum_depth_raises_but_never_lowers() {
-        // Doc 03 open question 3, resolved as proposed.
-        let pack = DoctrinePack {
-            minimum_depth: BTreeMap::from([("capital".to_string(), "deep".to_string())]),
-            ..blank()
-        };
-        assert_eq!(pack.floor_depth("capital", "fast"), "deep");
-        assert_eq!(pack.floor_depth("capital", "research"), "research");
-        assert_eq!(pack.floor_depth("payments", "fast"), "fast");
+    fn a_pack_with_the_retired_depth_fields_still_parses_and_they_are_ignored() {
+        // Owner decision 2026-08-30: packs no longer influence depth. An
+        // imported pack written before that day may still carry the two retired
+        // fields, and refusing it would punish the user for a rule change they
+        // did not make. Serde drops unknown fields, so the pack loads and the
+        // fields decide nothing.
+        let registry = Registry::load().expect("registry");
+        let raw = r#"{
+            "code": "test", "version": "1.0.0",
+            "audiences": [], "source_hierarchy": [], "freshness_classes": {},
+            "flag_rules": [], "retrievers": [], "exercise_templates": [],
+            "depth_hints": { "regulatory_stakes": "deep" },
+            "minimum_depth": { "capital": "deep" }
+        }"#;
+        let pack = DoctrinePack::parse(&registry, raw).expect("an old pack still loads");
+        assert_eq!(pack.code, "test");
     }
 
     #[test]
@@ -981,8 +961,6 @@ mod tests {
             description: None,
             domains: vec![],
             domain_vocabulary: BTreeMap::new(),
-            depth_hints: BTreeMap::new(),
-            minimum_depth: BTreeMap::new(),
             audiences: vec![],
             source_hierarchy: vec![],
             freshness_classes: BTreeMap::new(),

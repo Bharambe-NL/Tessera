@@ -43,9 +43,6 @@
       "model owner"
     ]
   },
-  "depth_hints": {
-    "regulatory_stakes": "deep"
-  },
   "audiences": [
     {
       "id": "risk",

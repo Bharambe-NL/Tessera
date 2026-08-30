@@ -54,25 +54,11 @@
     },
     "depth_hints": {
       "type": "object",
-      "additionalProperties": {
-        "enum": [
-          "fast",
-          "deep",
-          "research"
-        ]
-      },
-      "description": "Minimum depth the doctrine suggests per domain. Doc 03 section 8.2 step 3."
+      "description": "Retired on 2026-08-30. Packs no longer influence depth; the Router decides from its own classification. Accepted so packs written earlier still import, and ignored."
     },
     "minimum_depth": {
       "type": "object",
-      "additionalProperties": {
-        "enum": [
-          "fast",
-          "deep",
-          "research"
-        ]
-      },
-      "description": "Doc 03 open question 3, resolved as proposed: the pack may set a minimum the user cannot lower, and the UI shows why fast is unavailable for this question."
+      "description": "Retired on 2026-08-30 with depth_hints. Accepted so packs written earlier still import, and ignored."
     },
     "audiences": {
       "type": "array",

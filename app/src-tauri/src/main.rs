@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tessera_core::{Core, Router};
-use tessera_providers::{AnthropicProvider, KeyStore, MockProvider, ModelProvider, OsKeychain};
+use tessera_providers::OsKeychain;
 
 /// Set to a card count to run the doc 12 phase 0 acceptance gate instead of the
 /// normal board, print the result to stdout, and exit with the gate's verdict.
@@ -65,22 +65,6 @@ fn profile_root() -> std::path::PathBuf {
         .join("default")
 }
 
-/// Without a key the app still opens; it just cannot answer a card. The failure
-/// then arrives as `policy_unresolvable` with a message that says where to fix
-/// it, which is better than refusing to start.
-fn build_provider() -> Arc<dyn ModelProvider> {
-    match OsKeychain.get(KEY_REF) {
-        Ok(key) => match AnthropicProvider::new(key) {
-            Ok(p) => Arc::new(p),
-            Err(e) => {
-                eprintln!("could not build the Anthropic provider: {e}");
-                Arc::new(MockProvider::new())
-            }
-        },
-        Err(_) => Arc::new(MockProvider::new()),
-    }
-}
-
 /// Called once by the webview when the gate finishes. Printing here rather than
 /// in the webview means the numbers land in the terminal and in CI, which is
 /// where a regression has to be visible.
@@ -134,7 +118,12 @@ fn main() -> ExitCode {
             // profile: a fixture board needs no store.
             if !gating {
                 let root = profile_root();
-                match Core::open(&root, Box::new(OsKeychain), build_provider(), KEY_REF) {
+                // The provider is built from whichever keys the keychain holds,
+                // one adapter per provider the policy names, and rebuilt when a
+                // key is saved. Without any key the app still opens; a card
+                // then fails as `policy_unresolvable` with a message that says
+                // where to fix it, which is better than refusing to start.
+                match Core::open_live(&root, Box::new(OsKeychain), KEY_REF) {
                     Ok(core) => {
                         app.manage(Shell {
                             core: Arc::new(Mutex::new(core)),

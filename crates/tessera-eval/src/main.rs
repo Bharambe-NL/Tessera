@@ -634,12 +634,39 @@ fn main() -> std::process::ExitCode {
     let exercises: Arc<Mutex<Vec<ExerciseRecord>>> = Arc::new(Mutex::new(Vec::new()));
     let plan = Arc::new(plan);
 
+    // The run directory is named at the start and every record is appended to
+    // `runs.jsonl` the moment it lands. The old design wrote once at the end:
+    // BN-150 lost 78 questions and nearly four hours to it, and the CI sweep
+    // hang (BN-154) was undiagnosable from outside for the same reason. An
+    // interrupted run now keeps everything it finished, and the path printed
+    // here is where to look while one is still going. When the sweep completes,
+    // `write_records` rewrites the same file in question order, so a finished
+    // run is byte for byte what it always was.
+    let dir = args
+        .out
+        .join(corpus_name(&args.corpus))
+        .join(args.policy_label())
+        .join(stamp());
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("could not create the results directory: {e}");
+        return std::process::ExitCode::from(2);
+    }
+    let appender = match std::fs::File::create(dir.join("runs.jsonl")) {
+        Ok(file) => Arc::new(Mutex::new(std::io::LineWriter::new(file))),
+        Err(e) => {
+            eprintln!("could not open runs.jsonl for writing: {e}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    println!("writing to {}", dir.display());
+
     std::thread::scope(|scope| {
         for _ in 0..workers {
             let queue = Arc::clone(&queue);
             let done = Arc::clone(&done);
             let collected = Arc::clone(&collected);
             let exercises = Arc::clone(&exercises);
+            let appender = Arc::clone(&appender);
             let plan = Arc::clone(&plan);
             let args = &args;
             let pack = &pack;
@@ -718,6 +745,12 @@ fn main() -> std::process::ExitCode {
                         if finished.is_multiple_of(10) || finished == total {
                             println!("  {finished}/{total}");
                         }
+                        // To disk first, then to memory: the append is what an
+                        // interrupted run keeps.
+                        if let (Ok(mut file), Ok(line)) = (appender.lock(), serde_json::to_string(&record)) {
+                            let _ = writeln!(file, "{line}");
+                            let _ = file.flush();
+                        }
                         if let Ok(mut out) = collected.lock() {
                             out.push(record);
                         }
@@ -785,15 +818,11 @@ fn main() -> std::process::ExitCode {
         .map(|mut r| std::mem::take(&mut *r))
         .unwrap_or_default();
     // Question order, so two runs of one corpus produce comparable files however
-    // the workers happened to interleave.
+    // the workers happened to interleave. `write_records` below rewrites the
+    // incrementally appended file in this order.
     records.sort_by(|a, b| a.q_id.cmp(&b.q_id));
     let failures = records.iter().filter(|r| !r.ok).count();
 
-    let dir = args
-        .out
-        .join(corpus_name(&args.corpus))
-        .join(args.policy_label())
-        .join(stamp());
     let exercises = exercises
         .lock()
         .map(|mut e| std::mem::take(&mut *e))
@@ -920,6 +949,7 @@ fn run_one(
         &board_id,
         &q.text,
         Some(&q.depth_expected),
+        None,
         parent.map_or_else(Anchor::default, |p| Anchor::on(&p.card_id)),
     );
 
@@ -1492,7 +1522,7 @@ fn follow_up_on_stale(core: &mut Core, questions: &[Question], stale_locators: &
         record.provider = "mock".to_string();
         record.leg = "verify".to_string();
 
-        match core.ask_on(&board_id, FOLLOW_UP, Some("deep"), Anchor::on(&card_id)) {
+        match core.ask_on(&board_id, FOLLOW_UP, Some("deep"), None, Anchor::on(&card_id)) {
             Ok(outcome) => {
                 record.ok = true;
                 record.card_id = Some(outcome.card_id);

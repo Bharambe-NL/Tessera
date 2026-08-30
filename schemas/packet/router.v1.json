@@ -247,12 +247,6 @@
           "items": {
             "type": "object"
           }
-        },
-        "depth_hints": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "tessera:entity/common.v1#/$defs/depth"
-          }
         }
       }
     },

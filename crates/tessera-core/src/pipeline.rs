@@ -1378,6 +1378,7 @@ pub async fn run_card(
     card_id: &str,
     question: &str,
     depth_override: Option<&str>,
+    model_override: Option<&str>,
 ) -> Result<CardOutcome, Failure> {
     let board = board_row(store, board_id)?;
     let policy_snapshot = serde_json::to_value(&ctx.policy).unwrap_or(Value::Null);
@@ -1417,7 +1418,7 @@ pub async fn run_card(
     };
 
     // ------------------------------------------------------------ Router --
-    let router_packet = build_router_packet(&board, &subject, depth_override, ctx);
+    let router_packet = build_router_packet(&board, &subject, depth_override, model_override, ctx);
     let routed = run_agent(
         &Router,
         store,
@@ -2029,6 +2030,7 @@ fn build_router_packet(
     board: &Value,
     subject: &Subject<'_>,
     depth_override: Option<&str>,
+    model_override: Option<&str>,
     ctx: &RunContext<'_>,
 ) -> Value {
     let card = subject.card;
@@ -2042,7 +2044,11 @@ fn build_router_packet(
             "anchor_text": card.anchor_text,
             "anchor_block_ref": card.anchor_block_ref,
             "depth_override": depth_override,
-            "model_override": null,
+            // The user's model choice from the chat window names the alias that
+            // writes the answer. Doc 01 section 5's per stage shape carries it.
+            "model_override": model_override
+                .map(|alias| json!({ "stage": "synthesize", "alias": alias }))
+                .unwrap_or(Value::Null),
             "audience_override": null
         },
         "board": board,
@@ -2057,7 +2063,6 @@ fn build_router_packet(
             "domains": serde_json::to_value(&ctx.pack.domains).unwrap_or(json!([])),
             "domain_vocabulary": serde_json::to_value(&ctx.pack.domain_vocabulary).unwrap_or(json!({})),
             "sensitivity_rules": serde_json::to_value(&ctx.pack.sensitivity_rules).unwrap_or(json!([])),
-            "depth_hints": serde_json::to_value(&ctx.pack.depth_hints).unwrap_or(json!({})),
             "type_preferences": serde_json::to_value(&ctx.pack.visual_preferences.type_preferences).unwrap_or(json!({}))
         },
         "recent": [],

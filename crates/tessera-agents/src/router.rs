@@ -27,13 +27,16 @@ use crate::prompts;
 pub struct Router;
 
 const CLASSIFY_SYSTEM: &str = "\
-You classify a request for a research canvas. You do not answer it, you do not \
+You classify a request for a research board. You do not answer it, you do not \
 search, and you do not write anything the reader will see.
 
 Return the classification block only. Judge what the request needs:
   needs_current_information  the answer depends on something that changes over time
   needs_internal_documents   the answer depends on the reader's own files
   needs_structured_data      the answer depends on a figure from a table
+  needs_decomposition        answering well means researching several distinct
+                             sub questions separately and then weighing them
+                             together. One lookup, however hard, is false.
 
 entities are the literal names and terms in the request, copied as written.
 language is the ISO 639-1 code of the request text.
@@ -253,6 +256,7 @@ fn classification_schema() -> Value {
             "needs_current_information": { "type": "boolean" },
             "needs_internal_documents": { "type": "boolean" },
             "needs_structured_data": { "type": "boolean" },
+            "needs_decomposition": { "type": "boolean" },
             "entities": { "type": "array", "items": { "type": "string" } },
             "is_follow_up_of_context": { "type": "boolean" }
         }
@@ -274,32 +278,23 @@ fn fallback_classification(text: &str, keyword_domain: Option<&str>, language: &
         "needs_current_information": false,
         "needs_internal_documents": false,
         "needs_structured_data": false,
+        "needs_decomposition": false,
         "entities": capitalised_terms(text),
         "is_follow_up_of_context": false
     })
 }
 
-/// Doc 03 section 8.2, in order. Ties break toward the cheaper depth, and the
-/// reason names the step that decided.
-fn resolve_depth(request: &Value, board: &Value, doctrine: &Value, classification: &Value) -> Value {
+/// Doc 03 section 8.2, in order, amended 2026-08-30: the pack no longer speaks
+/// here. Depth hints made deep a floor for everyone, since every pack hinted
+/// deep on regulatory stakes and the stakes judgment saturates at 92 percent on
+/// two models (BN-148, BN-150), so fast was recommended for nobody. Depth is
+/// now the Router's own call from its own signals. Ties break toward the
+/// cheaper depth, and the reason names the step that decided.
+fn resolve_depth(request: &Value, board: &Value, _doctrine: &Value, classification: &Value) -> Value {
     let board_default = board["default_depth"].as_str().unwrap_or("fast");
 
     let mut recommended = board_default.to_string();
     let mut reason = format!("Board default {board_default}.");
-
-    // 3. doctrine hint for consequential questions. Keyed by the stakes
-    // judgment rather than a domain taxonomy (BN-036): the pack says how much
-    // care a question with regulatory stakes deserves, and the model says
-    // whether this is one, which works for domains nobody listed.
-    if classification["regulatory_stakes"].as_bool().unwrap_or(true)
-        && let Some(hint) = doctrine["depth_hints"]
-            .get("regulatory_stakes")
-            .and_then(Value::as_str)
-        && rank(hint) > rank(&recommended)
-    {
-        recommended = hint.to_string();
-        reason = format!("Doctrine hints {hint} for a question with regulatory stakes.");
-    }
 
     // 4. request signals.
     let flag = |name: &str| classification[name].as_bool().unwrap_or(false);
@@ -307,11 +302,23 @@ fn resolve_depth(request: &Value, board: &Value, doctrine: &Value, classificatio
         recommended = "deep".into();
         reason = "The answer depends on something outside model knowledge, so fast will not do.".into();
     }
+    // The research trigger. BN-150 measured the old comparative or exploratory
+    // rule at 0 of 14 across two models: neither model ever called a
+    // research worthy question either of those things, so the trigger sat
+    // unreachable behind a classification nobody produced. The model is now
+    // asked the question directly, needs_decomposition, and the old kinds stay
+    // as a second door.
     let entity_count = classification["entities"].as_array().map_or(0, Vec::len);
     let qtype = classification["question_type"].as_str().unwrap_or("factual");
-    if (qtype == "comparative" && entity_count >= 3 || qtype == "exploratory") && recommended == "deep" {
+    if recommended == "deep"
+        && (flag("needs_decomposition") || qtype == "comparative" && entity_count >= 3 || qtype == "exploratory")
+    {
         recommended = "research".into();
-        reason = format!("A {qtype} question across {entity_count} entities needs more than one pass.");
+        reason = if flag("needs_decomposition") {
+            "Answering well needs several sub questions researched separately.".into()
+        } else {
+            format!("A {qtype} question across {entity_count} entities needs more than one pass.")
+        };
     }
 
     // 5 and 6. a follow-up inside the parent's scope may stay where it is.
@@ -338,14 +345,6 @@ fn resolve_depth(request: &Value, board: &Value, doctrine: &Value, classificatio
         "reason": reason,
         "overridden_by_user": overridden
     })
-}
-
-fn rank(depth: &str) -> u8 {
-    match depth {
-        "fast" => 0,
-        "deep" => 1,
-        _ => 2,
-    }
 }
 
 /// Doc 03 section 8.3. The merge itself happens in the provider layer; the
@@ -645,7 +644,7 @@ mod tests {
             "board": { "default_depth": board_default, "seed_label": null },
             "parent": null,
             "profile": { "model_policy": {} },
-            "doctrine": { "domains": ["capital"], "depth_hints": {}, "sensitivity_rules": [] },
+            "doctrine": { "domains": ["capital"], "sensitivity_rules": [] },
             "recent": []
         })
     }
@@ -711,19 +710,38 @@ mod tests {
     }
 
     #[test]
-    fn a_doctrine_hint_raises_but_never_lowers() {
-        let mut p = packet(None, "research");
-        p["doctrine"]["depth_hints"] = json!({ "capital": "deep" });
-        let d = resolve_depth(
-            &p["request"],
-            &p["board"],
-            &p["doctrine"],
-            &classification("factual", 1, false),
-        );
+    fn a_pack_no_longer_moves_depth_even_when_it_still_carries_the_retired_hint() {
+        // Owner decision 2026-08-30. Every pack hinted deep on regulatory
+        // stakes and the stakes judgment saturates, so the hint made deep a
+        // floor and fast unreachable (BN-148, BN-150). The mechanism is
+        // removed; an imported pack that still carries the field is ignored.
+        let mut p = packet(None, "fast");
+        p["doctrine"]["depth_hints"] = json!({ "regulatory_stakes": "deep" });
+        let mut c = classification("regulatory", 1, false);
+        c["regulatory_stakes"] = json!(true);
+        let d = resolve_depth(&p["request"], &p["board"], &p["doctrine"], &c);
         assert_eq!(
-            d["chosen"], "research",
-            "a hint of deep must not pull research down"
+            d["chosen"], "fast",
+            "a pack must not raise depth; fast has to be reachable again"
         );
+    }
+
+    #[test]
+    fn a_question_that_needs_decomposition_reaches_research() {
+        // BN-150: the comparative or exploratory trigger fired 0 of 14 times
+        // across two models. The model is now asked directly whether the
+        // question needs several sub questions researched separately.
+        let p = packet(None, "deep");
+        let mut c = classification("regulatory", 1, false);
+        c["needs_decomposition"] = json!(true);
+        let d = resolve_depth(&p["request"], &p["board"], &p["doctrine"], &c);
+        assert_eq!(d["chosen"], "research");
+
+        // The same signal on a fast board stays fast: research is an escalation
+        // of deep, and a board parked on fast said what it wanted.
+        let fast = packet(None, "fast");
+        let d = resolve_depth(&fast["request"], &fast["board"], &fast["doctrine"], &c);
+        assert_eq!(d["chosen"], "fast", "ties break toward the cheaper depth");
     }
 
     #[test]

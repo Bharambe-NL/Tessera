@@ -29,7 +29,7 @@ use crate::prompts;
 pub struct Synthesizer;
 
 const SYSTEM: &str = "\
-You write one short answer for a card on a research canvas, and the structured \
+You write one short answer for a card on a research board, and the structured \
 summary a diagram will be built from.
 
 Every claim you take from a passage must be followed by that passage's number in \
@@ -43,7 +43,7 @@ relation and value you want shown must appear there, and every value must carry 
 the citation number that supports it.";
 
 const FAST_SYSTEM: &str = "\
-You write one short answer for a card on a research canvas, and the structured \
+You write one short answer for a card on a research board, and the structured \
 summary a diagram will be built from.
 
 You have no sources. The reader has been told this card is unverified, so write \

@@ -3571,6 +3571,92 @@ fn asking_with_no_model_key_says_where_to_fix_it() {
 }
 
 #[test]
+fn the_chat_windows_model_choice_pins_the_answer_or_fails_loudly() {
+    // Owner decision 2026-08-30: the user can pick the model from the chat
+    // window. A model they named answers, or the run fails with
+    // `policy_unresolvable`; it is never quietly replaced by a fallback. The
+    // choice rides `card.ask` as `model`, an alias name.
+    use tessera_providers::MemoryKeyStore;
+
+    let root = std::env::temp_dir().join(format!("tessera-pick-{}", tessera_store::new_id()));
+    let mut core = Core::open(
+        &root,
+        Box::new(MemoryKeyStore::with("anthropic-default", "sk-a")),
+        mock(),
+        "anthropic-default",
+    )
+    .expect("core comes up");
+    with_empty_folder(&mut core);
+    let board_id = core.create_board("Board", "fast").expect("board");
+    let router = build_router();
+
+    // Kimi chosen with no Moonshot key: the run fails rather than answering
+    // with a model the user did not pick.
+    let refused = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "card.ask",
+                json!({ "board_id": board_id, "question": "what are world models?",
+                        "model": "kimi-frontier" }),
+                1,
+            ),
+        )
+        .expect("reply");
+    let error = refused.error.expect("a chosen model with no key must fail");
+    assert_eq!(error.data.expect("data")["kind"], "policy_unresolvable");
+
+    // The key arrives through the same RPC the Profile page uses, and the same
+    // ask then runs on the chosen alias.
+    let saved = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "profile.set_key",
+                json!({ "key_ref": "moonshot-default", "secret": "sk-m" }),
+                2,
+            ),
+        )
+        .expect("reply");
+    assert!(saved.error.is_none(), "saving the key failed: {:?}", saved.error);
+
+    let answered = router
+        .dispatch(
+            &mut core,
+            Request::new(
+                "card.ask",
+                json!({ "board_id": board_id, "question": "what are world models?",
+                        "model": "kimi-frontier" }),
+                3,
+            ),
+        )
+        .expect("reply");
+    assert!(answered.error.is_none(), "the pinned ask runs: {:?}", answered.error);
+    let card_id = answered.result.expect("result")["card_id"]
+        .as_str()
+        .expect("card id")
+        .to_string();
+
+    // The run's policy snapshot is the audit trail: the answer stage carries
+    // the user's alias, and the rest of the pipeline kept its first choice.
+    let snapshot: String = core
+        .store
+        .conn()
+        .query_row(
+            "SELECT model_policy_snapshot FROM run WHERE card_id = ?1",
+            rusqlite::params![card_id],
+            |r| r.get(0),
+        )
+        .expect("run row");
+    let snapshot: serde_json::Value = serde_json::from_str(&snapshot).expect("json");
+    assert_eq!(snapshot["stages"]["synthesize"]["alias"], "kimi-frontier");
+    assert_eq!(snapshot["stages"]["synthesize"]["model"], "kimi-k3");
+    assert_eq!(snapshot["stages"]["route"]["provider"], "anthropic");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn the_router_asks_about_stakes_and_never_enumerates_domains() {
     // BN-036, the owner's decision after two paid sweeps. A bare domain list
     // made the bulk model guess the first name; a vocabulary list made it
@@ -4736,6 +4822,7 @@ fn a_follow_up_carries_its_parent_into_the_router_packet() {
         &board_id,
         "which article says so?",
         Some("deep"),
+        None,
         Anchor::on(&parent.card_id),
     )
     .expect("follow up runs");
@@ -4772,6 +4859,7 @@ fn a_follow_up_carries_its_ancestors_into_the_planner_packet() {
         &board_id,
         "which article says so?",
         Some("research"),
+        None,
         Anchor::on(&parent.card_id),
     )
     .expect("follow up runs");
@@ -4823,6 +4911,7 @@ fn the_ancestor_chain_stops_at_three() {
                 &board_id,
                 &format!("and what about {i}?"),
                 Some("research"),
+                None,
                 Anchor::on(&previous),
             )
             .expect("follow up")

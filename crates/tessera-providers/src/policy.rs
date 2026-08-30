@@ -60,14 +60,34 @@ pub struct ModelPolicy {
 }
 
 impl ModelPolicy {
+    /// The keychain entry each known provider's aliases read. One name per
+    /// provider, fixed here, so the Profile keys page and the policy agree on
+    /// what a key is called without either asking the other.
+    pub const ANTHROPIC_KEY_REF: &'static str = "anthropic-default";
+    pub const MOONSHOT_KEY_REF: &'static str = "moonshot-default";
+
     /// The shipped default. Doc 01 section 5, with the placeholder model names
     /// replaced by current ids and the vision alias moved to Anthropic so a
     /// fresh install needs one model key (BN-005, BN-006).
+    ///
+    /// Since 2026-08-30 the default carries a second provider's aliases and
+    /// every stage falls back across providers, so the product routes to
+    /// whichever models actually have a key. One Anthropic key, one Moonshot
+    /// key, or both: every configuration resolves, and with both present the
+    /// Anthropic tier is preferred as the reference quality provider.
     pub fn default_anthropic(key_ref: &str) -> Self {
         let alias = |model: &str| Alias {
             provider: "anthropic".into(),
             model: model.into(),
             key_ref: key_ref.into(),
+        };
+        // The Kimi tier. Model ids verified against a real account with
+        // `tessera-keys check moonshot-default` (see the eval's bulk defaults);
+        // rerun that check if the catalogue moves.
+        let kimi = |model: &str| Alias {
+            provider: "moonshot".into(),
+            model: model.into(),
+            key_ref: Self::MOONSHOT_KEY_REF.into(),
         };
         let stage = |a: Option<&str>, f: &[&str]| StagePolicy {
             alias: a.map(str::to_string),
@@ -77,26 +97,41 @@ impl ModelPolicy {
         Self {
             version: "1.0".into(),
             stages: BTreeMap::from([
-                ("route".into(), stage(Some("small"), &["medium"])),
-                ("plan".into(), stage(Some("medium"), &["frontier"])),
+                ("route".into(), stage(Some("small"), &["medium", "kimi-small", "kimi-medium"])),
+                ("plan".into(), stage(Some("medium"), &["frontier", "kimi-medium", "kimi-frontier"])),
                 // Retrieval is the core's job and uses no model. Doc 10 section 7.
                 ("retrieve".into(), stage(None, &[])),
-                ("synthesize".into(), stage(Some("frontier"), &["medium"])),
-                ("visualize".into(), stage(Some("frontier"), &["medium"])),
-                ("read".into(), stage(Some("vision"), &[])),
-                ("verify".into(), stage(Some("medium"), &["frontier"])),
-                ("exercise".into(), stage(Some("medium"), &[])),
-                ("tutor".into(), stage(Some("medium"), &[])),
+                ("synthesize".into(), stage(Some("frontier"), &["medium", "kimi-frontier", "kimi-medium"])),
+                ("visualize".into(), stage(Some("frontier"), &["medium", "kimi-frontier", "kimi-medium"])),
+                ("read".into(), stage(Some("vision"), &["kimi-vision"])),
+                ("verify".into(), stage(Some("medium"), &["frontier", "kimi-medium", "kimi-frontier"])),
+                ("exercise".into(), stage(Some("medium"), &["kimi-medium"])),
+                ("tutor".into(), stage(Some("medium"), &["kimi-medium"])),
                 // Doc 17 section 7: "one model call with the medium alias".
-                ("learning_plan".into(), stage(Some("medium"), &[])),
+                ("learning_plan".into(), stage(Some("medium"), &["kimi-medium"])),
             ]),
             aliases: BTreeMap::from([
                 ("small".into(), alias("claude-haiku-4-5")),
                 ("medium".into(), alias("claude-sonnet-5")),
                 ("frontier".into(), alias("claude-opus-5")),
                 ("vision".into(), alias("claude-opus-5")),
+                ("kimi-small".into(), kimi("kimi-k2.6")),
+                ("kimi-medium".into(), kimi("kimi-k2.6")),
+                ("kimi-frontier".into(), kimi("kimi-k3")),
+                ("kimi-vision".into(), kimi("kimi-k3")),
             ]),
         }
+    }
+
+    /// Pin one stage to one alias with no fallback. This is the user's model
+    /// choice from the chat window: a model the user named is honoured or the
+    /// run fails with `policy_unresolvable`, never quietly answered by another.
+    pub fn pin_stage(&self, stage: &str, alias: &str) -> ModelPolicy {
+        let mut p = self.clone();
+        let entry = p.stages.entry(stage.to_string()).or_default();
+        entry.alias = Some(alias.to_string());
+        entry.fallback.clear();
+        p
     }
 
     /// Every stage on one OpenAI-compatible provider, for a bulk eval sweep.
@@ -372,6 +407,52 @@ mod tests {
         let policy = ModelPolicy::default_anthropic("anthropic-team").override_stage("synthesize", "small");
         let resolved = resolve(&policy, &keys, &["synthesize"]).expect("resolves");
         assert_eq!(resolved.get("synthesize").expect("s").model, "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn a_kimi_only_install_resolves_every_stage_to_moonshot() {
+        // Owner decision 2026-08-30: questions route to the models whose keys
+        // exist. A person with one Moonshot key and no Anthropic key gets a
+        // working product, not `policy_unresolvable`.
+        let keys = MemoryKeyStore::with(ModelPolicy::MOONSHOT_KEY_REF, "sk-test");
+        let policy = ModelPolicy::default_anthropic(ModelPolicy::ANTHROPIC_KEY_REF);
+        let resolved = resolve(&policy, &keys, CARD_STAGES).expect("resolves");
+        assert!(resolved.stages.values().all(|s| s.provider == "moonshot"));
+        assert!(
+            resolved.stages.values().all(|s| s.used_fallback),
+            "the fallback must be visible so model.fallback.v1 can fire"
+        );
+    }
+
+    #[test]
+    fn with_both_keys_the_anthropic_tier_is_preferred() {
+        let keys = MemoryKeyStore::with(ModelPolicy::ANTHROPIC_KEY_REF, "sk-a");
+        keys.set(ModelPolicy::MOONSHOT_KEY_REF, "sk-m").expect("set");
+        let policy = ModelPolicy::default_anthropic(ModelPolicy::ANTHROPIC_KEY_REF);
+        let resolved = resolve(&policy, &keys, CARD_STAGES).expect("resolves");
+        assert!(resolved.stages.values().all(|s| s.provider == "anthropic"));
+    }
+
+    #[test]
+    fn a_pinned_stage_is_honoured_or_fails_never_substituted() {
+        // The user's model choice from the chat window. A model the user named
+        // is used or the run fails loudly; answering with a different model
+        // would be the depth override bug in a new coat.
+        let policy = ModelPolicy::default_anthropic(ModelPolicy::ANTHROPIC_KEY_REF);
+        let pinned = policy.pin_stage("synthesize", "kimi-frontier");
+
+        let only_anthropic = MemoryKeyStore::with(ModelPolicy::ANTHROPIC_KEY_REF, "sk-a");
+        let err = resolve(&pinned, &only_anthropic, &["synthesize"])
+            .expect_err("no Moonshot key, so no quiet substitute");
+        assert_eq!(err.kind(), "policy_unresolvable");
+
+        let both = MemoryKeyStore::with(ModelPolicy::ANTHROPIC_KEY_REF, "sk-a");
+        both.set(ModelPolicy::MOONSHOT_KEY_REF, "sk-m").expect("set");
+        let resolved = resolve(&pinned, &both, &["synthesize"]).expect("resolves");
+        assert_eq!(resolved.get("synthesize").expect("s").model, "kimi-k3");
+        // Only the pinned stage moved; everything else keeps its first choice.
+        let rest = resolve(&pinned, &both, &["route", "verify"]).expect("resolves");
+        assert!(rest.stages.values().all(|s| s.provider == "anthropic"));
     }
 
     #[test]

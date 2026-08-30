@@ -29,3 +29,13 @@ tessera-doctrine = { path = "crates/tessera-doctrine" }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# The "sweep hang" of BN-154, root caused 2026-08-30: it was never a hang. The
+# candle embedding stack in an unoptimised debug build is orders of magnitude
+# slower than release. Indexing the 185 file synthetic corpus takes about 90
+# seconds optimised and did not finish in 13 minutes of six busy cores in
+# debug, which is what every "hung" sweep, local and CI, was actually doing.
+# Optimising dependencies alone keeps workspace crates debuggable and compiles
+# once into the cache.
+[profile.dev.package."*"]
+opt-level = 2

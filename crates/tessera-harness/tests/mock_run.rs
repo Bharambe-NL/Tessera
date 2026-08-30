@@ -110,7 +110,7 @@ fn packet(ids: &Ids) -> Value {
         },
         "parent": null,
         "profile": { "role": null, "default_depth": "deep", "model_policy": {} },
-        "doctrine": { "audiences": [], "domains": ["capital"], "sensitivity_rules": [], "depth_hints": {} },
+        "doctrine": { "audiences": [], "domains": ["capital"], "sensitivity_rules": [] },
         "recent": [],
         "effort_budget": { "max_tokens": 1500, "max_latency_ms": 2500 }
     })
