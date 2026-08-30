@@ -1,6 +1,6 @@
 # 02. Synthetic Data Generator and Eval Substrate v0.1
 
-Working name: Canvas. Register: working. Depends on: 01 Data Model v0.1 (open questions 1 to 4 resolved as proposed).
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 Data Model v0.1 (open questions 1 to 4 resolved as proposed).
 
 ## 1. What this document decides
 

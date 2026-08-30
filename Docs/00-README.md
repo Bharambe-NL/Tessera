@@ -1,7 +1,7 @@
 # Tessera spec set
 
 Produced in Mode B (full spec set) of the agentic systems design skill, August 2026, as the
-Canvas spec set; the product is named Tessera (BN-001).
+Canvas spec set; the product is named Tessera, confirmed by the owner on 2026-08-30 (BN-001).
 
 | # | Document | Version |
 |---|---|---|

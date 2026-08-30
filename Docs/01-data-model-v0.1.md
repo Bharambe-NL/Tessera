@@ -1,6 +1,6 @@
 # 01. Data Model v0.1
 
-Working name: Canvas. Register: working. Status: draft for review, first document of the Mode B spec set.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Status: draft for review, first document of the Mode B spec set.
 
 ## 1. What this document decides
 

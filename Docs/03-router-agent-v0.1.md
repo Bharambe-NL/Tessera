@@ -1,6 +1,6 @@
 # 03. Router Agent v0.1
 
-Working name: Canvas. Register: working. Depends on: 01 Data Model, 02 Synthetic Data Generator. Load bearing patterns: 1 (state machine), 2 (task packet), 3 (events), 4 (failure taxonomy), 7 (output schema), 8 (policy engine), 13 (provenance), 21 (provider abstraction).
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 Data Model, 02 Synthetic Data Generator. Load bearing patterns: 1 (state machine), 2 (task packet), 3 (events), 4 (failure taxonomy), 7 (output schema), 8 (policy engine), 13 (provenance), 21 (provider abstraction).
 
 ## 1. Purpose, scope, non-goals
 

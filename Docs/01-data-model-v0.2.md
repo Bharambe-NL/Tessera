@@ -2,7 +2,7 @@
 
 Changelog v0.2: added `Card.builds_on`, source class `own_card`, ConceptLink relation `builds_on`, `Profile.memory_enabled`, `Board.mode`, LearnSession (see 14), and the event names listed in 13. See 15 for the memory design.
 
-Working name: Canvas. Register: working. Status: draft for review, first document of the Mode B spec set.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Status: draft for review, first document of the Mode B spec set.
 
 ## 1. What this document decides
 

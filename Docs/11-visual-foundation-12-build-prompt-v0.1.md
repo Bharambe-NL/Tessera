@@ -4,7 +4,7 @@ Register: working. Depends on: 09, 10. This document turns the prototype's look 
 
 ## 1. Product name
 
-Working name **Canvas** is descriptive and unownable. Decision deferred; the build uses the identifier `canvas` in code and "Canvas" in the UI until a name is chosen. Candidates to test with the first Risk plus Product pair: **Wondering** (from the reference video, likely taken), **Atlas**, **Cartouche**, **Loupe**. The name must work as a noun for a board ("open the loupe").
+The name is **Tessera**, confirmed by the owner on 2026-08-30. The code identifier is `tessera` everywhere; the working name Canvas and its candidate list are retired.
 
 ## 2. Visual register
 

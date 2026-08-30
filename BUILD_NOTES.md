@@ -4451,6 +4451,131 @@ problem rather than carried as noise on somebody else's pull request.
 
 ---
 
+### BN-155 The pack stops deciding depth, and research gets a door a model will open
+
+**Spec** Doc 03 section 8.2, overridden by the owner on 2026-08-30. Verbatim: "completely abandon
+the idea of Finance pack hints. This must serve everyone. Not just finance. So remove it
+completely."
+
+**What was removed.** `depth_hints` and `minimum_depth`, from the doctrine struct, the pack schema,
+all three shipped packs and the Router. Every pack hinted `deep` on `regulatory_stakes`, the stakes
+judgment saturates at 92 percent on both measured models (BN-148, BN-150), and nothing in
+`resolve_depth` ever lowers a recommendation, so the hint made deep a floor for everyone and fast
+was recommended for nobody. `minimum_depth` had no caller outside its own test. An imported pack
+that still carries either field loads and the fields decide nothing; the schema keeps both
+properties as accepted and ignored so no pack written before today is refused.
+
+**What replaces the research trigger.** BN-150 measured the `comparative || exploratory` rule at 0
+of 14 across two models: neither model ever called a research worthy question either of those
+things. The classification now asks the model directly, `needs_decomposition`, true when answering
+well means researching several distinct sub questions separately. The old kinds stay as a second
+door. Ties still break toward the cheaper depth, and a fast board stays fast: research is an
+escalation of deep, never of fast.
+
+**What this does to the numbers.** Route accuracy from here on is not comparable with any sweep
+measured under the hint regime. The corpus expectations stand, since they encode the question
+author's intent rather than the hint's behaviour, and the next live sweep is what says whether
+fast and research are now reached. The stakes judgment survives untouched where it belongs, in
+screening, confidence and the Verifier's posture.
+
+**Verified** 2026-08-30. The full workspace suite is green, including a new regression test that a
+pack still carrying the retired hint moves nothing.
+
+---
+
+### BN-156 Questions route to the keys that exist, and the chat window gets the model switch
+
+**Spec** Doc 01 section 5 and doc 03 section 8.3, extended by the owner on 2026-08-30: route to the
+models whose keys are available, and let the user pick or switch the model from the chat window.
+
+**The gap that made this real work.** The policy layer had been multi provider since M2: aliases
+name a provider and `resolve` skips any alias whose key is missing. The runtime had not: the app
+built exactly one adapter, Anthropic or the mock, so a stage that resolved to Moonshot on paper
+was still sent to Anthropic. Doc 10 section 7's provider abstraction existed on one side of the
+call and not the other.
+
+**What landed.**
+
+1. The shipped policy carries a Kimi tier (`kimi-small` through `kimi-vision`, model ids from the
+   catalogue check in the eval defaults) and every stage falls back across providers. One
+   Anthropic key, one Moonshot key, or both: every configuration resolves, and with both the
+   Anthropic tier is preferred as the reference quality provider.
+2. `MultiProvider`, one adapter per provider that has a key, routing each call by the model id the
+   policy maps. Built by `live_provider` from the same policy the resolver reads, so the two
+   halves cannot disagree about which model lives where.
+3. `Core::open_live` for the app binary, and a saved key rebuilds the provider on the spot, so the
+   first key makes a fresh install answer without a restart.
+4. The composer gains a model control: Auto, then one option per distinct model whose key exists,
+   filled from the profile at boot and refreshed when a key is saved. The pick rides `card.ask` as
+   `model`, an alias name, and the core pins the synthesize stage to it with no fallback. A model
+   the user named answers or the run fails `policy_unresolvable`; it is never quietly substituted,
+   which is the depth override rule holding for models.
+
+**Measured** 2026-08-30. Policy tests cover the Kimi only install, the both keys preference and the
+pin. An end to end test drives the refusal, the key save and the pinned ask through the RPC
+boundary and reads the alias off the run's policy snapshot. A Playwright test reads the chosen
+alias off the wire.
+
+---
+
+### BN-157 The sweep writes as it goes, and the hang was never a hang
+
+**Spec** Doc 02 section 10.4, and the two open problems BN-150 and BN-154 carried.
+
+**Incremental writes.** The run directory is named at the start, printed, and every record appends
+to `runs.jsonl` the moment it lands, disk first and memory second. A finished run is byte for byte
+what it always was, since `write_records` rewrites the file in question order at the end. BN-150
+lost 78 questions and nearly four hours to the old write at the end design; an interrupted run now
+keeps everything it finished. The very first probe run paid for the change in a different coin: it
+failed in under a second on an unwritable output directory that the old design would have
+discovered after the whole sweep.
+
+**The hang, root caused.** A one question mock sweep with retrievers off completes in 0.6 seconds.
+The same question with retrievers on, in a release build, completes in 88 seconds, most of it
+indexing the 185 file corpus through the candle embedder. In a debug build it did not finish
+indexing in 13 minutes of six busy cores, and was killed. That is the whole mystery: the candle
+stack in an unoptimised build is orders of magnitude slower, the CI job runs the sweep in debug on
+purpose, and a runner that is slow that day looks hung. The twelve CPU hours of BN-154 were debug
+embedding, not a deadlock.
+
+**The fix** is `[profile.dev.package."*"] opt-level = 2` in the workspace manifest: dependencies
+compile optimised once into the cache, workspace crates stay debuggable, and the debug sweep now
+indexes at release speed. No CI change needed, and the intermittent `corpus and sweep` failures
+should end with it.
+
+**Also settled.** The pack update flake (`pages.spec.ts:213` in BN-151, BN-152, BN-154) has not
+recurred since a9e1a3a armed the import wait: both CI runs of the shell refactor merged today ran
+the ui job green. The reader flake has not recurred either and stays under watch; nothing was
+patched there, since there is no failure to reproduce against.
+
+**Measured** 2026-08-30, timings above, single machine, eighteen cores.
+
+---
+
+### BN-158 The Profile is one page, and the name is Tessera everywhere
+
+**Spec** Doc 11 section 6, amended by the owner on 2026-08-30: "The Profile page has many tabs. I
+think all those things can exist on one page with sections separating those things." And on the
+name: "Tessera is the trademark."
+
+**Profile.** The five tabs became five sections on one scrolling page, headed and separated by a
+rule, in the tab order doc 11 gave them: Context, Models, Retrievers, Doctrine, Diagnostics. The
+tab state, the segmented control and the click handler are gone; the pack import form and the key
+verbs sit where they always did, just without a navigation in front of them. The key rule is
+unchanged and retested on the one page: what a row says is which key_ref an alias wants and
+whether the keychain has it, never the key.
+
+**Name.** BN-001 parked the identifier as `canvas` pending a trademark check; the owner has
+confirmed Tessera outright. The survey found the app identifier, product name constant, storage
+paths and database already say `tessera`, so no migration exists to run. What remained was three
+agent prompt strings saying "research canvas", now "research board", and the spec set's working
+name headers, now naming Tessera with the history kept. The word canvas survives where it means
+the drawing surface, which is what it meant all along.
+
+**Verified** 2026-08-30, full workspace suite and the Playwright suite locally.
+
+---
+
 
 
 
