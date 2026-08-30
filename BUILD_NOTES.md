@@ -4576,6 +4576,31 @@ the drawing surface, which is what it meant all along.
 
 ---
 
+### BN-159 The pan gate's desktop reading, at last
+
+**Spec** Doc 12 phase 0, the reading BN-153 recorded as owed: a foregrounded release window,
+because headless Chromium caps near 40 fps and a window that is not in front schedules no frames.
+
+**Measured** 2026-08-30, release build at `b0de3d8` with the drag, the model control and the new
+provider layer all in it, `TESSERA_GATE=200` on a fresh profile, result written through
+`TESSERA_GATE_OUT`.
+
+| | this reading | BN-014 reference |
+|---|---|---|
+| first render | 637 ms | n/a |
+| pan | 82.7 fps, 4/240 dropped | 124.2 fps |
+| zoom | 162.3 fps, 0/120 dropped | n/a |
+| verdict | PASS | PASS |
+
+The gate's own note: "Pan holds 60 fps at this card count. No layer change needed." BN-014's
+higher pan number was read at 165 Hz on the machine's own display mode; what this reading settles
+is the question BN-153 left open, that the drag and everything since have not moved the canvas off
+its budget in the environment the product actually runs in.
+
+**Verified** the gate reports PASS from its own criteria, and the window closed itself.
+
+---
+
 
 
 
