@@ -4391,6 +4391,66 @@ every card is painted where its own transform says it is.
 
 ---
 
+### BN-154 The composer centres on the canvas, and its buttons stop wrapping
+
+**Spec** Doc 11 section 5, "composer bottom centre".
+
+**What the owner saw.** The position of the ask box is not centred, especially when the left drawer
+is opened, and the Learn button is just hanging in between.
+
+**Three defects, all measured before anything was changed.**
+
+`left: 50%` measures the window, and the canvas begins where the rail ends, so the composer sat half
+a rail to the left of the space it belongs in. Collapsed that is 28px. Open it is 120px, and the
+left edge landed at 160px under a 240px rail, so the rail was painted on top of the composer. That
+one the owner did not name and it was the worst of the three.
+
+`grid-template-columns: 1fr auto auto` is three columns, and the composer has four children, so
+`#send` wrapped into an implicit second row and landed back in the first column underneath the
+question.
+
+`align-items: end` aligned the three that did fit at their bottoms alone. Their heights are 32, 19
+and 26px, which is the whole of why a 19px Learn button looked like it was hanging between the
+field and the pills.
+
+| | Before | After |
+|---|---|---|
+| centre against the canvas, rail open | off by 120px | off by 0 |
+| left edge under a 240px rail | 160px, covered | 280px, clear |
+| send button | wrapped to its own row | right end of the control row |
+| control alignment | bottoms only | one shared centre line |
+
+**Decision** Anchor to `--rail-w` on one side and the window on the other with an auto margin
+either side, which centres on the canvas at every rail width and invents no number. Give the
+question the top row and the controls the row beneath, with grid areas rather than a new wrapper, so
+the markup is untouched.
+
+**Motion** The composer travels on the rail's own 360ms rather than jumping when the rail lands.
+Doc 11 section 7 ends with "nothing else moves" and this adds no new movement: it is the move the
+rail was already making, and the composer was the one thing not making it. The owner asked for the
+buttons to feel smoother too. That would be new motion and a change to section 7, so it is left for
+them to decide rather than taken quietly.
+
+**Measured** 2026-08-28, `composer.spec.ts`, three cases. They were run against the unfixed
+stylesheet first and all three fail there, which is the only evidence that they test anything.
+
+**Two flaky tests now, not one.** This suite ran twice on the same commit. One run failed
+`reader.spec.ts:59` and passed everything else; the next passed it and failed `pages.spec.ts:213`,
+the one BN-151 and BN-152 already record. Both pass alone. So the flake is not a single bad test,
+and a merge gate that fails about half the time on unrelated work is worth fixing before it teaches
+everyone to ignore it.
+
+**The sweep hang, now separated from the work.** `corpus and sweep` has hung on three runs: twice on
+the icons branch and once on `main` with nothing but merged work in it. The one on `main` is what
+rules out any of these changes as the cause. It is intermittent, five recent runs finished the same
+step in about three minutes on identical input, and a local run of the same `--mock` command burned
+roughly twelve CPU hours across eighteen cores and wrote nothing at all. It writes nothing because
+the runner only writes `runs.jsonl` when the whole sweep finishes, which is open item 3 in the
+handover and is exactly what makes this undiagnosable from the outside. Recorded here as its own
+problem rather than carried as noise on somebody else's pull request.
+
+---
+
 
 
 
