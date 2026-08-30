@@ -412,6 +412,26 @@ body.rail-open .rail-item .label {
   color: var(--ink-2);
 }
 
+/* ---- Profile, one page with sections ----
+
+   Doc 11 section 6 named five tabs; the owner asked on 2026-08-30 for one
+   scrolling page. A rule under the heading is what separates the sections,
+   so the scroll reads as one page and not as five stacked ones. */
+
+.profile-section {
+  margin-bottom: var(--s8);
+}
+
+.profile-section > h2 {
+  margin: 0 0 var(--s4);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  max-width: 640px;
+}
+
 /* ---- Profile fact lists ---- */
 
 .facts {

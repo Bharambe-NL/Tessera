@@ -32,6 +32,7 @@ import {
   wireStickies,
 } from './shell/cards.js';
 import {
+  populateModelChoice,
   wireComposer,
   wirePackUpdate,
   wirePaste,
@@ -129,6 +130,7 @@ const router = new Router(
       if (check) await tutorTurn(() => rpc.askCheck(board_id));
     },
     toast: (message, level) => toast(message, level),
+    keySaved: () => void populateModelChoice(),
     finishSetup: async () => {
       // A board to land on. Setup runs on a profile with none, and arriving at
       // an empty canvas with no board is the one state the composer cannot ask
@@ -280,6 +282,9 @@ async function boot(): Promise<void> {
     // them the setup screen again.
     const first = await rpc.firstRun();
     setMode(COPY.modeLive, 'live');
+    // The composer's model control fills from the profile, and nothing below
+    // waits on it: the board is usable on auto while the options arrive.
+    void populateModelChoice();
     if (first.needs_setup) {
       await router.go('setup');
       return;

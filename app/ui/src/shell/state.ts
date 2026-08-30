@@ -47,6 +47,8 @@ export const state = {
   board: null as Board | null,
   boardId: null as string | null,
   depth: 'fast' as Depth,
+  /** The alias the user picked from the composer's model control; empty is auto. */
+  modelAlias: '',
   lastEventIndex: 0,
   /** Doc 11 section 10's list view alternative, when it is the one being read. */
   reading: false,
@@ -309,5 +311,8 @@ export async function submit(question: string, anchor: AskAnchor = {}): Promise<
   placeholderCard(`pending-${Date.now()}`, question.trim(), anchor);
 
   const id = state.boardId;
-  await whileRunning(() => rpc.ask(id, question.trim(), state.depth, anchor), COPY.askFailed);
+  await whileRunning(
+    () => rpc.ask(id, question.trim(), state.depth, anchor, state.modelAlias || undefined),
+    COPY.askFailed,
+  );
 }

@@ -78,6 +78,10 @@ export function wireComposer(): void {
     });
   }
 
+  el<HTMLSelectElement>('model').addEventListener('change', (e) => {
+    state.modelAlias = (e.target as HTMLSelectElement).value;
+  });
+
   el<HTMLButtonElement>('zoom-in').addEventListener('click', () => viewport.zoomCentre(1.25));
   el<HTMLButtonElement>('zoom-out').addEventListener('click', () => viewport.zoomCentre(0.8));
   el<HTMLButtonElement>('fit').addEventListener('click', () => {
@@ -108,6 +112,39 @@ export function wireComposer(): void {
       }
     })();
   });
+}
+
+/**
+ * Fill the composer's model control from the profile.
+ *
+ * One option per distinct model whose key exists, named by its model id, after
+ * Auto. Called at boot and again after a key is saved, so a new provider's
+ * models appear the moment they become reachable. The control hides when
+ * nothing has a key yet: an empty choice is not a choice.
+ */
+export async function populateModelChoice(): Promise<void> {
+  const select = el<HTMLSelectElement>('model');
+  try {
+    const profile = await rpc.profile();
+    const chosen = select.value;
+    while (select.options.length > 1) select.remove(1);
+    const seen = new Set<string>();
+    for (const alias of profile.aliases ?? []) {
+      if (!alias.key_present || seen.has(alias.model)) continue;
+      seen.add(alias.model);
+      const option = document.createElement('option');
+      option.value = alias.alias;
+      option.textContent = alias.model;
+      select.append(option);
+    }
+    select.hidden = seen.size === 0;
+    // Keep the user's pick across a refresh when it is still offered.
+    if (chosen && [...select.options].some((o) => o.value === chosen)) select.value = chosen;
+    else state.modelAlias = '';
+  } catch {
+    // The composer still works on auto; the control just offers nothing new.
+    select.hidden = select.options.length <= 1;
+  }
 }
 
 /**

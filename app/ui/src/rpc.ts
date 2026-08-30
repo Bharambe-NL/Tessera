@@ -404,11 +404,14 @@ export class Rpc {
    * either anchor it is a branch. The core rejects an anchor with no parent,
    * because a span belongs to the card it was selected on.
    */
-  ask(boardId: string, question: string, depth?: string, anchor: AskAnchor = {}) {
+  ask(boardId: string, question: string, depth?: string, anchor: AskAnchor = {}, model?: string) {
     return this.call<AskResult>('card.ask', {
       board_id: boardId,
       question,
       depth,
+      // The alias the user chose from the composer's model control, absent on
+      // auto. The core pins the answer stage to it or fails loudly.
+      model: model || undefined,
       parent_card_id: anchor.parentCardId,
       anchor_text: anchor.anchorText,
       anchor_block_ref: anchor.anchorBlockRef,

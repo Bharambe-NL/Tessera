@@ -79,6 +79,39 @@ test('an open rail moves the composer instead of covering it', async ({ page }) 
   expect(clear).toBe(true);
 });
 
+test('the model control offers the models whose keys exist, and the pick rides the ask', async ({ page }) => {
+  // Owner decision 2026-08-30: the model is the user's to pick from the chat
+  // window. The control fills from the profile after boot: Auto first, then one
+  // option per distinct model whose key is in the keychain. The dev core holds
+  // one Anthropic shaped key, so the Claude tiers are offered and no Kimi tier
+  // is.
+  const model = page.locator('#model');
+  await expect(model).toBeVisible();
+  await expect(model.locator('option')).toHaveCount(4);
+  const labels = await model.locator('option').allTextContents();
+  expect(labels[0]).toBe('Auto');
+  expect(labels).toContain('claude-opus-5');
+  expect(labels).toContain('claude-sonnet-5');
+  expect(labels).not.toContain('kimi-k3');
+
+  // The chosen alias rides `card.ask` as `model`, which the core pins the
+  // answer stage to. Read off the wire rather than off the state, because the
+  // wire is the contract.
+  const asked: unknown[] = [];
+  await page.route('**/rpc', async (route) => {
+    const body = route.request().postDataJSON() as
+      | { method?: string; params?: { model?: unknown } }
+      | null;
+    if (body?.method === 'card.ask') asked.push(body.params?.model);
+    await route.continue();
+  });
+  await model.selectOption({ label: 'claude-sonnet-5' });
+  await page.locator('#ask').fill('What is a world model?');
+  await page.locator('#ask').press('Enter');
+  await expect(page.locator('#cards .card .answer')).toBeVisible({ timeout: 30_000 });
+  expect(asked).toEqual(['medium']);
+});
+
 test('the question takes a row and the controls take the one below', async ({ page }) => {
   const rows = await page.evaluate(() => {
     const box = (id: string) => document.getElementById(id)!.getBoundingClientRect();

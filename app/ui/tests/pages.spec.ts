@@ -41,7 +41,6 @@ function packFile(code: string, version: string): string {
 
 async function importPack(page: import('@playwright/test').Page, file: string): Promise<void> {
   await page.locator('#rail [data-view="profile"]').click();
-  await page.locator('[data-profile-tab="doctrine"]').click();
   await page.locator('#pack-path').fill(file);
   // The import is a fetch the click starts, and the caller's next move may be a
   // reload that tears the page down. A navigation aborts an in flight request
@@ -252,11 +251,13 @@ test('a board offers the pack update that judges its cards again', async ({ page
   await expect(update).toBeHidden({ timeout: 30_000 });
 });
 
-test('the profile models page reports key presence and never a key', async ({ page }) => {
+test('the profile is one page whose sections all show, and never a key', async ({ page }) => {
+  // Owner decision 2026-08-30: no tabs. The five sections of doc 11 section 6
+  // sit on one scrolling page, so everything below asserts without a click.
   await page.locator('#rail [data-view="profile"]').click();
-  await expect(page.locator('.facts')).toBeVisible();
+  await expect(page.locator('[data-profile-section]')).toHaveCount(5);
+  await expect(page.locator('[data-profile-section="context"] .facts')).toBeVisible();
 
-  await page.locator('[data-profile-tab="models"]').click();
   const rows = page.locator('.lib-row[data-key-ref]');
   await expect(rows.first()).toBeVisible();
 
@@ -264,12 +265,9 @@ test('the profile models page reports key presence and never a key', async ({ pa
   // whose value is known, so this is a real check that it never crossed.
   const html = await page.locator('#page-body').innerHTML();
   expect(html).not.toContain('sk-');
-  await expect(page.locator('.page-note')).toContainText('keychain');
+  await expect(page.locator('[data-profile-section="models"] .page-note')).toContainText('keychain');
 
-  await page.locator('[data-profile-tab="diagnostics"]').click();
-  await expect(page.locator('.facts')).toContainText('Events');
-
-  await page.locator('[data-profile-tab="doctrine"]').click();
+  await expect(page.locator('[data-profile-section="diagnostics"] .facts')).toContainText('Events');
   await expect(page.locator('.lib-row[data-pack="general"]')).toContainText('Ships with the app');
 });
 
@@ -289,6 +287,5 @@ test('a doctrine pack is imported from a file and then chosen', async ({ page })
   // And it is the core that says so: the page redraws from profile.get.
   await page.reload();
   await page.locator('#rail [data-view="profile"]').click();
-  await page.locator('[data-profile-tab="doctrine"]').click();
   await expect(page.locator('.lib-row[data-pack="house-rules"]')).toContainText('Active');
 });

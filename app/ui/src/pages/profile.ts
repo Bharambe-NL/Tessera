@@ -1,6 +1,7 @@
 /**
- * Profile. Doc 11 section 6: Context, Models, Retrievers, Doctrine,
- * Diagnostics.
+ * Profile. Doc 11 section 6 named five tabs; the owner asked on 2026-08-30 for
+ * one page instead, with the same five as sections a scroll passes through.
+ * Nothing here is worth a navigation of its own.
  *
  * The Models section is what retires the `tessera-keys` CLI. It never shows a
  * key and never receives one back from the core: doc 10 section 8 puts the
@@ -13,25 +14,7 @@ import type { ProfileSummary } from '../rpc.js';
 import { COPY } from '../strings.js';
 import { button } from '../ui/button.js';
 import { chip } from '../ui/chip.js';
-import { segmented } from '../ui/segmented.js';
 import { emptyState } from './shared.js';
-
-export type ProfileTab = 'context' | 'models' | 'retrievers' | 'doctrine' | 'diagnostics';
-
-const TABS: { id: ProfileTab; label: () => string }[] = [
-  { id: 'context', label: () => COPY.profileContext },
-  { id: 'models', label: () => COPY.profileModels },
-  { id: 'retrievers', label: () => COPY.profileRetrievers },
-  { id: 'doctrine', label: () => COPY.profileDoctrine },
-  { id: 'diagnostics', label: () => COPY.profileDiagnostics },
-];
-
-export function profileToolsHTML(tab: ProfileTab): string {
-  return segmented(
-    TABS.map((t) => ({ label: t.label(), on: t.id === tab, data: { 'profile-tab': t.id } })),
-    { ariaLabel: COPY.profileTabsLabel },
-  );
-}
 
 function facts(rows: [string, string][]): string {
   return (
@@ -165,23 +148,27 @@ function diagnostics(profile: ProfileSummary): string {
   ]);
 }
 
-export function profileHTML(profile: ProfileSummary | null, tab: ProfileTab): string {
+function section(id: string, heading: string, body: string): string {
+  return (
+    `<section class="profile-section" data-profile-section="${esc(id)}">` +
+    `<h2>${esc(heading)}</h2>${body}</section>`
+  );
+}
+
+export function profileHTML(profile: ProfileSummary | null): string {
   if (!profile) return emptyState(COPY.profileUnread);
 
-  switch (tab) {
-    case 'models':
-      return models(profile);
-    case 'retrievers':
-      return retrievers(profile);
-    case 'doctrine':
-      return doctrine(profile);
-    case 'diagnostics':
-      return diagnostics(profile);
-    default:
-      return facts([
-        [COPY.profileId, profile.profile_id],
-        [COPY.profileProvider, profile.provider],
-        [COPY.profileActivePack, profile.active_pack],
-      ]);
-  }
+  const context = facts([
+    [COPY.profileId, profile.profile_id],
+    [COPY.profileProvider, profile.provider],
+    [COPY.profileActivePack, profile.active_pack],
+  ]);
+
+  return (
+    section('context', COPY.profileContext, context) +
+    section('models', COPY.profileModels, models(profile)) +
+    section('retrievers', COPY.profileRetrievers, retrievers(profile)) +
+    section('doctrine', COPY.profileDoctrine, doctrine(profile)) +
+    section('diagnostics', COPY.profileDiagnostics, diagnostics(profile))
+  );
 }

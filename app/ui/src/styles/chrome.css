@@ -130,10 +130,10 @@
    * Areas rather than an added wrapper, because the markup stays as it is.
    */
   display: grid;
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto auto auto 1fr auto;
   grid-template-areas:
-    'ask ask ask ask'
-    'learn modes . send';
+    'ask ask ask ask ask'
+    'learn modes model . send';
   align-items: center;
   gap: var(--s3);
   padding: var(--s4) var(--s5);
@@ -166,6 +166,24 @@
 
 #modes {
   grid-area: modes;
+}
+
+/* The model control wears the pill clothes the depth group wears, because the
+   two sit side by side and answer the same kind of question. */
+#model {
+  grid-area: model;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  padding: var(--s1) var(--s2);
+  color: var(--ink-3);
+  background: var(--bg);
+  border: 0;
+  border-radius: var(--r-pill);
+  outline: none;
+}
+
+#model:focus-visible {
+  color: var(--ink);
 }
 
 #send {

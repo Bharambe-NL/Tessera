@@ -293,7 +293,6 @@ export const COPY = {
 
   // ---------------------------------------------------- Profile, doc 11.6 --
 
-  profileTabsLabel: 'Profile pages',
   profileContext: 'Context',
   profileModels: 'Models',
   profileRetrievers: 'Retrievers',

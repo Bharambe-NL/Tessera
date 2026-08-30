@@ -162,6 +162,12 @@
           <button type="button" data-depth="deep">deep</button>
           <button type="button" data-depth="research">research</button>
         </div>
+        <!-- The model is the user's to pick per question. Auto lets the policy
+             resolve; the other options are the models whose keys exist, filled
+             at boot from the profile. -->
+        <select id="model" aria-label="Model">
+          <option value="">Auto</option>
+        </select>
         <button id="send" type="submit" aria-label="Send">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
             <path d="M12 19V5M5 12l7-7 7 7" />

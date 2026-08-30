@@ -16,7 +16,6 @@ import { RpcError } from '../rpc.js';
 import { COPY } from '../strings.js';
 import { bulkHTML } from './flags.js';
 import type { MapFilter } from './map.js';
-import type { ProfileTab } from './profile.js';
 import { renderPage, type PageState } from './render.js';
 
 /**
@@ -59,6 +58,8 @@ export interface RouterActions {
   toast(message: string, level?: 'info' | 'warn' | 'error'): void;
   /** Leave the first run screen for the board. Doc 11 section 6. */
   finishSetup(): Promise<void>;
+  /** A key was saved, so the composer's model choices may have grown. */
+  keySaved(): void;
 }
 
 export class Router {
@@ -66,7 +67,6 @@ export class Router {
   private readonly state: PageState = {
     homeFilter: 'active',
     libraryTab: 'sources',
-    profileTab: 'context',
     pages: { open: null, editing: false },
     notebook: { session: null, asking: false },
     map: {
@@ -327,12 +327,6 @@ export class Router {
       }
 
       // ---- Profile
-      const profTab = target.closest<HTMLElement>('[data-profile-tab]')?.dataset.profileTab;
-      if (profTab) {
-        this.state.profileTab = profTab as ProfileTab;
-        void this.render();
-        return;
-      }
       const keyVerb = target.closest<HTMLElement>('[data-key-act]');
       if (keyVerb) {
         void this.setKey(keyVerb.closest<HTMLElement>('[data-key-ref]')?.dataset.keyRef ?? '');
@@ -489,6 +483,7 @@ export class Router {
     await this.setupStep(async () => {
       await this.rpc.setKey(keyRef, secret);
       this.state.setup.keySaved = true;
+      this.actions.keySaved();
     });
   }
 
@@ -822,6 +817,7 @@ export class Router {
     try {
       await this.rpc.setKey(keyRef, secret);
       this.actions.toast(COPY.profileKeySavedToast);
+      this.actions.keySaved();
       await this.render();
     } catch (e) {
       this.actions.toast(e instanceof RpcError ? e.message : COPY.profileKeyFailed, 'error');

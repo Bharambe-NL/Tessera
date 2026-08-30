@@ -15,7 +15,7 @@ import { conceptsHTML, libraryToolsHTML, sourcesHTML, type LibraryTab } from './
 import { mapHTML, mapToolsHTML, placementTiles, type MapState } from './map.js';
 import { notebookHTML, notebookToolsHTML, type NotebookState } from './notebook.js';
 import { pagesHTML, pagesToolsHTML, type PagesState } from './pages.js';
-import { profileHTML, profileToolsHTML, type ProfileTab } from './profile.js';
+import { profileHTML } from './profile.js';
 import type { View } from './router.js';
 import { setupHTML, type SetupState } from './setup.js';
 
@@ -27,7 +27,6 @@ import { setupHTML, type SetupState } from './setup.js';
 export interface PageState {
   homeFilter: HomeFilter;
   libraryTab: LibraryTab;
-  profileTab: ProfileTab;
   pages: PagesState;
   notebook: NotebookState;
   map: MapState;
@@ -137,9 +136,10 @@ export async function renderPage(
       break;
     }
     case 'profile': {
+      // One page, five sections, no tabs. Owner decision 2026-08-30.
       title.textContent = COPY.railProfile;
-      tools.innerHTML = profileToolsHTML(s.profileTab);
-      body.innerHTML = profileHTML(await rpc.profile(), s.profileTab);
+      tools.innerHTML = '';
+      body.innerHTML = profileHTML(await rpc.profile());
       break;
     }
     case 'setup': {
