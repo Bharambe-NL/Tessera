@@ -1,6 +1,6 @@
 # 17. Learning System v0.1
 
-Register: working. Depends on: 01 (Concept), 05 (retrievers), 07 (Verifier), 08 (Exercise), 14 (Tutor), 15 (memory), 16 (Pages). Supersedes the session-only view of Learn mode in 14 with a persistent learning layer. The Tutor remains the agent that runs a lesson; a new **Learning Planner** owns the map.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 (Concept), 05 (retrievers), 07 (Verifier), 08 (Exercise), 14 (Tutor), 15 (memory), 16 (Pages). Supersedes the session-only view of Learn mode in 14 with a persistent learning layer. The Tutor remains the agent that runs a lesson; a new **Learning Planner** owns the map.
 
 ## 1. Agreed understanding
 

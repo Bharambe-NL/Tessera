@@ -1,6 +1,6 @@
 # 08. Exercise Agent v0.1
 
-Register: working. Depends on: 01, 06, 07.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01, 06, 07.
 
 ## 1. Purpose, scope, non-goals
 

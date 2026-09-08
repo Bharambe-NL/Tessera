@@ -1,6 +1,6 @@
 # 16. Second Brain Integration v0.1
 
-Register: working. Assesses the "Second Brain Canvas" handoff package (Architecture v2, Replication Spec v1, static React app) and plans how its ideas enter Tessera without disturbing build phases 6 and 7.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Assesses the "Second Brain Canvas" handoff package (Architecture v2, Replication Spec v1, static React app) and plans how its ideas enter Tessera without disturbing build phases 6 and 7.
 
 ## 1. What the package is
 

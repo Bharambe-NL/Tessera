@@ -1,6 +1,6 @@
 # 10. Architecture Spec v0.1
 
-Register: working. Depends on: 01 to 09. Load bearing patterns: 21 (provider abstraction), 24 (event sourced run state), 25 (protocol as a view over the event log), 18 (deterministic mock testing), 11 (hooks), 27 and 32 (work ledger and schema guards, used inside one machine).
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 to 09. Load bearing patterns: 21 (provider abstraction), 24 (event sourced run state), 25 (protocol as a view over the event log), 18 (deterministic mock testing), 11 (hooks), 27 and 32 (work ledger and schema guards, used inside one machine).
 
 ## 1. Architectural principles
 

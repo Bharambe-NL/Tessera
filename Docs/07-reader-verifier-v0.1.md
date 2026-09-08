@@ -1,6 +1,6 @@
 # 07. Reader and Verifier Agents v0.1
 
-Register: working. Depends on: 01 to 06. The Verifier is the load bearing agent under the "full auto, review flags only" autonomy model; it gets the longest treatment in the set.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 to 06. The Verifier is the load bearing agent under the "full auto, review flags only" autonomy model; it gets the longest treatment in the set.
 
 ---
 

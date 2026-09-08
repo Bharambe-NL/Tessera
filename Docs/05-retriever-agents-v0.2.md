@@ -2,7 +2,7 @@
 
 Changelog v0.2: added the boards retriever (section 8.5) for cross-board memory. Design rationale in 15.
 
-Register: working. Depends on: 01, 02, 04. Load bearing patterns: 2, 3, 4, 5 (freshness), 7, 11 (pre and post tool hooks), 13.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01, 02, 04. Load bearing patterns: 2, 3, 4, 5 (freshness), 7, 11 (pre and post tool hooks), 13.
 
 ## 1. Purpose, scope, non-goals
 

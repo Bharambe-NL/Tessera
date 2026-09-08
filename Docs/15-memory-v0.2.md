@@ -1,6 +1,6 @@
 # 15. Memory v0.2
 
-Register: working. Amends 01 and 05.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Amends 01 and 05.
 
 ## 1. The five memories
 

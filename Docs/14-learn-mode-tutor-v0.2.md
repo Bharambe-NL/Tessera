@@ -1,6 +1,6 @@
-# 14. Learn Mode and the Tutor Agent v0.1
+# 14. Learn Mode and the Tutor Agent v0.2
 
-Register: working. Depends on: 01, 06, 07, 08, 09. Adds one agent (Tutor) and one board mode (Learn). Amends 01 (Board.mode, LearnSession entity), 03 (Router reads the mode), 09 (Tutor panel), 12 (build phase 9b).
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01, 06, 07, 08, 09. Adds one agent (Tutor) and one board mode (Learn). Amends 01 (Board.mode, LearnSession entity), 03 (Router reads the mode), 09 (Tutor panel), 12 (build phase 9b).
 
 ## 1. What Learn mode is
 

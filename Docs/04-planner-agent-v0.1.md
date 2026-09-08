@@ -1,6 +1,6 @@
 # 04. Planner Agent v0.1
 
-Register: working. Depends on: 01, 02, 03. Load bearing patterns: 1, 2, 3, 4, 7; also 5 (context freshness gate) and 16 (team memory, read only).
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01, 02, 03. Load bearing patterns: 1, 2, 3, 4, 7; also 5 (context freshness gate) and 16 (team memory, read only).
 
 ## 1. Purpose, scope, non-goals
 

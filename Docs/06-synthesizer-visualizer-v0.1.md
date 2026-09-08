@@ -1,6 +1,6 @@
 # 06. Synthesizer and Visualizer Agents v0.1
 
-Register: working. Depends on: 01 to 05. Load bearing patterns: 1, 2, 3, 4, 7; 6 (convergence, in research mode); 16 (audience vocabulary from doctrine).
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 to 05. Load bearing patterns: 1, 2, 3, 4, 7; 6 (convergence, in research mode); 16 (audience vocabulary from doctrine).
 
 Two agents in one document because they share inputs and run back to back; each has its own packet, schema, and failure taxonomy.
 
