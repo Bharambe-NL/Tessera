@@ -4656,6 +4656,33 @@ so it was a script nothing called, and `gen/tools/` went with it.
 **Verified** 2026-09-08, `PYTHONPATH=gen/src python -m pytest gen/tests -q` reports 93 passed,
 `python -m ruff check gen` reports all checks passed, and `python -m black --check gen` leaves all
 21 files unchanged.
+### BN-163 The repository is sixteen files, and every path still resolves
+
+**Spec** Doc 10 section 4's rule that an entity row and its event land in one transaction, which
+is what put every write in one module in the first place.
+
+`crates/tessera-store/src/repo.rs` was 3,860 lines and 71 public functions with no inline tests.
+One module was the right call when the rule was the only thing the file had in common; at this
+size it costs a reader the ability to tell which subject a hunk belongs to, and it costs a
+reviewer the small file a test would sit at the bottom of.
+
+**Decision** A module directory, one file per subject: boards, cards, ancestry, verify, profile,
+flags, learn, media, exercises, sources, notes, concepts, pages, folders. The seams are the ones
+the code already drew, with three differences from the audit. Boards was over 800 lines on its
+own, so the board row and its listing part from the card pipeline that writes onto it.
+`write_flag` joins `open_flags` and `decide_flags` rather than staying with the writes it sits
+beside. `normalise_locator` and `concept_by_term_or_alias` move to the subject they query rather
+than the caller they were written for.
+
+`repo/mod.rs` keeps the file level doc and re-exports every submodule, so each `repo::name` a
+caller already writes resolves unchanged. No caller changed and no test changed. The three
+private helpers more than one file reads, the row to json parse and the per card citation and
+flag queries, are `repo/sql.rs` as `pub(super)`.
+
+**Verified** 2026-09-08. The proof that this is moves only: every line of the fourteen files
+outside their import blocks is byte identical to a line of the old file, in the same order, and
+the sorted list of `pub fn` names before and after is the same list. `cargo fmt --all --check`,
+clippy with warnings denied, and 622 workspace tests.
 
 ---
 
