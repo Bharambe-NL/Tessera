@@ -4695,8 +4695,8 @@ because reaching it meant driving a browser.
 
 **Decision** Three tools, one install. Prettier settings are read off the code rather than chosen
 fresh: `singleQuote`, `printWidth` 100, `trailingComma: all`, `semi`, `arrowParens: always`. That
-kept the reformat to 30 files, 324 insertions and 208 deletions, committed alone so review can
-skip it whole.
+kept the reformat to 30 files, 324 insertions and 208 deletions, committed on its own, with one
+tsconfig hunk landing beside the lint fixes, so review can skip the bulk of it.
 
 ESLint runs typescript-eslint's recommended type checked set with `projectService`, plus
 `no-floating-promises` as an error. It found no floating promise, which is worth recording: the

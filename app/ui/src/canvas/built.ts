@@ -97,11 +97,14 @@ function num(v: unknown): number {
 /**
  * The same guard for strings. An event payload is whatever the core wrote, so a
  * field that should hold a name can arrive as an object, and `String()` on that
- * puts the literal text `[object Object]` in front of the reader. The fallback
- * is the honest answer instead.
+ * puts the literal text `[object Object]` in front of the reader. A number is
+ * still a name, as before; anything else gets the fallback, which is the honest
+ * answer.
  */
 function str(v: unknown, fallback: string): string {
-  return typeof v === 'string' ? v : fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  return fallback;
 }
 
 export function trailFor(cardId: string, events: HistoryEntry[]): BuildTrail {

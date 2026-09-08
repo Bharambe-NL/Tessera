@@ -19,7 +19,7 @@ export interface FrameStats {
   p95: number;
   p99: number;
   worst: number;
-  /** Frames that took longer than one 60 Hz budget. */
+  /** Frames that ran more than half a 60 Hz budget over. */
   dropped: number;
   droppedRatio: number;
 }

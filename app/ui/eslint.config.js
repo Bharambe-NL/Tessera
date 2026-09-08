@@ -28,6 +28,8 @@ export default tseslint.config(
       // project would report every `process.env` as an unknown global, which
       // says something about the tsconfig split rather than about the file.
       'playwright.config.ts',
+      // Local overrides of it (see BN-160) belong to no tsconfig either.
+      'playwright.*.config.ts',
     ],
   },
   js.configs.recommended,
