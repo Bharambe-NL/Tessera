@@ -366,6 +366,9 @@ product name lives in one constant, so changing it stays a one line edit.
 
 ### BN-025 A pack may set a minimum depth, which answers two open questions at once
 
+**Superseded** by BN-155 on 2026-08-30: packs no longer hint depth.
+With the hint gone, fast is available on every pack and the Router decides, so 06 question A2 is answered too: fast is allowed on finance (BN-155).
+
 **Spec** 03 question 3 ("whether `depth_hints` should be able to force a minimum depth the user
 cannot lower"; proposal: the pack may set a minimum and the UI shows why fast is unavailable)
 and 06 question A2 ("whether fast mode should be allowed on the finance pack at all"), which
@@ -4445,8 +4448,8 @@ the icons branch and once on `main` with nothing but merged work in it. The one 
 rules out any of these changes as the cause. It is intermittent, five recent runs finished the same
 step in about three minutes on identical input, and a local run of the same `--mock` command burned
 roughly twelve CPU hours across eighteen cores and wrote nothing at all. It writes nothing because
-the runner only writes `runs.jsonl` when the whole sweep finishes, which is open item 3 in the
-handover and is exactly what makes this undiagnosable from the outside. Recorded here as its own
+the runner only writes `runs.jsonl` when the whole sweep finishes, which BN-150 recorded as an
+owed item and BN-157 later paid, and is exactly what makes this undiagnosable from the outside. Recorded here as its own
 problem rather than carried as noise on somebody else's pull request.
 
 ---
@@ -4596,6 +4599,8 @@ The gate's own note: "Pan holds 60 fps at this card count. No layer change neede
 higher pan number was read at 165 Hz on the machine's own display mode; what this reading settles
 is the question BN-153 left open, that the drag and everything since have not moved the canvas off
 its budget in the environment the product actually runs in.
+
+The gate writes its JSON to `eval/gate/`, which is gitignored by design, so the table above is the record.
 
 **Verified** the gate reports PASS from its own criteria, and the window closed itself.
 
