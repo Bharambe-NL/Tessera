@@ -165,9 +165,9 @@ test('selecting a span in an answer offers a branch, and asking makes one', asyn
   const branchEdge = await page.locator('#edges .edge.branch').getAttribute('d');
   expect(branchEdge?.length ?? 0).toBeGreaterThan(0);
 
-  const ids = await page.locator('#cards .card').evaluateAll((els) =>
-    els.map((e) => (e as HTMLElement).dataset.cardId),
-  );
+  const ids = await page
+    .locator('#cards .card')
+    .evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.cardId));
   expect(ids[0]).toBe(parentId);
 });
 

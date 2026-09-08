@@ -51,7 +51,10 @@ function card(board: BoardSummary, filter: HomeFilter): string {
       ? button(COPY.homeOpen, { data: { 'board-act': 'open', board: board.id } }) +
         button(COPY.homeTrash, { data: { 'board-act': 'trash', board: board.id } })
       : button(COPY.homeRestore, { data: { 'board-act': 'restore', board: board.id } }) +
-        button(COPY.homePurge, { variant: 'danger', data: { 'board-act': 'purge', board: board.id } });
+        button(COPY.homePurge, {
+          variant: 'danger',
+          data: { 'board-act': 'purge', board: board.id },
+        });
 
   return (
     `<article class="board-card" data-board="${esc(board.id)}">` +
@@ -72,9 +75,7 @@ export function homeHTML(
   if (boards.length === 0) {
     return summary + emptyState(filter === 'active' ? COPY.homeNoBoards : COPY.homeNoTrash);
   }
-  return (
-    summary + `<div class="board-grid">${boards.map((b) => card(b, filter)).join('')}</div>`
-  );
+  return summary + `<div class="board-grid">${boards.map((b) => card(b, filter)).join('')}</div>`;
 }
 
 /** The filter toggle and the create button, which live in the page header. */

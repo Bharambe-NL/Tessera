@@ -86,11 +86,13 @@ function retrievers(profile: ProfileSummary): string {
  * machine and an imported one is whatever its author wrote.
  */
 function doctrine(profile: ProfileSummary): string {
-  const packs = profile.pack_details ?? profile.packs.map((code) => ({
-    code,
-    built_in: true,
-    active: code === profile.active_pack,
-  }));
+  const packs =
+    profile.pack_details ??
+    profile.packs.map((code) => ({
+      code,
+      built_in: true,
+      active: code === profile.active_pack,
+    }));
   const problems = profile.pack_problems ?? [];
 
   return (

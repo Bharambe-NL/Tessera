@@ -79,7 +79,9 @@ test('an open rail moves the composer instead of covering it', async ({ page }) 
   expect(clear).toBe(true);
 });
 
-test('the model control offers the models whose keys exist, and the pick rides the ask', async ({ page }) => {
+test('the model control offers the models whose keys exist, and the pick rides the ask', async ({
+  page,
+}) => {
   // Owner decision 2026-08-30: the model is the user's to pick from the chat
   // window. The control fills from the profile after boot: Auto first, then one
   // option per distinct model whose key is in the keychain. The dev core holds
@@ -99,9 +101,10 @@ test('the model control offers the models whose keys exist, and the pick rides t
   // wire is the contract.
   const asked: unknown[] = [];
   await page.route('**/rpc', async (route) => {
-    const body = route.request().postDataJSON() as
-      | { method?: string; params?: { model?: unknown } }
-      | null;
+    const body = route.request().postDataJSON() as {
+      method?: string;
+      params?: { model?: unknown };
+    } | null;
     if (body?.method === 'card.ask') asked.push(body.params?.model);
     await route.continue();
   });

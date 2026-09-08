@@ -38,7 +38,17 @@ const FRAME_BUDGET_MS = 1000 / 60;
 
 function summarise(samples: number[]): FrameStats {
   if (samples.length === 0) {
-    return { frames: 0, durationMs: 0, fps: 0, p50: 0, p95: 0, p99: 0, worst: 0, dropped: 0, droppedRatio: 0 };
+    return {
+      frames: 0,
+      durationMs: 0,
+      fps: 0,
+      p50: 0,
+      p95: 0,
+      p99: 0,
+      worst: 0,
+      dropped: 0,
+      droppedRatio: 0,
+    };
   }
   const sorted = [...samples].sort((a, b) => a - b);
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
@@ -67,7 +77,11 @@ function drive(steps: number, onFrame: (i: number) => void): Promise<number[]> {
     // A hidden document does not schedule animation frames, so a measurement
     // taken there is not a measurement. Fail loudly rather than hang.
     if (document.visibilityState === 'hidden') {
-      reject(new Error('The document is hidden. Animation frames are paused, so the gate cannot measure.'));
+      reject(
+        new Error(
+          'The document is hidden. Animation frames are paused, so the gate cannot measure.',
+        ),
+      );
       return;
     }
     const samples: number[] = [];
@@ -102,7 +116,11 @@ export interface GateHooks {
   flush: () => void;
 }
 
-export async function runGate(cardCount: number, hooks: GateHooks, firstRenderMs: number): Promise<GateResult> {
+export async function runGate(
+  cardCount: number,
+  hooks: GateHooks,
+  firstRenderMs: number,
+): Promise<GateResult> {
   const notes: string[] = [];
 
   // A pan path that keeps moving so nothing can be culled or cached away:
@@ -132,7 +150,8 @@ export async function runGate(cardCount: number, hooks: GateHooks, firstRenderMs
 
   // The gate is about pan. Zoom and first render are recorded, not gating.
   const passed = pan.fps >= 58 && pan.droppedRatio <= 0.05;
-  if (passed && notes.length === 0) notes.push('Pan holds 60 fps at this card count. No layer change needed.');
+  if (passed && notes.length === 0)
+    notes.push('Pan holds 60 fps at this card count. No layer change needed.');
 
   return { cards: cardCount, pan, zoom, firstRenderMs, passed, notes };
 }

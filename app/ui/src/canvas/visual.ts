@@ -12,7 +12,15 @@
  */
 
 import { COPY } from '../strings.js';
-import type { BlockIndexEntry, BottomLine, FlowEdge, FlowNode, Tile, TreeNode, Visual } from './types.js';
+import type {
+  BlockIndexEntry,
+  BottomLine,
+  FlowEdge,
+  FlowNode,
+  Tile,
+  TreeNode,
+  Visual,
+} from './types.js';
 
 const HUES = ['h1', 'h2', 'h3', 'h4'] as const;
 
@@ -57,11 +65,7 @@ function hiddenBlock(entry: BlockIndexEntry): string {
 }
 
 /** Wrap one block's markup with its pointer, citations and hidden state. */
-function block(
-  ref: string,
-  lookup: BlockLookup,
-  render: (attrs: string) => string,
-): string {
+function block(ref: string, lookup: BlockLookup, render: (attrs: string) => string): string {
   const entry = lookup(ref);
   if (entry?.hidden) return hiddenBlock(entry);
   const cites = entry?.citation_ordinals ?? [];
@@ -92,7 +96,9 @@ function treeLevel(nodes: TreeNode[], depth: number, path: string, lookup: Block
   // Children render as one row per level, matching the prototype's shape.
   const kids: { node: TreeNode; path: string }[] = [];
   nodes.forEach((n, i) => {
-    (n.children ?? []).forEach((c, j) => kids.push({ node: c, path: `${path}/${i}/children/${j}` }));
+    (n.children ?? []).forEach((c, j) =>
+      kids.push({ node: c, path: `${path}/${i}/children/${j}` }),
+    );
   });
   if (kids.length === 0) return row;
 
@@ -192,7 +198,11 @@ export function visualHTML(v: Visual | null): string {
     }
 
     case 'table': {
-      const payload = v.payload as { columns: string[]; rows: string[][]; bottom_line?: BottomLine };
+      const payload = v.payload as {
+        columns: string[];
+        rows: string[][];
+        bottom_line?: BottomLine;
+      };
       const cols = (payload.columns ?? [])
         .map((c, i) =>
           block(`/columns/${i}`, lookup, (attrs) => {
@@ -206,7 +216,11 @@ export function visualHTML(v: Visual | null): string {
           (r, ri) =>
             `<tr>${r
               .map((cell, ci) =>
-                block(`/rows/${ri}/${ci}`, lookup, (attrs) => `<td class="clk"${attrs}>${esc(cell)}</td>`),
+                block(
+                  `/rows/${ri}/${ci}`,
+                  lookup,
+                  (attrs) => `<td class="clk"${attrs}>${esc(cell)}</td>`,
+                ),
               )
               .join('')}</tr>`,
         )
@@ -266,7 +280,11 @@ export function visualHTML(v: Visual | null): string {
     }
 
     case 'flow': {
-      const payload = v.payload as { nodes: FlowNode[]; edges?: FlowEdge[]; bottom_line?: BottomLine };
+      const payload = v.payload as {
+        nodes: FlowNode[];
+        edges?: FlowEdge[];
+        bottom_line?: BottomLine;
+      };
       const nodes = payload.nodes ?? [];
       if (!nodes.length) return '';
       const edges = payload.edges ?? [];

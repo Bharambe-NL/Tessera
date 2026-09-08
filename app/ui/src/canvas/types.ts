@@ -11,16 +11,7 @@ export type Depth = 'fast' | 'deep' | 'research';
 export type CardKind = 'root' | 'follow' | 'branch' | 'read' | 'exercise';
 export type CardStatus = 'queued' | 'running' | 'done' | 'flagged' | 'failed';
 export type VisualType =
-  | 'tree'
-  | 'table'
-  | 'list'
-  | 'steps'
-  | 'figure'
-  | 'image'
-  | 'chart'
-  | 'widget'
-  | 'flow'
-  | 'stats';
+  'tree' | 'table' | 'list' | 'steps' | 'figure' | 'image' | 'chart' | 'widget' | 'flow' | 'stats';
 export type Severity = 'info' | 'warn' | 'block';
 export type CitationVerdict = 'supported' | 'weak' | 'unsupported' | 'unchecked';
 
@@ -67,7 +58,10 @@ export type VisualPayload =
   | { root: TreeNode }
   | { columns: string[]; rows: string[][]; bottom_line?: BottomLine }
   | {
-      groups: { heading: string; items: { name: string; detail?: string; citation_ordinals?: number[] }[] }[];
+      groups: {
+        heading: string;
+        items: { name: string; detail?: string; citation_ordinals?: number[] }[];
+      }[];
       bottom_line?: BottomLine;
     }
   | { steps: { label: string; note?: string; citation_ordinals?: number[] }[] }
@@ -154,7 +148,7 @@ export interface Card {
   confidence: number | null;
   model_alias: string | null;
   stages: Stage[];
-  position: Position;  /**
+  position: Position; /**
    * Doc 16 section 4: the page this card was saved as. The chip in the header
    * renders from it, and its absence is what the Save verb is offered for.
    */

@@ -178,7 +178,8 @@ function verifyDetail(run: VerifyRun): string {
   const cited = Object.values(run.verdicts).reduce((a, b) => a + b, 0);
   // Only when there were citations. A fast card cites nothing, and "0 of 0
   // citations supported" reads as a failure rather than as an absence.
-  if (cited > 0) parts.push(`${supported} ${COPY.builtOf} ${cited} ${COPY.builtCitationsSupported}`);
+  if (cited > 0)
+    parts.push(`${supported} ${COPY.builtOf} ${cited} ${COPY.builtCitationsSupported}`);
 
   return parts.length ? parts.join(', ') : COPY.builtNoChecks;
 }
@@ -215,7 +216,9 @@ export function trailHTML(trail: BuildTrail): string {
   }
 
   if (trail.visual) {
-    rows.push(row(COPY.builtVisual, trail.visual === 'produced' ? COPY.builtDrawn : COPY.builtDeclined));
+    rows.push(
+      row(COPY.builtVisual, trail.visual === 'produced' ? COPY.builtDrawn : COPY.builtDeclined),
+    );
   }
   if (trail.verify) rows.push(row(COPY.builtVerified, verifyDetail(trail.verify)));
 
@@ -224,15 +227,14 @@ export function trailHTML(trail: BuildTrail): string {
   // cards and never stands in for the citations below it.
   if (trail.buildsOn.length) {
     rows.push(
-      row(
-        COPY.builtBuildsOn,
-        trail.buildsOn.map((p) => `${p.boardId}/${p.cardId}`).join(', '),
-      ),
+      row(COPY.builtBuildsOn, trail.buildsOn.map((p) => `${p.boardId}/${p.cardId}`).join(', ')),
     );
   }
 
   for (const c of trail.calls) {
-    rows.push(row(c.stage, `${c.model}, ${c.input + c.output} ${COPY.builtTokens}, ${c.latencyMs} ms`));
+    rows.push(
+      row(c.stage, `${c.model}, ${c.input + c.output} ${COPY.builtTokens}, ${c.latencyMs} ms`),
+    );
   }
 
   // Doc 09 section 4 names cost. Tokens are what the log records, so tokens are

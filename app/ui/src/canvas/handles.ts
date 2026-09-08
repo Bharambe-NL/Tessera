@@ -42,7 +42,10 @@ export interface HandleHosts {
  *
  * Returns a teardown function, the way the other canvas hosts do.
  */
-export function attachHandles(hosts: HandleHosts, onPull: (cardId: string, side: Side) => void): () => void {
+export function attachHandles(
+  hosts: HandleHosts,
+  onPull: (cardId: string, side: Side) => void,
+): () => void {
   const { cards, handles } = hosts;
 
   const place = (card: HTMLElement) => {

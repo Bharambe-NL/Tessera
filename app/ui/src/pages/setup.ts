@@ -55,14 +55,15 @@ export function setupHTML(state: SetupState): string {
   // The key_ref the aliases want, shown so a person can see which entry they
   // are filling rather than pasting into an unlabelled box.
   const keyRef = run.key_refs[0] ?? '';
-  const keyBody = run.has_key || state.keySaved
-    ? `<p class="note">${COPY.setupKeyPresent}</p>`
-    : `<form id="setup-key" class="setup-key">` +
-      `<label for="setup-secret">${COPY.setupKeyLabel} <code>${esc(keyRef)}</code></label>` +
-      `<input id="setup-secret" type="password" autocomplete="off" spellcheck="false" ` +
-      `placeholder="${COPY.setupKeyPlaceholder}" aria-label="${COPY.setupKeyLabel}" />` +
-      button(COPY.setupKeySave, { variant: 'primary', submit: true }) +
-      `</form>`;
+  const keyBody =
+    run.has_key || state.keySaved
+      ? `<p class="note">${COPY.setupKeyPresent}</p>`
+      : `<form id="setup-key" class="setup-key">` +
+        `<label for="setup-secret">${COPY.setupKeyLabel} <code>${esc(keyRef)}</code></label>` +
+        `<input id="setup-secret" type="password" autocomplete="off" spellcheck="false" ` +
+        `placeholder="${COPY.setupKeyPlaceholder}" aria-label="${COPY.setupKeyLabel}" />` +
+        button(COPY.setupKeySave, { variant: 'primary', submit: true }) +
+        `</form>`;
 
   const folderBody = state.folderAdded
     ? `<p class="note">${COPY.setupFolderAdded} ${esc(state.folderAdded.label)}. ` +
@@ -89,13 +90,7 @@ export function setupHTML(state: SetupState): string {
     `<ol class="setup">` +
     step(1, COPY.setupPackTitle, true, packs, COPY.setupPackNote) +
     step(2, COPY.setupKeyTitle, ready, keyBody, COPY.setupKeyNote) +
-    step(
-      3,
-      COPY.setupFolderTitle,
-      state.folderAdded !== null,
-      folderBody,
-      COPY.setupFolderNote,
-    ) +
+    step(3, COPY.setupFolderTitle, state.folderAdded !== null, folderBody, COPY.setupFolderNote) +
     `</ol>` +
     (state.error ? `<p class="setup-error" role="alert">${esc(state.error)}</p>` : '') +
     (state.busy ? `<p class="page-empty">${COPY.setupWorking}</p>` : '') +

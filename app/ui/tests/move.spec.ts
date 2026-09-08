@@ -65,10 +65,13 @@ async function settled(page: Page): Promise<void> {
  * one, so it is the answer at every moment.
  */
 async function transformOf(page: Page, index = 0): Promise<{ x: number; y: number }> {
-  return await page.locator('#cards .card').nth(index).evaluate((el) => {
-    const m = new DOMMatrixReadOnly((el as HTMLElement).style.transform);
-    return { x: Math.round(m.m41), y: Math.round(m.m42) };
-  });
+  return await page
+    .locator('#cards .card')
+    .nth(index)
+    .evaluate((el) => {
+      const m = new DOMMatrixReadOnly((el as HTMLElement).style.transform);
+      return { x: Math.round(m.m41), y: Math.round(m.m42) };
+    });
 }
 
 /**

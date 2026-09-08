@@ -33,7 +33,9 @@ type Transport = (request: string) => Promise<string>;
 
 function tauriTransport(): Transport | null {
   const g = window as unknown as {
-    __TAURI__?: { core?: { invoke?: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } };
+    __TAURI__?: {
+      core?: { invoke?: (cmd: string, args: Record<string, unknown>) => Promise<unknown> };
+    };
   };
   const invoke = g.__TAURI__?.core?.invoke;
   if (!invoke) return null;
@@ -208,7 +210,10 @@ export class Rpc {
   }
 
   sources(limit?: number) {
-    return this.call<{ sources: SourceRow[] }>('library.sources', limit === undefined ? {} : { limit });
+    return this.call<{ sources: SourceRow[] }>(
+      'library.sources',
+      limit === undefined ? {} : { limit },
+    );
   }
 
   concepts(limit?: number) {
@@ -593,14 +598,7 @@ export interface MapConcept {
   concept_id: string;
   term: string;
   /** Doc 17 section 2.3's six states, or null for a concept nothing has touched. */
-  learning_state:
-    | 'unseen'
-    | 'exposed'
-    | 'rated'
-    | 'checked'
-    | 'mastered'
-    | 'decayed'
-    | null;
+  learning_state: 'unseen' | 'exposed' | 'rated' | 'checked' | 'mastered' | 'decayed' | null;
   self_rating: number | null;
   mastery: number | null;
   difficulty_level: number | null;

@@ -27,8 +27,8 @@
   --slate: oklch(0.86 0.04 250);
   --slate-ink: oklch(0.36 0.06 255);
   --rust: oklch(0.82 0.08 40);
-  --rust-ink: oklch(0.40 0.11 38);
-  --amber: oklch(0.86 0.10 85);
+  --rust-ink: oklch(0.4 0.11 38);
+  --amber: oklch(0.86 0.1 85);
   --amber-ink: oklch(0.38 0.09 75);
 
   /* spacing scale */
@@ -80,20 +80,20 @@
 :root:not([data-theme='light']) {
   @media (prefers-color-scheme: dark) {
     --bg: oklch(0.19 0.004 80);
-    --grid: oklch(0.30 0.006 80);
+    --grid: oklch(0.3 0.006 80);
     --surface: oklch(0.235 0.005 80);
     --line: oklch(0.32 0.006 80);
     --line-strong: oklch(0.46 0.008 80);
     --ink: oklch(0.94 0.006 80);
-    --ink-2: oklch(0.74 0.010 80);
-    --ink-3: oklch(0.60 0.010 80);
+    --ink-2: oklch(0.74 0.01 80);
+    --ink-3: oklch(0.6 0.01 80);
     --accent: oklch(0.72 0.12 250);
     --accent-soft: oklch(0.32 0.05 250);
-    --user: oklch(0.90 0.006 80);
-    --olive-ink: oklch(0.80 0.07 125);
-    --slate-ink: oklch(0.80 0.06 255);
-    --rust-ink: oklch(0.80 0.11 38);
-    --amber-ink: oklch(0.80 0.09 75);
+    --user: oklch(0.9 0.006 80);
+    --olive-ink: oklch(0.8 0.07 125);
+    --slate-ink: oklch(0.8 0.06 255);
+    --rust-ink: oklch(0.8 0.11 38);
+    --amber-ink: oklch(0.8 0.09 75);
     --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3);
     --shadow-popover: 0 3px 8px oklch(0 0 0 / 0.45);
 
@@ -103,20 +103,20 @@
 
 :root[data-theme='dark'] {
   --bg: oklch(0.19 0.004 80);
-  --grid: oklch(0.30 0.006 80);
+  --grid: oklch(0.3 0.006 80);
   --surface: oklch(0.235 0.005 80);
   --line: oklch(0.32 0.006 80);
   --line-strong: oklch(0.46 0.008 80);
   --ink: oklch(0.94 0.006 80);
-  --ink-2: oklch(0.74 0.010 80);
-  --ink-3: oklch(0.60 0.010 80);
+  --ink-2: oklch(0.74 0.01 80);
+  --ink-3: oklch(0.6 0.01 80);
   --accent: oklch(0.72 0.12 250);
   --accent-soft: oklch(0.32 0.05 250);
-  --user: oklch(0.90 0.006 80);
-  --olive-ink: oklch(0.80 0.07 125);
-  --slate-ink: oklch(0.80 0.06 255);
-  --rust-ink: oklch(0.80 0.11 38);
-  --amber-ink: oklch(0.80 0.09 75);
+  --user: oklch(0.9 0.006 80);
+  --olive-ink: oklch(0.8 0.07 125);
+  --slate-ink: oklch(0.8 0.06 255);
+  --rust-ink: oklch(0.8 0.11 38);
+  --amber-ink: oklch(0.8 0.09 75);
   --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3);
   --shadow-popover: 0 3px 8px oklch(0 0 0 / 0.45);
 

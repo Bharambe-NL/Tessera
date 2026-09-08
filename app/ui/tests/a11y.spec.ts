@@ -44,7 +44,10 @@ async function contrastFailures(page: import('@playwright/test').Page) {
     const parse = (value: string): [number, number, number, number] | null => {
       const m = value.match(/rgba?\(([^)]+)\)/);
       if (!m) return null;
-      const parts = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+      const parts = m[1]
+        .split(/[,\s/]+/)
+        .filter(Boolean)
+        .map(Number);
       const [r, g, b, a] = parts;
       return [r, g, b, a === undefined ? 1 : a];
     };

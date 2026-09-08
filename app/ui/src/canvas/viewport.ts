@@ -44,8 +44,7 @@ export class ViewportHost {
     this.world = opts.world;
     this.onSettled = opts.onSettled;
     this.reducedMotion =
-      opts.reducedMotion ??
-      (() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      opts.reducedMotion ?? (() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
   /**

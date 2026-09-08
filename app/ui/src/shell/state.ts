@@ -93,7 +93,12 @@ export async function keepAsSticky(cardId: string, quote: string): Promise<void>
   if (!id) return;
   const card = state.board?.cards.find((c) => c.id === cardId);
   const position = card
-    ? { x: Math.round(card.position.x + CARD_W + 80), y: Math.round(card.position.y + 24), w: 220, h: 140 }
+    ? {
+        x: Math.round(card.position.x + CARD_W + 80),
+        y: Math.round(card.position.y + 24),
+        w: 220,
+        h: 140,
+      }
     : { x: 560, y: 80, w: 220, h: 140 };
   try {
     await rpc.createNote(id, quote, { cardId, position });

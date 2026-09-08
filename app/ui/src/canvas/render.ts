@@ -68,7 +68,8 @@ function pageChip(c: Card): string {
 
 function confidenceDot(c: Card): string {
   // Doc 09 section 4: unchecked grey, under 0.5 amber, over 0.5 olive.
-  if (c.confidence === null) return `<span class="dot unchecked" title="${COPY.unverified}"></span>`;
+  if (c.confidence === null)
+    return `<span class="dot unchecked" title="${COPY.unverified}"></span>`;
   const tone = c.confidence < 0.5 ? 'low' : 'good';
   return `<span class="dot ${tone}" title="${COPY.confidence} ${c.confidence.toFixed(2)}"></span>`;
 }
@@ -140,7 +141,10 @@ function bodyFor(c: Card): string {
     } else {
       // Doc 09 section 4: stages derive from events and tick off in order.
       body += `<div class="stages" role="status">${c.stages
-        .map((s) => `<div class="${s.done ? 'done' : 'live'}">${esc(s.label)}${s.done ? '' : '…'}</div>`)
+        .map(
+          (s) =>
+            `<div class="${s.done ? 'done' : 'live'}">${esc(s.label)}${s.done ? '' : '…'}</div>`,
+        )
         .join('')}</div>`;
     }
     return body;
@@ -174,8 +178,12 @@ function cardHTML(c: Card): string {
       ? COPY.readFromImage
       : (c.anchor_text ?? (c.kind === 'root' ? c.question : COPY.followTitle));
   const depthBadge =
-    c.depth !== 'fast' ? `<span class="badge ${c.depth}">${c.depth}</span>` : `<span class="badge fast">fast</span>`;
-  const model = c.model_alias ? `<span class="alias" title="${COPY.rerunAs}">${esc(c.model_alias)}</span>` : '';
+    c.depth !== 'fast'
+      ? `<span class="badge ${c.depth}">${c.depth}</span>`
+      : `<span class="badge fast">fast</span>`;
+  const model = c.model_alias
+    ? `<span class="alias" title="${COPY.rerunAs}">${esc(c.model_alias)}</span>`
+    : '';
   // Doc 09 section 5's verbs act on a card that has an answer to act on. A
   // running card has nothing to follow up or check again yet.
   const settled = c.status === 'done' || c.status === 'flagged';

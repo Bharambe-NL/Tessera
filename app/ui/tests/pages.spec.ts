@@ -80,7 +80,10 @@ test('the rail opens each page and the board keeps its state underneath', async 
     await page.locator(`#rail [data-view="${view}"]`).click();
     await expect(page.locator('#page')).toBeVisible();
     await expect(page.locator('#page-title')).toHaveText(title);
-    await expect(page.locator(`#rail [data-view="${view}"]`)).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator(`#rail [data-view="${view}"]`)).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   }
 
   // A page covers the canvas rather than replacing it, so the card is still
@@ -265,7 +268,9 @@ test('the profile is one page whose sections all show, and never a key', async (
   // whose value is known, so this is a real check that it never crossed.
   const html = await page.locator('#page-body').innerHTML();
   expect(html).not.toContain('sk-');
-  await expect(page.locator('[data-profile-section="models"] .page-note')).toContainText('keychain');
+  await expect(page.locator('[data-profile-section="models"] .page-note')).toContainText(
+    'keychain',
+  );
 
   await expect(page.locator('[data-profile-section="diagnostics"] .facts')).toContainText('Events');
   await expect(page.locator('.lib-row[data-pack="general"]')).toContainText('Ships with the app');

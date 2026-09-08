@@ -69,7 +69,10 @@ function makeVisual(r: () => number, id: string, type: VisualType): Visual {
       };
     }
     case 'table': {
-      const rows = Array.from({ length: 4 + Math.floor(r() * 3) }, () => [sentence(r, 3), sentence(r, 4)]);
+      const rows = Array.from({ length: 4 + Math.floor(r() * 3) }, () => [
+        sentence(r, 3),
+        sentence(r, 4),
+      ]);
       return {
         id,
         type,
@@ -178,7 +181,10 @@ function makeCard(r: () => number, i: number, parent: string | null, kind: CardK
       verdict: k === 2 ? 'weak' : 'supported',
       stale: false,
     })),
-    flags: i % 11 === 0 ? [{ id: `f${id}`, rule_id: 'stale_source', severity: 'warn', reason: sentence(r, 8) }] : [],
+    flags:
+      i % 11 === 0
+        ? [{ id: `f${id}`, rule_id: 'stale_source', severity: 'warn', reason: sentence(r, 8) }]
+        : [],
     status: i % 11 === 0 ? 'flagged' : 'done',
     confidence: depth === 'fast' ? null : 0.4 + r() * 0.55,
     model_alias: depth === 'fast' ? 'medium' : 'frontier',

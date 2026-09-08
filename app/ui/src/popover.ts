@@ -88,7 +88,10 @@ export class AnchorPopover {
     );
     // Above the anchor when there is room, below it when there is not.
     const above = rect.top - box.height - 10;
-    const top = above >= MARGIN ? above : Math.min(rect.bottom + 10, window.innerHeight - box.height - MARGIN);
+    const top =
+      above >= MARGIN
+        ? above
+        : Math.min(rect.bottom + 10, window.innerHeight - box.height - MARGIN);
     root.style.left = `${Math.round(left)}px`;
     root.style.top = `${Math.round(top)}px`;
   }

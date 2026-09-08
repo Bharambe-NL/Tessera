@@ -233,7 +233,8 @@ export function mapHTML(state: MapState): string {
   if (state.placing && tiles.length > 0) return placementHTML(tiles);
 
   const shown = visible(state);
-  if (shown.length === 0) return emptyState(map.concepts.length === 0 ? COPY.mapEmpty : COPY.mapNone);
+  if (shown.length === 0)
+    return emptyState(map.concepts.length === 0 ? COPY.mapEmpty : COPY.mapNone);
 
   const placed = layout(shown);
   const at = new Map(placed.map((p) => [p.concept.concept_id, p]));
@@ -243,7 +244,9 @@ export function mapHTML(state: MapState): string {
   // Doc 17 section 6: the frontier is a band across the map, drawn behind the
   // nodes so a node on it reads as standing in it rather than wearing a badge.
   const frontier = new Set(map.frontier);
-  const bands = [...new Set(placed.filter((p) => frontier.has(p.concept.concept_id)).map((p) => p.y))]
+  const bands = [
+    ...new Set(placed.filter((p) => frontier.has(p.concept.concept_id)).map((p) => p.y)),
+  ]
     .map(
       (y) =>
         `<rect class="map-band" x="0" y="${y - BAND / 2}" width="${width}" height="${BAND}"></rect>`,

@@ -24,15 +24,7 @@ import { renderPage, type PageState } from './render.js';
  * nobody navigates to a first run, they arrive at one.
  */
 export type View =
-  | 'board'
-  | 'home'
-  | 'flags'
-  | 'library'
-  | 'notebook'
-  | 'pages'
-  | 'map'
-  | 'profile'
-  | 'setup';
+  'board' | 'home' | 'flags' | 'library' | 'notebook' | 'pages' | 'map' | 'profile' | 'setup';
 
 export interface RouterHosts {
   rail: HTMLElement;

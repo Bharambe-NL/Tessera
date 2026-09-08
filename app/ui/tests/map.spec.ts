@@ -33,9 +33,9 @@ test('the map draws a node per concept, layered by what they depend on', async (
   // Doc 17 section 6: "layered by prerequisite depth, never hand arranged". The
   // fixture is a chain of five, so every node sits in a band of its own and the
   // one with no prerequisite is at the top.
-  const ys = await page.locator('.map-node circle').evaluateAll((circles) =>
-    circles.map((c) => Number(c.getAttribute('cy'))),
-  );
+  const ys = await page
+    .locator('.map-node circle')
+    .evaluateAll((circles) => circles.map((c) => Number(c.getAttribute('cy'))));
   expect(new Set(ys).size).toBe(5);
 
   const first = await page

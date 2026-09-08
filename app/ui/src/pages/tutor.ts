@@ -105,7 +105,9 @@ function checkHTML(turn: TutorTurn, state: TutorState): string {
   // Doc 17 section 4's remedy, said as a sentence and offered as a choice. The
   // learner reads what a wrong answer suggests next and decides, which is doc
   // 14 section 3.7's rule that nothing happens on its own.
-  const remedy = state.feedback?.remedy ? `<p class="remedy">${esc(state.feedback.remedy)}</p>` : '';
+  const remedy = state.feedback?.remedy
+    ? `<p class="remedy">${esc(state.feedback.remedy)}</p>`
+    : '';
   const feedback = state.feedback
     ? `<p class="feedback ${state.feedback.correct ? 'right' : 'wrong'}">` +
       `${state.feedback.correct ? COPY.learnRight : COPY.learnWrong} ${esc(state.feedback.explanation)}</p>` +

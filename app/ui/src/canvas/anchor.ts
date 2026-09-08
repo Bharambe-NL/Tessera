@@ -51,7 +51,10 @@ export function selectionAnchor(): AnchorTarget | null {
 
   // Only the body. A selection in the header or the follow-up box is a person
   // reading or editing, not one marking a claim.
-  const start = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const start =
+    range.startContainer instanceof Element
+      ? range.startContainer
+      : range.startContainer.parentElement;
   if (!start?.closest('.card .body')) return null;
 
   const rect = range.getBoundingClientRect();

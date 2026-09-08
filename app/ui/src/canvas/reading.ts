@@ -78,9 +78,7 @@ function flags(card: Card): string {
 function section(card: Card, index: number): string {
   const rel = relation(card);
   const confidence =
-    card.confidence === null
-      ? COPY.unverified
-      : `${COPY.confidence} ${card.confidence.toFixed(2)}`;
+    card.confidence === null ? COPY.unverified : `${COPY.confidence} ${card.confidence.toFixed(2)}`;
 
   let body = '';
   if (card.status === 'failed') body = `<p>${COPY.cardFailed}</p>`;

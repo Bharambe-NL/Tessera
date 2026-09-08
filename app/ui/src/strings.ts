@@ -140,17 +140,20 @@ export const COPY = {
   setupNeedsKey: 'Add a model key first, so the first card has something to answer it.',
 
   setupPackTitle: 'Choose a doctrine pack',
-  setupPackNote: 'The pack decides which sources outrank which and what a card must never say without one. You can change it later.',
+  setupPackNote:
+    'The pack decides which sources outrank which and what a card must never say without one. You can change it later.',
 
   setupKeyTitle: 'Add a model key',
-  setupKeyNote: 'The key goes into this machine\u2019s keychain. It is never written to a file and never leaves except to the provider you chose.',
+  setupKeyNote:
+    'The key goes into this machine\u2019s keychain. It is never written to a file and never leaves except to the provider you chose.',
   setupKeyLabel: 'Paste the key for',
   setupKeyPlaceholder: 'The key from your provider',
   setupKeySave: 'Save to keychain',
   setupKeyPresent: 'A key is in the keychain for this alias.',
 
   setupFolderTitle: 'Watch a folder',
-  setupFolderNote: 'Optional. Documents in a watched folder can be cited. Nothing is uploaded unless you ask for provider embeddings.',
+  setupFolderNote:
+    'Optional. Documents in a watched folder can be cited. Nothing is uploaded unless you ask for provider embeddings.',
   setupFolderPath: 'Full path to the folder',
   setupFolderLabel: 'What to call it',
   setupFolderSensitive: 'Sensitive: keep this folder\u2019s text on this machine',
@@ -303,7 +306,8 @@ export const COPY = {
    */
   boardPackUpdate: 'Update pack and check these cards again',
   boardPackUpdated: 'Judged again under',
-  boardPackUpdateFailed: 'The pack update did not finish. The board still names the version it had.',
+  boardPackUpdateFailed:
+    'The pack update did not finish. The board still names the version it had.',
 
   /**
    * Doc 16 section 3.2's ninth verb, and doc 16 section 7 point 1's vocabulary:
@@ -333,7 +337,8 @@ export const COPY = {
   mapEmpty: 'Nothing on the map yet. Rate a concept or load a path to put something here.',
   mapNone: 'No concept matches this filter.',
   mapAria: 'Concepts, layered by what they depend on',
-  mapKey: 'Bigger means more cards. A solid line is a prerequisite you agreed to, a dotted one is proposed. The shaded band is where you are working.',
+  mapKey:
+    'Bigger means more cards. A solid line is a prerequisite you agreed to, a dotted one is proposed. The shaded band is where you are working.',
   mapAll: 'All',
   mapRated: 'Rated',
   mapChecked: 'Checked',
@@ -368,7 +373,8 @@ export const COPY = {
   // Doc 17 section 3's placement, on the Map when a mission is created or a
   // path is loaded.
   placeHead: 'How well do you know these?',
-  placeWhy: 'Rate what you can, skip what you would rather find out. What you say here is a claim, and the first lesson checks it.',
+  placeWhy:
+    'Rate what you can, skip what you would rather find out. What you say here is a claim, and the first lesson checks it.',
   placeSkip: 'Skip',
   placeDone: 'Go to the map',
   placeOpen: 'Rate concepts',
@@ -420,7 +426,8 @@ export const COPY = {
   profilePackBuiltIn: 'Ships with the app',
   profilePackActive: 'Active',
   profilePackUse: 'Use this pack',
-  profilePackImportNote: 'A pack sets the audiences, the source ranking and the flag rules. Importing one adds it to this profile; switching to it is a separate step.',
+  profilePackImportNote:
+    'A pack sets the audiences, the source ranking and the flag rules. Importing one adds it to this profile; switching to it is a separate step.',
   profilePackUnread: 'These pack files in this profile folder did not load:',
   profileDiagnostics: 'Diagnostics',
   profileId: 'Profile',
@@ -435,7 +442,8 @@ export const COPY = {
   profileKeySavedToast: 'The key went to the keychain.',
   profileKeyFailed: 'The keychain would not take that key.',
   /** Doc 10 section 8, said where a person is about to paste a secret. */
-  profileKeyNotice: 'Keys are held by the operating system keychain. Nothing writes one to a file, a log or a bundle.',
+  profileKeyNotice:
+    'Keys are held by the operating system keychain. Nothing writes one to a file, a log or a bundle.',
   profileConfigured: 'configured',
   profileUnconfigured: 'not configured',
   profileOnByDefault: 'on by default',
