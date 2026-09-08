@@ -4754,6 +4754,36 @@ after the move is identical, 69 lines.
 
 ---
 
+### BN-165 The pipeline is six files, and the card run is one of them
+
+**Spec** Doc 03 section 2 draws the pipeline as a sequence of stages, and doc 07 parts A and B,
+doc 08 and doc 14 each add a run of their own beside it. Five runs shared one file.
+
+`crates/tessera-core/src/pipeline.rs` was 2,379 lines holding the card run, the Reader run, the
+exercise run, the Tutor turn, the re-verification and every packet builder. `run_card` alone was
+585 lines, and reading it meant scrolling past four runs that are not it.
+
+**Decision** The file becomes `pipeline/`, split by subject rather than by size. `card.rs` holds
+`run_card`, its board read, the summary shape and the research ranking, with the ranking test that
+belongs to it. `learn.rs` holds the Learning Planner, the Tutor turn, the ladder and what a check
+does to a concept. `read.rs` holds the Reader run, `exercise.rs` the exercise run, and
+`packets.rs` the five builders that assemble what an agent is asked. `support.rs` holds base64,
+the truncation, the failure shim and the three lesson constants, none of which belongs to one
+stage. `mod.rs` keeps the module doc, `RunContext`, `CardIdentity`, `Subject`, `CardOutcome` and
+`run_verify_only`, which runs no stage and so belongs to no run.
+
+Every item moved whole and nothing was renamed or reordered. Five helpers are promoted to
+`pub(super)` because a sibling now reads them: `truncate_chars` and `fail` in `support.rs`, and
+`build_router_packet`, `build_planner_packet` and `build_synth_packet` in `packets.rs`. Everything
+that was public is re-exported from `mod.rs`, so `pipeline::run_card`, `pipeline::base64`,
+`pipeline::LEARN` and the rest are the paths `core.rs`, `lib.rs` and the verbs already import.
+
+**Verified** 2026-09-08, `cargo fmt --all --check`, clippy with warnings denied, 623 workspace
+tests and the 84 Playwright tests against a prebuilt server. The sorted list of function names
+before and after the split is identical, 32 names.
+
+---
+
 ## Measured findings
 
 ### BN-056 The three staleness gates, measured at last
