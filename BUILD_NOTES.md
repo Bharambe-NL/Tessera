@@ -4683,6 +4683,42 @@ flag queries, are `repo/sql.rs` as `pub(super)`.
 outside their import blocks is byte identical to a line of the old file, in the same order, and
 the sorted list of `pub fn` names before and after is the same list. `cargo fmt --all --check`,
 clippy with warnings denied, and 622 workspace tests.
+### BN-162 The UI gains a formatter, a linter and a unit runner
+
+**Spec** Doc 12's rule that every check costing nothing runs on every push, and the refactor
+plan's wave W2, which every later UI wave waits on.
+
+`app/ui` had a typecheck, a build and 84 browser tests, and nothing between them. Formatting was
+whatever the last hand left, a promise nobody awaited was invisible until a user saw a card that
+never arrived, and arithmetic like the layout offsets and the frame statistics had no test at all
+because reaching it meant driving a browser.
+
+**Decision** Three tools, one install. Prettier settings are read off the code rather than chosen
+fresh: `singleQuote`, `printWidth` 100, `trailingComma: all`, `semi`, `arrowParens: always`. That
+kept the reformat to 30 files, 324 insertions and 208 deletions, committed alone so review can
+skip it whole.
+
+ESLint runs typescript-eslint's recommended type checked set with `projectService`, plus
+`no-floating-promises` as an error. It found no floating promise, which is worth recording: the
+`void` markers already in `router.ts` are doing their job. It found ten other things, all real and
+all small, so no rule is left at warn. Three were `no-base-to-string` in `built.ts`, where an
+event payload field read through `String()` would have shown a reader the text `[object Object]`;
+one was an unchecked `JSON.parse` in `rpc.ts`; the rest were two dead initialisers, two redundant
+assertions and two async callbacks with nothing to await. `playwright.config.ts` is out of scope
+because it belongs to the tests tsconfig and the project service reads the root one.
+
+Vitest with happy-dom runs `src/**/*.test.ts`. Two proof tests: `canvas/layout.test.ts` spends the
+injected height lookup, so a follow-up's drop of parent height plus `GAP_Y` and a branch's offset
+of `CARD_W` plus `BRANCH_X` are arithmetic with one right answer; `perf/gate.test.ts` pins the
+percentile and dropped frame counts on ten known intervals and checks the verdict word. Together
+they are 11 assertions Playwright could not make. `summarise` is exported for the second.
+
+One machine note: on Windows the first `import('happy-dom')` took 60 seconds cold and blew
+vitest's worker handshake, then 4 seconds warm. It is a first touch of the package's file tree,
+not a vitest fault, and Linux CI does not see it.
+
+**Verified** 2026-09-08, `pnpm --dir app/ui lint`, `format:check`, `unit` (11 passed),
+`typecheck`, `build`, `cargo test -p tessera-style`, and the Playwright suite, 84 passed.
 
 ---
 
