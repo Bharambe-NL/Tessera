@@ -12,21 +12,21 @@
 //! One file per subject, and `mod.rs` re-exports all of them, so every
 //! `repo::name` a caller already writes still resolves.
 
-pub mod ancestry;
-pub mod boards;
-pub mod cards;
-pub mod concepts;
-pub mod exercises;
-pub mod flags;
-pub mod folders;
-pub mod learn;
-pub mod media;
-pub mod notes;
-pub mod pages;
-pub mod profile;
-pub mod sources;
+mod ancestry;
+mod boards;
+mod cards;
+mod concepts;
+mod exercises;
+mod flags;
+mod folders;
+mod learn;
+mod media;
+mod notes;
+mod pages;
+mod profile;
+mod sources;
 mod sql;
-pub mod verify;
+mod verify;
 
 pub use ancestry::*;
 pub use boards::*;

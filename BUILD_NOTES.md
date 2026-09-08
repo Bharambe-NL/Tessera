@@ -4661,7 +4661,7 @@ so it was a script nothing called, and `gen/tools/` went with it.
 **Spec** Doc 10 section 4's rule that an entity row and its event land in one transaction, which
 is what put every write in one module in the first place.
 
-`crates/tessera-store/src/repo.rs` was 3,860 lines and 71 public functions with no inline tests.
+`crates/tessera-store/src/repo.rs` was 3,860 lines and 88 public functions with no inline tests.
 One module was the right call when the rule was the only thing the file had in common; at this
 size it costs a reader the ability to tell which subject a hunk belongs to, and it costs a
 reviewer the small file a test would sit at the bottom of.
