@@ -243,7 +243,9 @@ READOUTS: dict[str, str] = {
     "cards_produced": "how many questions became cards, which the failure count already gates",
     "tokens_per_question": "cost, reported so a policy change is visible",
     "latency_p95_ms": "doc 02 section 10.3 reports latency and sets no target",
-    "planner_latency_p95_ms": "doc 04 section 12 names a target in prose; the gate is the run's own",
+    "planner_latency_p95_ms": (
+        "doc 04 section 12 names a target in prose; the gate is the run's own"
+    ),
     "planner_tokens_mean": "as above",
     "flag_recall": "the denominator is the corpus's planted flags, not a promise about a rule",
     # Doc 05 section 12 sets recall at k and says nothing about rank. The gate
@@ -256,7 +258,9 @@ READOUTS: dict[str, str] = {
     "domain_label_precision": "BN-036 retired the domain gate with the taxonomy that fed it",
     "audience_detection": "the corpus does not phrase an audience into a question yet",
     "no_source_honesty": "doc 06 section A10 is a behaviour the end to end tests assert directly",
-    "source_hierarchy_compliance": "reported until the corpus plants enough disagreements to gate on",
+    "source_hierarchy_compliance": (
+        "reported until the corpus plants enough disagreements to gate on"
+    ),
     # BN-110's two. Both exist to make the gate above them readable rather than
     # to promise anything on their own: one says how much of the run the ledger
     # could judge at all, the other says which way the disagreements went.
@@ -1460,9 +1464,11 @@ def score(results: Path, corpus: Path) -> Report:
             "citation_accuracy_ledger",
             ledger_supported,
             ledger_total,
-            "citations on a claim that states a required value, whose passage states it too"
-            if ledger_total
-            else waiting,
+            (
+                "citations on a claim that states a required value, whose passage states it too"
+                if ledger_total
+                else waiting
+            ),
         )
         if support_check
         else Metric(
@@ -1481,9 +1487,11 @@ def score(results: Path, corpus: Path) -> Report:
             "citations_the_ledger_can_judge",
             spanned,
             cited,
-            "citations bound to a claim that states a value the ledger holds"
-            if spans_seen
-            else waiting,
+            (
+                "citations bound to a claim that states a value the ledger holds"
+                if spans_seen
+                else waiting
+            ),
         )
     )
     report.metrics.append(
@@ -1491,9 +1499,11 @@ def score(results: Path, corpus: Path) -> Report:
             "verifier_agreement",
             agreed,
             judged,
-            "citations where the Verifier and the fact ledger reached the same answer"
-            if judged
-            else waiting,
+            (
+                "citations where the Verifier and the fact ledger reached the same answer"
+                if judged
+                else waiting
+            ),
         )
         if support_check
         else Metric(
@@ -1511,9 +1521,11 @@ def score(results: Path, corpus: Path) -> Report:
             "verifier_missed_support",
             missed_support,
             judged,
-            "citations the ledger supports that the Verifier would not call supported"
-            if judged
-            else waiting,
+            (
+                "citations the ledger supports that the Verifier would not call supported"
+                if judged
+                else waiting
+            ),
         )
     )
 
@@ -1791,9 +1803,11 @@ def score(results: Path, corpus: Path) -> Report:
         report.metrics.append(
             Metric(
                 "backlink_completeness",
-                len([r for r in resolvable if r.get("in_backlinks")]) / planted
-                if planted
-                else None,
+                (
+                    len([r for r in resolvable if r.get("in_backlinks")]) / planted
+                    if planted
+                    else None
+                ),
                 len([r for r in resolvable if r.get("in_backlinks")]),
                 planted,
                 f"the corpus planted {planted} links between pages and the store took "

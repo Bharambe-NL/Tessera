@@ -4604,9 +4604,6 @@ its budget in the environment the product actually runs in.
 
 
 
-
----
-
 ### BN-160 Main went red twice over, and both were the cost of an earlier fix
 
 **Spec** Doc 12's standing rule that every check that costs nothing runs on every push, and the
@@ -4637,6 +4634,31 @@ right resolution.
 
 **Verified** 2026-09-08, `cargo fmt --all --check`, clippy with warnings denied, the workspace
 tests, the Playwright suite against a prebuilt server, and the CI run on this branch.
+
+---
+
+### BN-161 The generator's formatter runs in CI, and five lines that outlived it
+
+**Spec** Doc 12's checks workflow, which has gated the Rust half with `cargo fmt` and clippy since
+the first commit and ran nothing but pytest over the Python half.
+
+`ruff` and `black` have been in `gen[dev]` from the start and no job ever invoked them, so five
+ruff errors accumulated across several milestones: two overlong lines in the `READOUTS` table in
+`harness.py`, two in `test_corpus.py`, and an unsorted import block in `vault.py`. Black had never
+run over the package at all. Its first pass changed three files, the same three, in nine hunks,
+mostly conditional expressions that it wants wrapped in their own parentheses. `black` is
+unpinned in `gen[dev]`, so the reformat was checked against 26.5.1 as well as the local 25.1.0 and
+the two produce a byte identical diff, which means CI and a developer's machine will agree.
+
+**Decision** The generator job gains a `lint` step and a `format` step between `install` and
+`guards`, kept separate so a failure names itself: a formatting difference is fixed by running
+`python -m black gen` and a lint error is not. `gen/tools/compare_builds.py` was deleted rather
+than brought up to the gate. The only mention of it anywhere in the repo was its own usage string,
+so it was a script nothing called, and `gen/tools/` went with it.
+
+**Verified** 2026-09-08, `PYTHONPATH=gen/src python -m pytest gen/tests -q` reports 93 passed,
+`python -m ruff check gen` reports all checks passed, and `python -m black --check gen` leaves all
+21 files unchanged.
 
 ---
 

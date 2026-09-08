@@ -30,9 +30,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from . import matchers
 from .boards import Board, Card
 from .corpus import Document
-from . import matchers
 from .facts import BUILDERS, DOMAINS, Fact, LabelPool, Planting
 from .questions import Question
 from .rng import Rng
@@ -283,11 +283,7 @@ def generate(
             planted_in=[Planting(doc_id=file_path, passage_id=page_id, fidelity="exact")],
         )
         truth.facts.append(fact)
-        body = (
-            f"# {title}\n\n"
-            f"{statement}\n\n"
-            "Nobody has written this down but me.\n"
-        )
+        body = f"# {title}\n\n" f"{statement}\n\n" "Nobody has written this down but me.\n"
         truth.pages.append(
             Page(
                 page_id=page_id,

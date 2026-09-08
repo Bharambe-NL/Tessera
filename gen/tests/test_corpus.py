@@ -1765,10 +1765,15 @@ def test_a_learning_record_is_traced_line_by_line_to_the_rows_behind_it(
         ).value
 
     # A card the lesson never verified, listed as covered.
-    assert broken("unverified", [{"section": "covered", "card_id": "card-9", "passages": []}]) == 0.0
+    assert (
+        broken("unverified", [{"section": "covered", "card_id": "card-9", "passages": []}]) == 0.0
+    )
     # A check at a rung nobody was asked.
     assert (
-        broken("unasked", [{"section": "checked", "concept_ids": ["k1"], "level": 4, "correct": True}])
+        broken(
+            "unasked",
+            [{"section": "checked", "concept_ids": ["k1"], "level": 4, "correct": True}],
+        )
         == 0.0
     )
     # A concept named as still open that the learner passed.
@@ -1889,9 +1894,12 @@ def test_the_map_has_to_agree_with_the_log_about_every_concept(
             {"concept_id": "k5", "state": "unseen", "evidence": {}},
         ],
     )
-    assert _named(
-        _learner_report(tmp_path / "agreed", corpus, [agreed]), "map_state_consistency"
-    ).value == 1.0
+    assert (
+        _named(
+            _learner_report(tmp_path / "agreed", corpus, [agreed]), "map_state_consistency"
+        ).value
+        == 1.0
+    )
 
     # A concept the log says was only rated, shown as checked. This is the row
     # the gate found on a real run: a failed check was promoting a claim to
@@ -1923,9 +1931,7 @@ def test_the_map_has_to_agree_with_the_log_about_every_concept(
     )
 
     # A placement that recorded no map at all waits rather than scoring one.
-    waiting = _named(
-        _learner_report(tmp_path / "nomap", corpus, [base]), "map_state_consistency"
-    )
+    waiting = _named(_learner_report(tmp_path / "nomap", corpus, [base]), "map_state_consistency")
     assert waiting.value is None
     assert "--learner" in waiting.note
 
@@ -2001,9 +2007,9 @@ def test_no_metric_reports_a_number_it_did_not_compute(corpus: Path, tmp_path: P
             continue
         # A metric may legitimately report on an empty run only when its
         # denominator is genuinely zero-meaning, like a count.
-        assert metric.denominator > 0 or metric.numerator > 0, (
-            f"{metric.name} reported {metric.value} from no data at all"
-        )
+        assert (
+            metric.denominator > 0 or metric.numerator > 0
+        ), f"{metric.name} reported {metric.value} from no data at all"
 
 
 def test_every_metric_that_cannot_measure_says_what_it_waits_for(
@@ -2371,9 +2377,9 @@ def test_a_mock_run_still_gates_what_the_mock_does_not_decide(corpus: Path, tmp_
 
     exempt = set(harness.MOCKED)
     gateable = {m.name for m in report.metrics if m.name in harness.THRESHOLDS} - exempt
-    assert len(gateable) >= 8, (
-        f"only {len(gateable)} metrics can still fail a mock run: {sorted(gateable)}"
-    )
+    assert (
+        len(gateable) >= 8
+    ), f"only {len(gateable)} metrics can still fail a mock run: {sorted(gateable)}"
 
 
 # ---------------------------------------------------------------------------
@@ -2442,9 +2448,10 @@ def test_every_planted_case_metric_is_one_that_exists_and_is_gated() -> None:
     # metric answers to would be an exemption protecting nothing.
     assert set(harness.THRESHOLDS) >= harness.PLANTED_CASES
     for name in harness.PLANTED_CASES:
-        assert harness.THRESHOLDS[name] not in (0.0, 1.0), (
-            f"{name} is already exempt by being absolute, so listing it says nothing"
-        )
+        assert harness.THRESHOLDS[name] not in (
+            0.0,
+            1.0,
+        ), f"{name} is already exempt by being absolute, so listing it says nothing"
 
 
 def test_the_worst_rule_is_the_same_rule_every_time_it_is_scored() -> None:

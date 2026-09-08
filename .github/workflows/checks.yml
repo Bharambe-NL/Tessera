@@ -130,6 +130,17 @@ jobs:
       - name: install
         run: python -m pip install --editable gen[dev]
 
+      # Nothing ran ruff over the generator, so five errors sat in it across
+      # several milestones. The Rust job has had `cargo fmt` and clippy from the
+      # start; this is the same gate for the Python half.
+      - name: lint
+        run: python -m ruff check gen
+
+      # Separate from the lint step so a failure names itself: a formatting
+      # difference is fixed by running `python -m black gen`, a lint error is not.
+      - name: format
+        run: python -m black --check gen
+
       # The eight guard tests in `gen/tests/test_corpus.py` are what keep the
       # metric classification total: every metric is gated, exempted or named a
       # readout, and one with nothing to measure reports n/a rather than zero.
