@@ -64,6 +64,9 @@ desktop.ini
 /test-results/
 /app/ui/playwright-report/
 /app/ui/.playwright/
+# A machine specific override: another port and the built exe run directly,
+# for the day a stale server holds 8732. The recipe is in BN-160.
+/app/ui/playwright.local.config.ts
 
 # the generator's venv
 /gen/.venv/

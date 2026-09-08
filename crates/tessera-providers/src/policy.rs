@@ -97,14 +97,29 @@ impl ModelPolicy {
         Self {
             version: "1.0".into(),
             stages: BTreeMap::from([
-                ("route".into(), stage(Some("small"), &["medium", "kimi-small", "kimi-medium"])),
-                ("plan".into(), stage(Some("medium"), &["frontier", "kimi-medium", "kimi-frontier"])),
+                (
+                    "route".into(),
+                    stage(Some("small"), &["medium", "kimi-small", "kimi-medium"]),
+                ),
+                (
+                    "plan".into(),
+                    stage(Some("medium"), &["frontier", "kimi-medium", "kimi-frontier"]),
+                ),
                 // Retrieval is the core's job and uses no model. Doc 10 section 7.
                 ("retrieve".into(), stage(None, &[])),
-                ("synthesize".into(), stage(Some("frontier"), &["medium", "kimi-frontier", "kimi-medium"])),
-                ("visualize".into(), stage(Some("frontier"), &["medium", "kimi-frontier", "kimi-medium"])),
+                (
+                    "synthesize".into(),
+                    stage(Some("frontier"), &["medium", "kimi-frontier", "kimi-medium"]),
+                ),
+                (
+                    "visualize".into(),
+                    stage(Some("frontier"), &["medium", "kimi-frontier", "kimi-medium"]),
+                ),
                 ("read".into(), stage(Some("vision"), &["kimi-vision"])),
-                ("verify".into(), stage(Some("medium"), &["frontier", "kimi-medium", "kimi-frontier"])),
+                (
+                    "verify".into(),
+                    stage(Some("medium"), &["frontier", "kimi-medium", "kimi-frontier"]),
+                ),
                 ("exercise".into(), stage(Some("medium"), &["kimi-medium"])),
                 ("tutor".into(), stage(Some("medium"), &["kimi-medium"])),
                 // Doc 17 section 7: "one model call with the medium alias".

@@ -46,7 +46,9 @@ export default defineConfig({
     cwd: '../..',
     url: `http://127.0.0.1:${PORT}/`,
     reuseExistingServer: false,
-    timeout: 180_000,
+    // A built binary starts in seconds. The window is wide because a cold
+    // cache still has to link it, and a compile is not what this timer is for.
+    timeout: 600_000,
     stdout: 'pipe',
     stderr: 'pipe',
   },

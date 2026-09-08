@@ -3,3 +3,6 @@
 *.jpg binary
 *.ico binary
 *.pdf binary
+# Build notes are appended by parallel branches at the same anchor. Keeping both
+# sides is always the right resolution, so git does it.
+BUILD_NOTES.md merge=union

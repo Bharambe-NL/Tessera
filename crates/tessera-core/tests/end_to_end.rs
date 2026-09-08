@@ -3631,7 +3631,11 @@ fn the_chat_windows_model_choice_pins_the_answer_or_fails_loudly() {
             ),
         )
         .expect("reply");
-    assert!(answered.error.is_none(), "the pinned ask runs: {:?}", answered.error);
+    assert!(
+        answered.error.is_none(),
+        "the pinned ask runs: {:?}",
+        answered.error
+    );
     let card_id = answered.result.expect("result")["card_id"]
         .as_str()
         .expect("card id")

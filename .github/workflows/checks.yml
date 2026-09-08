@@ -95,6 +95,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Playwright starts the server with `cargo run` and gives it 180 seconds.
+      # Since BN-157 optimised every dependency in the dev profile, a cold
+      # build of the embedding and tokeniser crates takes longer than that, so
+      # the build happens here, where nothing is counting, and `cargo run`
+      # below finds a binary that only needs to start.
+      - name: build the server
+        run: cargo build -p tessera-core --bin tessera-ui-server
+
       # The end to end tests drive the built UI against a real core over the
       # same router the shell registers, so a verb that is registered and
       # unreachable fails here rather than in front of a person.

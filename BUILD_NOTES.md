@@ -4607,6 +4607,39 @@ its budget in the environment the product actually runs in.
 
 ---
 
+### BN-160 Main went red twice over, and both were the cost of an earlier fix
+
+**Spec** Doc 12's standing rule that every check that costs nothing runs on every push, and the
+BN-155 to BN-159 entries, each of which records a green local suite.
+
+**What happened** The three commits of 2026-08-30 were never seen green by CI. The `rust` job
+failed at `cargo fmt --check` on three files touched by the model switch (BN-156): a three way
+condition in the Router, a `BTreeMap::from` table in the policy, and one assertion in the end to
+end suite. Local runs checked clippy and the tests and not the formatter. The `ui` job failed
+with Playwright's web server timing out at 180 seconds. That timeout was BN-157's doing: with
+every dependency now compiled at `opt-level = 2` in the dev profile, a cold build of the embedding
+and tokeniser crates takes longer than the window Playwright allows for `cargo run`, and the
+first CI run to include that change was the one that timed out.
+
+**Decision** The formatter runs. CI builds `tessera-ui-server` in its own step before the end to
+end step, so `cargo run` finds a binary and Playwright's clock covers a start, never a compile.
+The web server timeout is 600 seconds for a cold link on a slow runner. Locally the same order
+holds: build the UI, build the server, then run the suite.
+
+`app/ui/playwright.local.config.ts` is gitignored rather than committed. It is the Windows recipe
+for the day a stale server squats port 8732 and holds a write lock on the exe: the same suite on
+port 8733, running the built exe directly. It is machine knowledge, and this entry is where the
+next person finds it.
+
+`BUILD_NOTES.md` gets git's union merge driver. The refactor that follows this entry runs as
+parallel branches, each appending an entry at this anchor, and keeping both sides is always the
+right resolution.
+
+**Verified** 2026-09-08, `cargo fmt --all --check`, clippy with warnings denied, the workspace
+tests, the Playwright suite against a prebuilt server, and the CI run on this branch.
+
+---
+
 ## Measured findings
 
 ### BN-056 The three staleness gates, measured at last

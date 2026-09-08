@@ -311,7 +311,9 @@ fn resolve_depth(request: &Value, board: &Value, _doctrine: &Value, classificati
     let entity_count = classification["entities"].as_array().map_or(0, Vec::len);
     let qtype = classification["question_type"].as_str().unwrap_or("factual");
     if recommended == "deep"
-        && (flag("needs_decomposition") || qtype == "comparative" && entity_count >= 3 || qtype == "exploratory")
+        && (flag("needs_decomposition")
+            || qtype == "comparative" && entity_count >= 3
+            || qtype == "exploratory")
     {
         recommended = "research".into();
         reason = if flag("needs_decomposition") {
