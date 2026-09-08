@@ -42,7 +42,7 @@ async function paste(
   alsoText = false,
 ): Promise<void> {
   await page.evaluate(
-    async ({ data, withText }) => {
+    ({ data, withText }) => {
       const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
       const file = new File([bytes], 'pasted.png', { type: 'image/png' });
       const transfer = new DataTransfer();

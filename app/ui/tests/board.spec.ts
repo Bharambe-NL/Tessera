@@ -400,7 +400,7 @@ test('a card the reader dwells on is reported as read, once', async ({ page }) =
 
   // Past the dwell, and then well past it, because the report happens once per
   // card and a second one would be the log filling up with scrolling.
-  await expect(async () => {
+  await expect(() => {
     expect(viewed).toHaveLength(1);
   }).toPass({ timeout: 15_000 });
   await page.waitForTimeout(4_000);

@@ -80,7 +80,7 @@ function section(card: Card, index: number): string {
   const confidence =
     card.confidence === null ? COPY.unverified : `${COPY.confidence} ${card.confidence.toFixed(2)}`;
 
-  let body = '';
+  let body: string;
   if (card.status === 'failed') body = `<p>${COPY.cardFailed}</p>`;
   else if (card.answer) body = `<p>${citeMarkers(esc(card.answer))}</p>`;
   else body = `<p>${COPY.readingNoAnswer}</p>`;

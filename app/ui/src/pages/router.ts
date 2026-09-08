@@ -405,7 +405,9 @@ export class Router {
       const at = rows.indexOf(row);
       if (at < 0) return;
 
-      let next = at;
+      // Every key this handles assigns; every other key returns from the
+      // default arm, so there is no path that reads an unset `next`.
+      let next: number;
       switch (e.key) {
         case 'ArrowDown':
           next = Math.min(at + 1, rows.length - 1);

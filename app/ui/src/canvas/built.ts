@@ -94,6 +94,16 @@ function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+/**
+ * The same guard for strings. An event payload is whatever the core wrote, so a
+ * field that should hold a name can arrive as an object, and `String()` on that
+ * puts the literal text `[object Object]` in front of the reader. The fallback
+ * is the honest answer instead.
+ */
+function str(v: unknown, fallback: string): string {
+  return typeof v === 'string' ? v : fallback;
+}
+
 export function trailFor(cardId: string, events: HistoryEntry[]): BuildTrail {
   const trail: BuildTrail = {
     routedTo: null,
@@ -123,15 +133,15 @@ export function trailFor(cardId: string, events: HistoryEntry[]): BuildTrail {
         break;
       case 'retrieval.completed.v1':
         trail.retrievals.push({
-          retriever: String(p.retriever_id ?? 'sources'),
+          retriever: str(p.retriever_id, 'sources'),
           fetches: num(p.fetches),
           coverage: typeof p.coverage === 'number' ? p.coverage : null,
         });
         break;
       case 'model.call.v1':
         trail.calls.push({
-          stage: String(p.stage ?? 'unknown'),
-          model: String(p.model ?? 'unknown'),
+          stage: str(p.stage, 'unknown'),
+          model: str(p.model, 'unknown'),
           input: num(p.input_tokens),
           output: num(p.output_tokens),
           latencyMs: num(p.latency_ms),

@@ -71,7 +71,7 @@ export class Rpc {
 
     let parsed: { result?: T; error?: RpcErrorShape };
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(raw) as { result?: T; error?: RpcErrorShape };
     } catch {
       throw new RpcError({
         code: -32700,

@@ -243,7 +243,7 @@ export function renderNotes(notes: Sticky[], host: HTMLElement): void {
   for (const n of notes) {
     const id = `note-${n.id}`;
     seen.add(id);
-    let el = document.getElementById(id) as HTMLElement | null;
+    let el = document.getElementById(id);
     if (!el) {
       el = document.createElement('div');
       el.id = id;
@@ -281,7 +281,7 @@ export function renderCards(cards: Card[], targets: RenderTargets): void {
   for (const c of cards) {
     const id = `card-${c.id}`;
     seen.add(id);
-    let el = document.getElementById(id) as HTMLElement | null;
+    let el = document.getElementById(id);
 
     if (!el) {
       el = document.createElement('article');
