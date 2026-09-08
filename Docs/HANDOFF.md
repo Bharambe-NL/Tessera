@@ -2,7 +2,7 @@
 
 Updated 2026-08-25, second revision. Sections 10 to 12 are new; earlier sections stand.
 
-Reconciled 2026-09-08. The name items in section 3 and section 10 now carry the settled decision; every other section stands as written.
+Reconciled 2026-09-08. The name items in section 3 and section 10 carry the settled decision, and section 5 says which open questions have since been answered and by which entry. Every other section stands as written.
 
 Written 2026-08-25 for a Claude Code session that will start the build from the spec set. Everything below is what the specs do not say: where the work stands, what was added late, what was decided in conversation, and what to do first.
 
@@ -35,7 +35,16 @@ Known prototype gaps versus spec: no Verifier, no Flags queue, no Concept graph,
 
 ## 5. Open questions still needing the owner
 
-Router 3 (may a pack forbid fast on regulatory questions; proposal yes), Synthesizer 2 (fast on finance at all), Retriever 1 and Verifier 3 (local model for sensitive folders), Architecture 1 (Tauri webview performance check, phase 0), Visual foundation 1 (name), Learn 2 (skip background intake when role is set; proposal yes). Decide by recording in `BUILD_NOTES.md` and continuing unless the answer changes a schema.
+One question is still open. Retriever 1 and Verifier 3 (a local model for sensitive folders) are the same question, and BN-027 keeps it a measurement: it is decided at M8 against an Ollama alias, on the false positive numbers rather than in advance.
+
+The rest are settled and are listed here so the next reader stops looking for them:
+
+- Router 3 (may a pack forbid fast on regulatory questions) and Synthesizer 2 (fast on finance at all). Settled by BN-155 on 2026-08-30. Packs no longer hint depth, so fast is available on every pack and the Router decides.
+- Architecture 1 (Tauri webview performance check, phase 0). Measured on Windows twice, by BN-014 at 200 cards and by BN-159 in a foregrounded release window, both a pass. The macOS reading is still owed.
+- Visual foundation 1 (name). Settled by BN-158. The product is Tessera.
+- Learn 2 (skip background intake when the role is set). Decided yes by BN-026 and implemented in the Tutor. The profile role that feeds it is being wired by the feature waves after this one.
+
+Decide by recording in `BUILD_NOTES.md` and continuing unless the answer changes a schema.
 
 ## 6. Build sequence amendments
 
