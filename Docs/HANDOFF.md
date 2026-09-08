@@ -2,6 +2,8 @@
 
 Updated 2026-08-25, second revision. Sections 10 to 12 are new; earlier sections stand.
 
+Reconciled 2026-09-08. The name items in section 3 and section 10 now carry the settled decision; every other section stands as written.
+
 Written 2026-08-25 for a Claude Code session that will start the build from the spec set. Everything below is what the specs do not say: where the work stands, what was added late, what was decided in conversation, and what to do first.
 
 ## 1. What exists
@@ -19,7 +21,7 @@ Known prototype gaps versus spec: no Verifier, no Flags queue, no Concept graph,
 
 1. **Learn mode and the Tutor agent** (`spec/14`). Tenth agent. Adds `Board.mode`, a LearnSession entity, seven events, a build phase 9b. Curated cards go through the normal pipeline and Verifier.
 2. **Memory** (`spec/15`, amendments in 01 v0.2 and 05 v0.2). A fifth retriever, `boards`, over the profile's own verified cards; source class `own_card`; `Card.builds_on`; Verifier rule `own_card_sole_support` (block). The rule to hold: a prior card is context, never evidence.
-3. **Name.** Proposed Tessera (product), tesserae (boards informally; the UI still says "board" and "card"). Not yet trademark checked. Use identifier `canvas` in code until confirmed; keep the product name in one config constant.
+3. **Name.** Tessera, confirmed by the owner on 2026-08-30. Boards are tesserae informally; the UI still says "board" and "card". The code identifier is `tessera`, and it already was, so no migration was owed (BN-158).
 
 ## 4. Decisions made in conversation that the specs assume
 
@@ -63,7 +65,7 @@ No keys, credentials, or personal data are in the specs or the prototype. The pr
 
 2. **Learning system** (`spec/17-learning-system-v0.1.md`). Supersedes the session-only view in 14. Concepts gain `learning_state`, `self_rating`, `mastery`, `difficulty_level`, `last_evidence_at`; new **ConceptEdge** (prerequisites), **Mission**, **LearningPath** (shippable in a doctrine pack). A new eleventh agent, the **Learning Planner**, owns the map, the frontier, and lesson plans; the Tutor runs lessons with the Planner's targets; Exercise gains four levels (recall, explain, apply, discriminate) with a deterministic adaptation ladder. Ratings are claims capped at 0.5 mastery; only checks are evidence. Exposure from ordinary boards writes to the map. Lessons end as learning-record pages in `vault/learning/`. A **Map** view renders concepts by state with the frontier marked. Spaced review is deferred; `decayed` and `last_evidence_at` exist so a scheduler is additive. Phase 13a to 13g in section 11. Agreed answers from the owner are recorded in section 1 of that document.
 
-3. **Name.** Tessera is now used in documents; the trademark check is still outstanding. Code identifier stays `canvas` until it clears.
+3. **Name.** Tessera, confirmed by the owner on 2026-08-30. The code identifier is `tessera` everywhere and the working name Canvas is retired. The word canvas survives only where it means the drawing surface (BN-158).
 
 ## 11. Prototype state (canvas-prototype.html, latest)
 
