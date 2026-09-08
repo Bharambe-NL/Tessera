@@ -4719,6 +4719,38 @@ not a vitest fault, and Linux CI does not see it.
 
 **Verified** 2026-09-08, `pnpm --dir app/ui lint`, `format:check`, `unit` (11 passed),
 `typecheck`, `build`, `cargo test -p tessera-style`, and the Playwright suite, 84 passed.
+### BN-164 Sixty nine verbs, twelve files, and a test that counts them
+
+**Spec** Doc 10 section 2: everything a shell can do is a method on the router and nothing reaches
+around it. That makes the router the product's contract, and the one file that has to stay
+readable.
+
+`build_router` in `crates/tessera-core/src/core.rs` was 1,829 lines registering 69 handlers inside
+a 3,278 line file. Reaching the handler behind a verb meant scrolling past sixty eight that were
+not it, and two branches touching two unrelated verbs collided in the same function every time.
+
+**Decision** The handlers move to `crates/tessera-core/src/verbs/`, one module per noun: boards,
+cards, notes, flags, library, learn, exercises, notebook, pages, map, bundles, profile. Each holds
+its own `register`, and `verbs/mod.rs` builds the router by calling the twelve in turn. The params
+structs, the serde defaults and the four error converters go to `verbs/support.rs` as
+`pub(super)`, which is the reach they had before: private to where the handlers live.
+
+The directory is `verbs` rather than `handlers` because `rpc.rs` next door is already the
+transport and owns the `Handler` type. A `handlers` module beside it would read as the other half
+of the transport rather than as the product's own surface.
+
+`core.rs` keeps the `Core` impl and re-exports `build_router`, so `tessera_core::build_router` is
+the same path the shell, both binaries and the eval already import. Four items are promoted to
+`pub(crate)` and nothing else changes: `Anchor::anchored`, `Core::claimed_but_unchecked`,
+`Core::live_refresh` and `truncate_title`, each called by a handler that now sits a module away.
+
+The failure this split can cause is a dropped `register` call, which takes a verb off the product
+and breaks nothing that runs. So `verbs/mod.rs` carries the surface as a literal list of 69 names
+and asserts the built router equals it.
+
+**Verified** 2026-09-08, `cargo fmt --all --check`, clippy with warnings denied, the workspace
+tests, and the 84 Playwright tests against a prebuilt server. The sorted verb list before and
+after the move is identical, 69 lines.
 
 ---
 
