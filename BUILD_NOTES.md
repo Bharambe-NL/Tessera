@@ -4601,9 +4601,6 @@ its budget in the environment the product actually runs in.
 
 ---
 
-
-
-
 ### BN-160 Main went red twice over, and both were the cost of an earlier fix
 
 **Spec** Doc 12's standing rule that every check that costs nothing runs on every push, and the
@@ -4645,7 +4642,7 @@ the first commit and ran nothing but pytest over the Python half.
 `ruff` and `black` have been in `gen[dev]` from the start and no job ever invoked them, so five
 ruff errors accumulated across several milestones: two overlong lines in the `READOUTS` table in
 `harness.py`, two in `test_corpus.py`, and an unsorted import block in `vault.py`. Black had never
-run over the package at all. Its first pass changed three files, the same three, in nine hunks,
+run over the package at all. Its first pass changed three files, the same three, in a handful of hunks,
 mostly conditional expressions that it wants wrapped in their own parentheses. `black` is
 unpinned in `gen[dev]`, so the reformat was checked against 26.5.1 as well as the local 25.1.0 and
 the two produce a byte identical diff, which means CI and a developer's machine will agree.

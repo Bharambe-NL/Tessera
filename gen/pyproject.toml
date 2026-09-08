@@ -10,7 +10,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "black>=24.0", "pypdf>=4.0"]
+# ruff and black gate CI, and each ships new rules or a new style yearly, so
+# they are pinned and moved by hand.
+dev = ["pytest>=8.0", "ruff==0.12.9", "black==25.1.0", "pypdf>=4.0"]
 
 [project.scripts]
 gen = "tessera_gen.cli:main"
