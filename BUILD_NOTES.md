@@ -367,7 +367,8 @@ product name lives in one constant, so changing it stays a one line edit.
 ### BN-025 A pack may set a minimum depth, which answers two open questions at once
 
 **Superseded** by BN-155 on 2026-08-30: packs no longer hint depth.
-With the hint gone, fast is available on every pack and the Router decides, so 06 question A2 is answered too: fast is allowed on finance (BN-155).
+With the hint gone, fast is available on every pack and the Router decides, so 06 question A2 is
+answered too: fast is allowed on finance (BN-155).
 
 **Spec** 03 question 3 ("whether `depth_hints` should be able to force a minimum depth the user
 cannot lower"; proposal: the pack may set a minimum and the UI shows why fast is unavailable)
@@ -4448,9 +4449,13 @@ the icons branch and once on `main` with nothing but merged work in it. The one 
 rules out any of these changes as the cause. It is intermittent, five recent runs finished the same
 step in about three minutes on identical input, and a local run of the same `--mock` command burned
 roughly twelve CPU hours across eighteen cores and wrote nothing at all. It writes nothing because
-the runner only writes `runs.jsonl` when the whole sweep finishes, which BN-150 recorded as an
-owed item and BN-157 later paid, and is exactly what makes this undiagnosable from the outside. Recorded here as its own
+the runner only writes `runs.jsonl` when the whole sweep finishes, which is open item 3 in the
+handover and is exactly what makes this undiagnosable from the outside. Recorded here as its own
 problem rather than carried as noise on somebody else's pull request.
+
+Amended 2026-09-08: no handover document exists in this repository. The item that sentence points
+at, the runner writing `runs.jsonl` only when the sweep finishes, was recorded in BN-150 and paid
+by BN-157.
 
 ---
 
@@ -4600,7 +4605,8 @@ higher pan number was read at 165 Hz on the machine's own display mode; what thi
 is the question BN-153 left open, that the drag and everything since have not moved the canvas off
 its budget in the environment the product actually runs in.
 
-The gate writes its JSON to `eval/gate/`, which is gitignored by design, so the table above is the record.
+The gate writes its JSON to `eval/gate/`, which is gitignored by design, so the table above is the
+record.
 
 **Verified** the gate reports PASS from its own criteria, and the window closed itself.
 
@@ -5038,6 +5044,9 @@ no consequences except a harmful one.
    being taught vocabulary. It drives depth through the pack hint `depth_hints.regulatory_stakes`
    and defaults to true whenever unstated, because care on a casual question costs seconds and
    casualness on a consequential one costs a wrong number acted on.
+
+   Superseded in part by BN-155 on 2026-08-30: the pack hint is gone and depth is the Router's own
+   call. The judgment itself survives, in screening, confidence and the Verifier's posture.
 2. **Retrieval is ungated.** Every enabled evidence retriever joins every sub-question. The
    Synthesizer weighs what comes back by trust rank, which is where source preference belonged
    all along. Structured remains signal driven because it is a query against a registered
