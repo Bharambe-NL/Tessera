@@ -36,7 +36,12 @@ export interface GateResult {
 
 const FRAME_BUDGET_MS = 1000 / 60;
 
-function summarise(samples: number[]): FrameStats {
+/**
+ * Exported for the unit test. The percentile and dropped frame arithmetic is
+ * the whole claim the gate makes, and a browser cannot be asked to produce a
+ * known frame sequence, so the only place it can be checked is here.
+ */
+export function summarise(samples: number[]): FrameStats {
   if (samples.length === 0) {
     return {
       frames: 0,
