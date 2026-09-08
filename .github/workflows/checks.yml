@@ -80,6 +80,21 @@ jobs:
       - name: install
         run: pnpm --dir app/ui install --frozen-lockfile
 
+      # Type checked rules, so this catches a promise nobody awaited. That is a
+      # failure the reader never sees, and no other check here looks for it.
+      - name: lint
+        run: pnpm --dir app/ui lint
+
+      # Checks rather than writes. A formatter that reformats in CI leaves the
+      # branch and the run disagreeing about what the file says.
+      - name: format
+        run: pnpm --dir app/ui format:check
+
+      # The pure functions the browser tests cannot reach: layout arithmetic and
+      # the frame statistics the M0 gate decides on.
+      - name: unit
+        run: pnpm --dir app/ui unit
+
       - name: typecheck
         run: pnpm --dir app/ui typecheck
 
