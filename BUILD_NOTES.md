@@ -4722,6 +4722,43 @@ not a vitest fault, and Linux CI does not see it.
 
 ---
 
+### BN-171 The page router routes, and eight controllers do the rest
+
+**Spec** The refactor plan's wave W8, and doc 11 section 5's page layer.
+
+`router.ts` was 820 lines and one class. Navigation was four short methods at the top; underneath
+sat a 220 line click handler covering seven views, a keyboard handler, a submit handler, a change
+handler, and fourteen private verbs that reached into `this.hosts.body` by element id. Adding a
+verb to any one page meant editing the file every other page also lives in, and reading what the
+Map does meant reading what Flags does on the way.
+
+**Decision** The Router keeps navigation and one delegated listener set. The click listener is now
+a table of 22 routes: a mark on the element that was clicked names the page it belongs to and the
+verb to call. The table is ordered, and the order carries one fact worth stating, that
+`data-concept` marks a Library row and a Map node alike, so the Map's claim on it is qualified by
+the open view and the Library's own buttons are matched first. The forms are a second table, by
+form id.
+
+Eight controllers under `pages/controllers/`, one per view, each exporting
+`handle(action, el, ctx)`. Flags exports two more, because a keyboard and a checkbox are not
+clicks. The context is `{ rpc, state, actions, go, rerender, body, tools }`: the core, the page
+state the render reads, the shell callbacks the Router was built with, navigation for the one verb
+that lands on another page, a redraw, and the two hosts a verb reads a field out of or draws a
+partial into. Method bodies moved whole. No call sends anything different and no DOM update writes
+anything different.
+
+The watched folder form moved to `pages/forms/folder.ts` as a builder and a `readFolderForm(body)`
+reader, because the Profile page asks for a second folder in a later wave and two copies of three
+input ids would be two forms that drift. First run uses it now; Profile does not yet. The folder
+submit stays with setup, since it writes setup's state and runs through setup's busy step.
+
+`router.ts` is 252 lines. The controllers are 42 to 155 lines each.
+
+**Verified** 2026-09-08, `pnpm --dir app/ui lint`, `format:check`, `unit` (11 passed),
+`typecheck`, `build`, `cargo test -p tessera-style`, and the Playwright suite, 84 passed.
+
+---
+
 ## Measured findings
 
 ### BN-056 The three staleness gates, measured at last

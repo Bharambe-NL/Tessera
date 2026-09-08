@@ -18,6 +18,7 @@ import type { FirstRun } from '../rpc.js';
 import { COPY } from '../strings.js';
 import { button } from '../ui/button.js';
 import { segmented } from '../ui/segmented.js';
+import { folderFormHTML } from './forms/folder.js';
 
 /** What the screen is showing on top of what the core reported. */
 export interface SetupState {
@@ -72,15 +73,7 @@ export function setupHTML(state: SetupState): string {
         ? `. ${COPY.setupFolderUnreadable} ${state.folderAdded.unreadable}`
         : '') +
       `</p>`
-    : `<form id="setup-folder" class="setup-folder">` +
-      `<input id="setup-folder-root" placeholder="${COPY.setupFolderPath}" ` +
-      `aria-label="${COPY.setupFolderPath}" autocomplete="off" />` +
-      `<input id="setup-folder-label" placeholder="${COPY.setupFolderLabel}" ` +
-      `aria-label="${COPY.setupFolderLabel}" autocomplete="off" />` +
-      `<label class="check"><input id="setup-folder-sensitive" type="checkbox" /> ` +
-      `${COPY.setupFolderSensitive}</label>` +
-      button(COPY.setupFolderAdd, { submit: true }) +
-      `</form>`;
+    : folderFormHTML();
 
   const ready = run.has_key || state.keySaved;
 
