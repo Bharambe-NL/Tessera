@@ -18,7 +18,7 @@ pub mod record;
 pub mod retrieval;
 pub mod rpc;
 pub mod vault;
-pub mod verbs;
+mod verbs;
 pub mod wikilink;
 
 pub use bridge::{Notification, ToastLevel, translate, translate_all};
