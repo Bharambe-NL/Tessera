@@ -80,7 +80,7 @@ For Claude Code, starting from the spec set in `spec/` and the prototype in `can
 
 ## Mission
 
-Build Canvas v1: a local desktop application (macOS and Windows, Tauri 2 with a Rust core and a webview UI) where a user turns questions into linked cards with verified visuals and cited sources, reads sketches and images into cards, checks understanding with generated exercises, and exchanges boards as portable bundles. Finance is the first doctrine pack. Every agent output is validated against a schema, every action is an event, and the Verifier decides what the user must review.
+Build Tessera v1: a local desktop application (macOS and Windows, Tauri 2 with a Rust core and a webview UI) where a user turns questions into linked cards with verified visuals and cited sources, reads sketches and images into cards, checks understanding with generated exercises, and exchanges boards as portable bundles. Finance is the first doctrine pack. Every agent output is validated against a schema, every action is an event, and the Verifier decides what the user must review.
 
 ## The spec set
 

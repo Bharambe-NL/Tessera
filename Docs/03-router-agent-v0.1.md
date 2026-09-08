@@ -2,6 +2,8 @@
 
 Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 Data Model, 02 Synthetic Data Generator. Load bearing patterns: 1 (state machine), 2 (task packet), 3 (events), 4 (failure taxonomy), 7 (output schema), 8 (policy engine), 13 (provenance), 21 (provider abstraction).
 
+Changelog 2026-09-08: pack depth hints are retired product wide, on the owner's instruction of 2026-08-30 (BN-155). Depth is the Router's own call. `depth_hints` and `minimum_depth` are gone from the task packet, from section 8.2 and from the open questions; the pack schema still accepts both fields and ignores them, so a pack written before that date still imports.
+
 ## 1. Purpose, scope, non-goals
 
 The Router is the first agent to see a card request. It decides how much work the request deserves and which policy applies, then hands a resolved plan of record to the harness. It exists so that every later agent starts from a typed decision rather than from raw user text, and so that cost and depth are chosen once, in one place, with the user's override honoured.
@@ -85,8 +87,7 @@ The Router does not run on a schedule and does not run for Exercise generation; 
   "doctrine": {
     "audiences": [ { "id": "string", "name": "string" } ],
     "domains": [ "string" ],
-    "sensitivity_rules": [ { "rule_id": "string", "detector": "string" } ],
-    "depth_hints": { "domain": "fast | deep | research" }
+    "sensitivity_rules": [ { "rule_id": "string", "detector": "string" } ]
   },
   "recent": [ { "question": "string", "depth": "string", "at": "ISO8601" } ],
   "effort_budget": { "max_tokens": 1500, "max_latency_ms": 2500 }
@@ -198,12 +199,13 @@ In order:
 
 1. If `request.depth_override` is set, `chosen` is that value. The Router still computes `recommended` and the reason, so the UI can show "you chose research; fast would probably do" without changing the run.
 2. Otherwise start from `board.default_depth`.
-3. Apply doctrine `depth_hints` for the classified domain. Regulatory and quantitative questions in the finance pack hint deep at minimum.
-4. Apply request signals: `needs_current_information` or `needs_internal_documents` raises fast to deep. `question_type: comparative` with three or more entities, or `exploratory` with a broad scope, raises deep to research.
-5. Apply context signals: a follow-up whose parent already has supported citations and whose question stays within the parent's entities may stay at the parent's depth or drop one level; the Router sets `is_follow_up_of_context` accordingly.
-6. A branch spawned from a highlighted phrase inherits the parent's depth unless step 4 raises it.
+3. Apply request signals: `needs_current_information` or `needs_internal_documents` raises fast to deep. `question_type: comparative` with three or more entities, or `exploratory` with a broad scope, raises deep to research.
+4. Apply context signals: a follow-up whose parent already has supported citations and whose question stays within the parent's entities may stay at the parent's depth or drop one level; the Router sets `is_follow_up_of_context` accordingly.
+5. A branch spawned from a highlighted phrase inherits the parent's depth unless step 3 raises it.
 
 Ties are broken toward the cheaper depth. The reason string names the step that decided.
+
+The pack has no say here. Depth hints were retired on 2026-08-30 (BN-155) because every shipped pack hinted deep on regulatory stakes, which made deep a floor and left fast recommended for nobody. Depth is the Router's own call, and it is the same call for every pack.
 
 ### 8.3 Policy resolution
 
@@ -231,7 +233,7 @@ Confidence is computed from deterministic signals, never self reported by the mo
 |---|---|
 | Domain set by keyword match as well as by the model | +0.25 |
 | Question type agreed by two independent prompts (the classifier and the screening call both return it) | +0.25 |
-| Depth decided at step 1, 2, or 3 of 8.2 (explicit, default, or doctrine hint) | +0.25 |
+| Depth decided at step 1 or 2 of 8.2 (explicit or default) | +0.25 |
 | No early flags of severity warn or block | +0.15 |
 | Language detected with high probability | +0.10 |
 
@@ -290,7 +292,7 @@ Regression: every change to the classification prompt or the depth rules reruns 
 
 1. Should the Router be allowed to split one request into two cards when it detects two unrelated questions in one message? Proposal: no in v1. It routes the message as one card and adds a caveat; the Planner can still produce sub-questions. Splitting cards is a UX decision that belongs in the follow-up flow.
 2. The repetition check uses exact text. A near duplicate check would help but needs an embedding call on every request. Proposal: exact match in v1, revisit when the local index exists anyway.
-3. Whether `depth_hints` should be able to force a minimum depth that the user cannot lower (for instance, regulatory questions never fast). This is a doctrine decision with a product consequence. Proposal: the pack may set a minimum; the UI shows why fast is unavailable for this question.
+3. Closed. Whether `depth_hints` should be able to force a minimum depth the user cannot lower was answered by removing the mechanism instead, on the owner's instruction of 2026-08-30 (BN-155). No pack sets a minimum, no depth is unavailable, and the Router decides. The schema still accepts `depth_hints` and `minimum_depth` and ignores both, so older packs import.
 
 ## 15. Appendices
 
@@ -310,7 +312,7 @@ Regression: every change to the classification prompt or the depth rules reruns 
               "depth": "fast", "confidence": 0.0, "answered_at": "2026-08-25T10:02:00+02:00",
               "citation_count": 0, "stale_citations": 0 },
   "profile": { "role": null, "default_depth": "fast", "model_policy": { "...": "..." } },
-  "doctrine": { "audiences": [], "domains": ["general"], "sensitivity_rules": [], "depth_hints": {} },
+  "doctrine": { "audiences": [], "domains": ["general"], "sensitivity_rules": [] },
   "recent": [ { "question": "what are world models?", "depth": "fast", "at": "2026-08-25T10:02:00+02:00" } ],
   "effort_budget": { "max_tokens": 1500, "max_latency_ms": 2500 }
 }
@@ -344,7 +346,7 @@ Request: "Should we move the trading book exposures under the new CAR3 treatment
   "classification": { "question_type": "regulatory", "domain": "capital", "audience_id": null, "language": "en",
                       "needs_current_information": true, "needs_internal_documents": true, "needs_structured_data": true,
                       "entities": ["trading book", "CAR3", "Q4"], "is_follow_up_of_context": false },
-  "depth": { "chosen": "fast", "recommended": "research", "reason": "Regulatory and quantitative with internal data need; doctrine hint deep, comparative scope raises to research.", "overridden_by_user": true },
+  "depth": { "chosen": "fast", "recommended": "research", "reason": "Regulatory and quantitative with internal data need; internal documents raise fast to deep, comparative scope raises to research.", "overridden_by_user": true },
   "plan_required": false,
   "visual_hint": "table",
   "early_flags": [ { "rule_id": "advice_request", "severity": "warn", "reason": "The question asks for a recommendation.", "evidence": { "matched": "Should we" } } ],
