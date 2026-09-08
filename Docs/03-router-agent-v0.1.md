@@ -2,7 +2,7 @@
 
 Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01 Data Model, 02 Synthetic Data Generator. Load bearing patterns: 1 (state machine), 2 (task packet), 3 (events), 4 (failure taxonomy), 7 (output schema), 8 (policy engine), 13 (provenance), 21 (provider abstraction).
 
-Changelog 2026-09-08: pack depth hints are retired product wide, on the owner's instruction of 2026-08-30 (BN-155). Depth is the Router's own call. `depth_hints` and `minimum_depth` are gone from the task packet, from section 8.2 and from the open questions; the pack schema still accepts both fields and ignores them, so a pack written before that date still imports.
+Changelog 2026-09-08: pack depth hints are retired product wide, on the owner's instruction of 2026-08-30 (BN-155). Depth is the Router's own call. `depth_hints` and `minimum_depth` are gone from the task packet, from section 8.2 and from the open questions; the pack schema still accepts both fields and ignores them, so a pack written before that date still imports. The classification gains `needs_decomposition`, which is now the primary research trigger, with the old comparative and exploratory rule kept as a second door (BN-150).
 
 ## 1. Purpose, scope, non-goals
 
@@ -111,6 +111,7 @@ The packet is built by the harness. Amendment A1 applies: the effort budget is a
     "needs_current_information": true,
     "needs_internal_documents": true,
     "needs_structured_data": false,
+    "needs_decomposition": false,
     "entities": [ "string" ],
     "is_follow_up_of_context": true
   },
@@ -199,7 +200,7 @@ In order:
 
 1. If `request.depth_override` is set, `chosen` is that value. The Router still computes `recommended` and the reason, so the UI can show "you chose research; fast would probably do" without changing the run.
 2. Otherwise start from `board.default_depth`.
-3. Apply request signals: `needs_current_information` or `needs_internal_documents` raises fast to deep. `question_type: comparative` with three or more entities, or `exploratory` with a broad scope, raises deep to research.
+3. Apply request signals: `needs_current_information` or `needs_internal_documents` raises fast to deep. `needs_decomposition` raises deep to research, and it is the primary trigger: the model is asked directly whether answering well means researching several distinct sub-questions separately. `question_type: comparative` with three or more entities, or `exploratory` with a broad scope, is the second door to research. BN-150 measured the old comparative or exploratory rule at 0 of 14 across two models, which is why the question is now asked outright. Research is an escalation of deep and never of fast.
 4. Apply context signals: a follow-up whose parent already has supported citations and whose question stays within the parent's entities may stay at the parent's depth or drop one level; the Router sets `is_follow_up_of_context` accordingly.
 5. A branch spawned from a highlighted phrase inherits the parent's depth unless step 3 raises it.
 
@@ -325,6 +326,7 @@ Regression: every change to the classification prompt or the depth rules reruns 
   "schema_version": "1.0", "agent_id": "router", "run_id": "01J...",
   "classification": { "question_type": "definitional", "domain": "general", "audience_id": null, "language": "en",
                       "needs_current_information": false, "needs_internal_documents": false, "needs_structured_data": false,
+                      "needs_decomposition": false,
                       "entities": ["raw sensory data", "world model"], "is_follow_up_of_context": true },
   "depth": { "chosen": "fast", "recommended": "fast", "reason": "Definitional follow-up within parent scope; board default fast.", "overridden_by_user": false },
   "plan_required": false,
@@ -345,8 +347,9 @@ Request: "Should we move the trading book exposures under the new CAR3 treatment
 {
   "classification": { "question_type": "regulatory", "domain": "capital", "audience_id": null, "language": "en",
                       "needs_current_information": true, "needs_internal_documents": true, "needs_structured_data": true,
+                      "needs_decomposition": true,
                       "entities": ["trading book", "CAR3", "Q4"], "is_follow_up_of_context": false },
-  "depth": { "chosen": "fast", "recommended": "research", "reason": "Regulatory and quantitative with internal data need; internal documents raise fast to deep, comparative scope raises to research.", "overridden_by_user": true },
+  "depth": { "chosen": "fast", "recommended": "research", "reason": "Internal documents raise fast to deep; answering well needs several sub questions researched separately, which raises deep to research.", "overridden_by_user": true },
   "plan_required": false,
   "visual_hint": "table",
   "early_flags": [ { "rule_id": "advice_request", "severity": "warn", "reason": "The question asks for a recommendation.", "evidence": { "matched": "Should we" } } ],

@@ -1,6 +1,6 @@
 # 11. Visual Foundation v0.1
 
-Register: working. Depends on: 09, 10. This document turns the prototype's look into decisions the build can follow.
+Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 09, 10. This document turns the prototype's look into decisions the build can follow.
 
 ## 1. Product name
 

@@ -1,5 +1,7 @@
 # 14. Learn Mode and the Tutor Agent v0.2
 
+Changelog v0.2: no content change from v0.1. The body of this file is v0.1 as written, verified byte for byte on 2026-09-08. The version lives in the title because the file name says v0.2 and `HANDOFF.md` cites 14 v0.2. Doc 17 is where Learn mode was next changed; it supersedes the session-only view here with a persistent learning layer.
+
 Product name: Tessera (confirmed by the owner 2026-08-30; the working name was Canvas). Register: working. Depends on: 01, 06, 07, 08, 09. Adds one agent (Tutor) and one board mode (Learn). Amends 01 (Board.mode, LearnSession entity), 03 (Router reads the mode), 09 (Tutor panel), 12 (build phase 9b).
 
 ## 1. What Learn mode is

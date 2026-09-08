@@ -40,7 +40,7 @@ One question is still open. Retriever 1 and Verifier 3 (a local model for sensit
 The rest are settled and are listed here so the next reader stops looking for them:
 
 - Router 3 (may a pack forbid fast on regulatory questions) and Synthesizer 2 (fast on finance at all). Settled by BN-155 on 2026-08-30. Packs no longer hint depth, so fast is available on every pack and the Router decides.
-- Architecture 1 (Tauri webview performance check, phase 0). Measured on Windows twice, by BN-014 at 200 cards and by BN-159 in a foregrounded release window, both a pass. The macOS reading is still owed.
+- Architecture 1 (Tauri webview performance check, phase 0). The owner's question is closed: BN-014 measured 200 cards on Windows and closed doc 10 open question 1 for Tauri, and BN-159 confirmed it in a foregrounded release window. The macOS measurement remains a task on the build, and nothing waits on the owner for it.
 - Visual foundation 1 (name). Settled by BN-158. The product is Tessera.
 - Learn 2 (skip background intake when the role is set). Decided yes by BN-026 and implemented in the Tutor. The profile role that feeds it is being wired by the feature waves after this one.
 

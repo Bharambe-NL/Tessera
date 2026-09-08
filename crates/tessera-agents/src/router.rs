@@ -296,7 +296,7 @@ fn resolve_depth(request: &Value, board: &Value, _doctrine: &Value, classificati
     let mut recommended = board_default.to_string();
     let mut reason = format!("Board default {board_default}.");
 
-    // 4. request signals.
+    // 3. request signals.
     let flag = |name: &str| classification[name].as_bool().unwrap_or(false);
     if (flag("needs_current_information") || flag("needs_internal_documents")) && recommended == "fast" {
         recommended = "deep".into();
@@ -323,7 +323,7 @@ fn resolve_depth(request: &Value, board: &Value, _doctrine: &Value, classificati
         };
     }
 
-    // 5 and 6. a follow-up inside the parent's scope may stay where it is.
+    // 4 and 5. a follow-up inside the parent's scope may stay where it is.
     if classification["is_follow_up_of_context"]
         .as_bool()
         .unwrap_or(false)
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn a_need_for_current_information_lifts_fast_to_deep() {
-        // Doc 03 section 8.2 step 4.
+        // Doc 03 section 8.2 step 3.
         let p = packet(None, "fast");
         let d = resolve_depth(
             &p["request"],

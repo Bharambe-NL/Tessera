@@ -122,7 +122,7 @@ One frontier call (two with audience, three with a conflict fix). 6 to 15 s in d
 ## A14. Open questions
 
 1. Sentence level spans are coarse; clause level binding would make the Verifier more precise but costs a second parse. Proposal: sentence level in v1.
-2. Whether fast mode should be allowed on the finance pack at all, given confidence 0. Tied to Router open question 3.
+2. Closed. Whether fast mode should be allowed on the finance pack at all was tied to Router open question 3, and both were answered on 2026-08-30 by removing pack depth hints altogether (BN-155). Fast is available on every pack and the Router decides, so no pack withholds a depth from the user.
 
 ---
 
