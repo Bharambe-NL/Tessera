@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "unit": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "web": "vite build && cargo run --release -q -p tessera-core --bin tessera-web -- --ui dist"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

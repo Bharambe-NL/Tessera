@@ -19,9 +19,11 @@ pub mod retrieval;
 pub mod rpc;
 pub mod vault;
 mod verbs;
+pub mod web;
 pub mod wikilink;
 
 pub use bridge::{Notification, ToastLevel, translate, translate_all};
 pub use core::{Anchor, Core, CoreError, build_router};
 pub use pipeline::{CardOutcome, ExerciseOutcome, RunContext, run_card};
 pub use rpc::{Request, Response, Router, RpcError, codes, params};
+pub use web::{WebServer, default_profile_root};

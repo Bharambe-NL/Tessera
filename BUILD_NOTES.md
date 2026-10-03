@@ -4754,6 +4754,35 @@ after the move is identical, 69 lines.
 
 ---
 
+### BN-172 Tessera runs in a browser
+
+**Spec** Doc 10 section 2, which keeps the RPC boundary clean so a web client can later speak the
+same protocol over a socket. The owner, 2026-10-03: get it working in a browser first, so it can be
+tested now.
+
+**Decision** A new binary, `tessera-web`, opens the desktop app's own profile with the keys the OS
+keychain holds and serves the built UI and one `POST /rpc` endpoint, dispatched through the same
+router the shell registers. The UI gains a second transport: when there is no Tauri on the page it
+posts the same JSON-RPC body to its own origin. Nothing above the transport changed.
+
+The server lives in `tessera_core::web` and differs from the test server in three ways that matter
+for a person rather than a driver. Every connection has its own thread and an idle one is dropped
+after fifteen seconds, so a browser preconnect cannot wedge it. It listens on loopback only and
+answers only when the `Host` header names this machine, which defeats DNS rebinding. And `/rpc`
+takes only a JSON body from its own origin, so a foreign page cannot reach the core without a
+preflight the server never answers. Three tests pin those properties.
+
+One command runs it: `pnpm --dir app/ui web`, then http://127.0.0.1:8740. Run it or the desktop
+app, not both, since they share one profile.
+
+**Known limit** The core is one lock, so the quarter second progress polls wait behind a running
+card and the staged progress appears all at once when the answer lands, as in the desktop shell.
+
+**Verified** 2026-10-03, a fast question answered end to end in a browser against the live profile;
+clippy with warnings denied, the server tests, and the UI lint, format, unit, typecheck and build.
+
+---
+
 ## Measured findings
 
 ### BN-056 The three staleness gates, measured at last

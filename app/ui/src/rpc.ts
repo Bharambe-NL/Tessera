@@ -42,12 +42,36 @@ function tauriTransport(): Transport | null {
   return async (request) => String(await invoke('rpc', { request }));
 }
 
+/**
+ * The browser path: the same JSON-RPC body, posted to the page's own origin.
+ * `tessera-web` serves the UI and answers `/rpc` there. A page opened from a
+ * file has no origin to post to, and gets no transport.
+ */
+function httpTransport(): Transport | null {
+  if (!window.location.protocol.startsWith('http')) return null;
+  return async (request) => {
+    const response = await fetch('/rpc', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: request,
+    });
+    if (!response.ok) {
+      throw new RpcError({
+        code: -32000,
+        message: COPY.coreSilent,
+        data: { kind: 'disconnected' },
+      });
+    }
+    return await response.text();
+  };
+}
+
 let nextId = 1;
 
 export class Rpc {
   private readonly transport: Transport | null;
 
-  constructor(transport: Transport | null = tauriTransport()) {
+  constructor(transport: Transport | null = tauriTransport() ?? httpTransport()) {
     this.transport = transport;
   }
 
