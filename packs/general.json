@@ -160,12 +160,12 @@
   "retrievers": [
     {
       "id": "web",
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "must_exclude": []
     },
     {
       "id": "local",
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "must_exclude": [
         "Sensitive"
       ]

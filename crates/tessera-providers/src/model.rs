@@ -207,9 +207,17 @@ impl Completion {
         {
             return Ok(v);
         }
+        // A reply that stopped at its token limit is cut off rather than
+        // malformed, and saying so tells a person a rerun or a narrower
+        // question will help, where "no parsable json" tells them nothing.
+        let detail = if matches!(self.stop_reason.as_deref(), Some("max_tokens") | Some("length")) {
+            "the answer ran past its length limit and was cut off".into()
+        } else {
+            "the response contained no parsable json object".into()
+        };
         Err(crate::error::ProviderError::Malformed {
             provider: self.provider.clone(),
-            detail: "the response contained no parsable json object".into(),
+            detail,
         })
     }
 }
@@ -275,6 +283,14 @@ mod tests {
     #[test]
     fn refuses_a_response_with_no_json() {
         assert!(completion("I cannot help with that.").json().is_err());
+    }
+
+    #[test]
+    fn a_reply_cut_off_at_its_limit_says_so() {
+        let mut c = completion(r#"{"answer": "Basel III sets"#);
+        c.stop_reason = Some("max_tokens".into());
+        let err = c.json().expect_err("cut off").to_string();
+        assert!(err.contains("length limit"), "{err}");
     }
 
     #[test]

@@ -4783,6 +4783,97 @@ clippy with warnings denied, the server tests, and the UI lint, format, unit, ty
 
 ---
 
+### BN-173 Follow-ups stay in their tile, and the visuals are redrawn
+
+**Spec** Doc 16 sections 3.2 and 3.5. The owner, 2026-10-03: a follow-up asked in an open tile
+continues that tile's discussion, so its answer belongs inside the tile with the tile scrolling,
+and a new tile is for when a person asks to investigate further. Also: the generated visuals
+looked dull and needed a good quality design.
+
+**Decision, threads** A reading of the read model, with no core change. A card of kind `follow`
+whose parent is on the board renders as a turn inside the tile its chain starts from
+(`canvas/thread.ts`). Branches, reads and exercises stay tiles. A turn carries its own card id, so
+its verbs, its highlights and its exposure all act on it rather than on the tile. The follow-up
+box continues from the newest turn, so the core still receives the whole chain as ancestry. The
+tile body scrolls once it outgrows 620 pixels, the wheel scrolls that body before it pans the
+board, and a new turn scrolls into view when it lands. A turn has no layout slot and draws no
+edge; a tile asked from a turn hangs off the tile that turn is in. A follow-up whose parent is
+missing, or a malformed parent loop, stays a tile, so no card can vanish.
+
+**Decision, visuals** Colour now carries rank rather than cycling through four hues that meant
+nothing. The root or start is solid ink, the first level takes the accent's soft tint, and deeper
+levels are plain with a rule. Every fill pairs with an ink token that flips with the theme.
+- Tree: a nested outline with connector lines, so each child sits under its own parent. The old
+  renderer flattened each level into a row of chips and lost parentage.
+- Flow: an SVG of boxes and arrows. Loop closing edges are found by a depth first walk and set
+  aside, layers are longest path, and each row is ordered under its parents. A loop runs up a
+  right hand gutter, dashed, with its label beside it. Boxes and labels are HTML inside the
+  drawing, so they keep `data-ref`, focus and the contrast test.
+- Steps: a numbered timeline. Stats: neutral tiles with a 26 pixel numeral and the unit in the
+  secondary ink. Table: row rules only, small caps header, and right aligned tabular figures in
+  the columns where every cell is a quantity. List: bullets with the detail in secondary ink.
+- The bottom line becomes a callout with an accent bar, and key findings get bullets.
+
+Node notes, which the model already wrote and the old renderer hid in an attribute, are now shown.
+
+**Tooling** `app/ui/gallery.html` renders every visual type and a thread through the real
+`tileHTML` and stylesheets, for checking a design change in both themes without a core
+(`pnpm dev`, then /gallery.html, with `?theme=dark`). The build ships `index.html` alone.
+
+**Contrast** The owner could not read the word "deep" on its badge. In the dark theme every
+node hue kept its light fill while its ink went light, so each chip, badge, sticky and tutor
+verdict drawn in a hue was light on light. Dark fills now move with their inks. The contrast
+test had passed all along because it parsed only `rgb()` colours and the browser reports the
+oklch tokens as `oklch()`, so it skipped most of the UI; it now converts any colour through a
+canvas and runs in both themes, with every depth badge on screen. Run that way it found
+`--ink-3` at 4.09:1, under the floor at every size, and the token moved in both themes.
+
+**Found by asking real questions** 2026-10-03, on a scratch profile with the live keys, two
+Wikipedia articles as web sources and the design docs as a folder. Each item below failed a
+live deep or research card before it was fixed.
+- *Deep and research could never run on the general pack.* It switched web and local off, a
+  setting from M3 that predates both retrievers, and no seed or folder switched them on. Both
+  are now on in the pack; the profile still decides where they read.
+- *Nowhere to add a site.* The refusal says "Add a site to search in Profile" and nothing could.
+  Setup gains a fourth step for a website, and Profile's Retrievers section opens the steps.
+- *A failed card said only that it did not finish.* The reason travels as a desktop push, which
+  a browser never hears. `CardView` now carries `failure`, and the tile shows it.
+- *Opus spent its whole budget thinking.* Adaptive thinking draws on `max_tokens`, and the
+  Anthropic provider, unlike the Kimi one, added no headroom. A deep synthesis used 4,000 tokens
+  thinking and returned cut off JSON twice. Headroom now scales with effort, and a reply cut off
+  at its limit says so instead of "no parsable json". A research synthesis at xhigh still ran
+  out at 20,000 after 159 seconds, so xhigh has 32,000.
+- *The article named as a seed was never read.* It queued behind its own 64 navigation links
+  with a fetch budget of eight, and the card cited Wikipedia's "Current events" portal. The seed
+  page now goes first, and its links are ordered by how many of the question's words their
+  address names.
+- *Every reused citation drew a block flag.* A citation records the first sentence that used its
+  number, so a figure in a later sentence citing the same passage counted as unsourced. Any
+  sentence carrying a bound marker now counts as cited.
+- *The figures went missing.* Deep keeps a value only with a citation, and the model often left
+  it off while citing the figure in the prose. The citation is now taken from the sentence that
+  states the value, only when that sentence cites a passage the answer used, and the prompt asks
+  for every figure. What is still dropped is recorded on `card.synthesized.v1` as `caveats`.
+- *Diagrams declined that had plenty to draw.* A chain was chosen as a tree, the tree schema had
+  no third level, and an empty composed diagram gave up even with relations, steps or values in
+  hand. A tree now needs a branch, the schema has a third level, and an empty diagram is drawn
+  straight from the summary's relations, values or steps, each of which already traces. The
+  layout call runs at medium effort, since at high it spent 10,000 tokens placing five ratios.
+- *Edge labels ran off the drawing.* A research card labelled its edges with whole clauses. They
+  now wrap to two lines inside the drawing, citation markers render as superscripts, and the
+  full label is the tooltip.
+
+**Live results after the fixes** A deep Basel III question drew a cited table of four ratios
+with only the advisory flag; a research question over the design docs drew a ten node flow of
+the pipeline; a follow-up asked in the table's tile answered as a turn inside it. A research
+card still takes about three and a half minutes, nearly all of it Opus thinking at xhigh.
+
+**Verified** 2026-10-03: the gallery in light and dark; unit tests for threads, layout and the
+renderers; the UI lint, format, typecheck and build; the Playwright suite; workspace tests,
+clippy with warnings denied and fmt; the grounded mock sweep and its score.
+
+---
+
 ## Measured findings
 
 ### BN-056 The three staleness gates, measured at last

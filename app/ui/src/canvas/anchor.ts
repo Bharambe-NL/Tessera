@@ -29,7 +29,7 @@ export interface AnchorTarget {
 
 function cardIdOf(node: Node | null): string | null {
   const el = node instanceof Element ? node : node?.parentElement;
-  return el?.closest<HTMLElement>('.card')?.dataset.cardId ?? null;
+  return el?.closest<HTMLElement>('[data-card-id]')?.dataset.cardId ?? null;
 }
 
 /**

@@ -1672,6 +1672,9 @@ pub async fn run_card(
             // rule reached the doctrine hint at all.
             "summary_shape": summary_shape(&synthesized["structured_summary"]),
             "unsupported_count": synthesized["unsupported_statements"].as_array().map(Vec::len).unwrap_or(0),
+            // What the Synthesizer itself said it left out, such as values with
+            // no citation, so a card drawn without its figures says why.
+            "caveats": synthesized["caveats"].clone(),
             // Doc 06 section A7 lists this in the payload and it was missing, so
             // the event log could not say which audience an answer was written
             // for. Null until the audience rewrite lands.

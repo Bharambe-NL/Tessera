@@ -10,6 +10,7 @@
 
 import { COPY } from '../strings.js';
 import { CARD_W, DEFAULT_CARD_H } from './layout.js';
+import { threads } from './thread.js';
 import type { Card, Citation, FlagSummary, Sticky } from './types.js';
 import { citeMarkers, esc, visualHTML } from './visual.js';
 
@@ -151,7 +152,11 @@ function bodyFor(c: Card): string {
   }
 
   if (c.status === 'failed') {
-    body += `<div class="failed">${COPY.cardFailed}</div>`;
+    // The reason names the fix, such as a retriever to add in Profile, which
+    // is the one thing a person can act on when a card stops.
+    body += `<div class="failed" role="alert"><b>${COPY.cardFailed}</b>${
+      c.failure ? `<span>${esc(c.failure)}</span>` : ''
+    }</div>`;
     return body;
   }
 
@@ -169,14 +174,8 @@ function bodyFor(c: Card): string {
   return body;
 }
 
-function cardHTML(c: Card): string {
-  // Doc 07 section A11: "Reader cards show 'Read from image' in the header".
-  // A read card's question is one nobody typed, so showing it as a title would
-  // put words in the reader's mouth.
-  const title =
-    c.kind === 'read'
-      ? COPY.readFromImage
-      : (c.anchor_text ?? (c.kind === 'root' ? c.question : COPY.followTitle));
+/** The badges and verbs one card carries, in a tile's head or a turn's meta row. */
+function verbsHTML(c: Card): string {
   const depthBadge =
     c.depth !== 'fast'
       ? `<span class="badge ${c.depth}">${c.depth}</span>`
@@ -190,8 +189,6 @@ function cardHTML(c: Card): string {
   const disabled = settled ? '' : 'disabled';
 
   return (
-    `<div class="head">` +
-    `<span class="title">${esc(title)}</span>` +
     depthBadge +
     model +
     confidenceDot(c) +
@@ -208,14 +205,48 @@ function cardHTML(c: Card): string {
         `</button>`) +
     `<button class="rerun" data-act="rerun" ${disabled} data-no-pan aria-label="${COPY.rerunCard}">` +
     `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>` +
-    `</button>` +
+    `</button>`
+  );
+}
+
+/**
+ * One follow-up asked in a tile. It carries its own card id, so every verb in
+ * it, and a span highlighted in it, acts on this card rather than on the tile.
+ */
+function turnHTML(t: Card): string {
+  return (
+    `<section class="turn" data-card-id="${esc(t.id)}" data-status="${esc(t.status)}">` +
+    `<div class="turn-meta">${verbsHTML(t)}</div>` +
+    bodyFor(t) +
+    `</section>`
+  );
+}
+
+export function tileHTML(c: Card, turns: Card[] = []): string {
+  // Doc 07 section A11: "Reader cards show 'Read from image' in the header".
+  // A read card's question is one nobody typed, so showing it as a title would
+  // put words in the reader's mouth.
+  const title =
+    c.kind === 'read'
+      ? COPY.readFromImage
+      : (c.anchor_text ?? (c.kind === 'root' ? c.question : COPY.followTitle));
+  // The follow-up box continues the thread from its newest turn, and waits
+  // while that turn is still being answered.
+  const last = turns.at(-1) ?? c;
+  const open = last.status === 'done' || last.status === 'flagged';
+  const disabled = open ? '' : 'disabled';
+
+  return (
+    `<div class="head">` +
+    `<span class="title">${esc(title)}</span>` +
+    verbsHTML(c) +
     `</div>` +
     // `data-no-pan` because a drag inside the body is a person selecting a span
     // to branch from, and the viewport's drag handler would pan the board out
     // from under them instead. Doc 09 section 3's highlight popover depends on
     // the selection surviving the pointer.
-    `<div class="body" data-no-pan>${bodyFor(c)}</div>` +
-    `<div class="foot">` +
+    `<div class="body" data-no-pan>${bodyFor(c)}${turns.map(turnHTML).join('')}</div>` +
+    `<div class="foot" data-follow-from="${esc(last.id)}">` +
     `<input class="followup" placeholder="${COPY.askFollowUp}" ${disabled} data-no-pan aria-label="${COPY.askFollowUp}"/>` +
     `<button class="send" ${disabled} data-act="follow" data-no-pan aria-label="${COPY.sendFollowUp}">` +
     `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>` +
@@ -277,8 +308,10 @@ export function renderNotes(notes: Sticky[], host: HTMLElement): void {
  */
 export function renderCards(cards: Card[], targets: RenderTargets): void {
   const seen = new Set<string>();
+  const t = threads(cards);
 
-  for (const c of cards) {
+  for (const c of t.tiles) {
+    const turns = t.turns.get(c.id) ?? [];
     const id = `card-${c.id}`;
     seen.add(id);
     let el = document.getElementById(id);
@@ -291,11 +324,15 @@ export function renderCards(cards: Card[], targets: RenderTargets): void {
       targets.cards.appendChild(el);
     }
 
-    const sig = signature(c);
+    const sig = [c, ...turns].map(signature).join('|');
     if (el.dataset.rendered !== sig) {
-      el.innerHTML = cardHTML(c);
+      const before = el.dataset.rendered === undefined ? -1 : Number(el.dataset.turns ?? '0');
+      const scrolled = el.querySelector<HTMLElement>('.body')?.scrollTop ?? 0;
+      el.innerHTML = tileHTML(c, turns);
       el.dataset.rendered = sig;
       el.dataset.status = c.status;
+      el.dataset.turns = String(turns.length);
+      keepReadingPlace(el, scrolled, before >= 0 && turns.length > before);
     }
 
     // Position is a separate write so a move never touches markup.
@@ -305,6 +342,18 @@ export function renderCards(cards: Card[], targets: RenderTargets): void {
   for (const el of Array.from(targets.cards.children)) {
     if (!seen.has(el.id)) el.remove();
   }
+}
+
+/**
+ * A rebuilt tile keeps the reader where they were, unless a turn was just
+ * added, in which case the newest question scrolls into view so its answer
+ * arrives where the reader is looking.
+ */
+function keepReadingPlace(el: HTMLElement, scrolled: number, added: boolean): void {
+  const body = el.querySelector<HTMLElement>('.body');
+  if (!body) return;
+  const last = body.querySelector<HTMLElement>('.turn:last-of-type');
+  body.scrollTop = added && last ? Math.max(0, last.offsetTop - 8) : scrolled;
 }
 
 export type HeightLookup = (cardId: string) => number;
@@ -330,13 +379,16 @@ export function drawEdges(
   notes: Sticky[] = [],
 ): void {
   const byId = new Map(cards.map((c) => [c.id, c]));
+  const t = threads(cards);
   const follow: string[] = [];
   const branch: string[] = [];
   const quoted: string[] = [];
 
-  for (const c of cards) {
+  // A turn draws no edge: it is inside its tile. A tile asked from a turn
+  // draws its edge from the tile that turn is in.
+  for (const c of t.tiles) {
     if (c.parent_card_id === null) continue;
-    const p = byId.get(c.parent_card_id);
+    const p = byId.get(t.headOf(c.parent_card_id));
     if (!p) continue;
     const ph = heightOf(p.id);
     const ch = heightOf(c.id);
@@ -362,7 +414,7 @@ export function drawEdges(
   // attach to and gets no line, which is what makes the line mean something.
   for (const n of notes) {
     if (!n.card_id) continue;
-    const c = byId.get(n.card_id);
+    const c = byId.get(t.headOf(n.card_id));
     if (!c) continue;
     const x1 = c.position.x + CARD_W;
     const y1 = c.position.y + Math.min(heightOf(c.id) * 0.5, 180);

@@ -76,6 +76,7 @@ export class Router {
       run: null,
       keySaved: false,
       folderAdded: null,
+      webAdded: [],
       busy: false,
       error: null,
     },
@@ -258,6 +259,10 @@ export class Router {
       }
       if (target.closest('#setup-done')) {
         void this.actions.finishSetup();
+        return;
+      }
+      if (target.closest('[data-go-setup]')) {
+        void this.go('setup');
         return;
       }
 
@@ -444,6 +449,7 @@ export class Router {
       e.preventDefault();
       if (form?.id === 'setup-key') void this.saveKey();
       if (form?.id === 'setup-folder') void this.watchFolder();
+      if (form?.id === 'setup-web') void this.watchWeb();
       if (form?.id === 'pack-import') void this.importPack();
       if (form?.id === 'page-edit') void this.savePage();
       if (form?.id === 'notebook-ask') void this.askNotebook();
@@ -702,6 +708,15 @@ export class Router {
         indexed: added.indexed,
         unreadable: added.errors.length,
       };
+    });
+  }
+
+  private async watchWeb(): Promise<void> {
+    const url = this.hosts.body.querySelector<HTMLInputElement>('#setup-web-url')?.value ?? '';
+    if (!url.trim()) return;
+    await this.setupStep(async () => {
+      await this.rpc.watchWeb(url.trim());
+      this.state.setup.webAdded = [...this.state.setup.webAdded, url.trim()];
     });
   }
 

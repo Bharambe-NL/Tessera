@@ -58,8 +58,13 @@ function models(profile: ProfileSummary): string {
 
 function retrievers(profile: ProfileSummary): string {
   const rows = profile.retrievers ?? [];
-  if (rows.length === 0) return emptyState(COPY.profileNoRetrievers);
+  // The way to configure one. The setup steps add folders and sites, and a
+  // person past first run had no way back to them, so a deep question that
+  // said "Add a site to search in Profile" pointed at a page that could not.
+  const add = `<p class="profile-add">${button(COPY.profileAddSources, { data: { 'go-setup': '1' } })}</p>`;
+  if (rows.length === 0) return emptyState(COPY.profileNoRetrievers) + add;
   return (
+    add +
     `<ul class="lib-list">` +
     rows
       .map(

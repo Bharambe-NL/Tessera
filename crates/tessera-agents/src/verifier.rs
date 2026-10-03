@@ -726,7 +726,7 @@ fn scope_exclusion(answer: &str, visual: &Value, constraints: &Value) -> Option<
 /// finding rather than `visual_block_unbound`'s. Two rules firing on one
 /// absence would put two flags on one tile.
 fn numeric_without_citation(answer: &str, citations: &[Value], visual: &Value) -> Option<Vec<Value>> {
-    let cited_spans: Vec<(usize, usize)> = citations
+    let mut cited_spans: Vec<(usize, usize)> = citations
         .iter()
         .filter_map(|c| {
             Some((
@@ -735,6 +735,23 @@ fn numeric_without_citation(answer: &str, citations: &[Value], visual: &Value) -
             ))
         })
         .collect();
+    // A citation records the span of the first sentence that used its number,
+    // so a later sentence citing the same passage carried no span, and every
+    // figure in it was flagged as unsourced. A live deep card on Basel III
+    // cited [11] three times and drew five block flags for figures that were
+    // each followed by a marker. Any sentence carrying a bound marker is cited.
+    let bound: std::collections::BTreeSet<usize> = citations
+        .iter()
+        .filter_map(|c| c["n"].as_u64().map(|n| n as usize))
+        .collect();
+    for (start, end, sentence) in crate::synthesizer::sentences(answer) {
+        if crate::synthesizer::markers_in(sentence)
+            .iter()
+            .any(|n| bound.contains(n))
+        {
+            cited_spans.push((start, end));
+        }
+    }
 
     let mut out = Vec::new();
     for (start, end, text) in numeric_spans(answer) {
@@ -1271,6 +1288,21 @@ mod tests {
             hits[0]["evidence"]["value"]
                 .as_str()
                 .is_some_and(|v| v.contains('3'))
+        );
+    }
+
+    #[test]
+    fn a_second_sentence_citing_the_same_passage_is_covered() {
+        // The citation carries the first sentence's span only. The second
+        // sentence cites the same passage and its figure is sourced.
+        let answer = "CET1 is 4.5 percent [1]. Tier 1 is 6 percent [1]. Total is 8 percent.";
+        let first_end = answer.find("Tier 1").expect("split") as u64;
+        let hits = numeric_without_citation(answer, &[citation(1, 0, first_end)], &Value::Null).expect("ran");
+        assert_eq!(hits.len(), 1, "only the unmarked figure: {hits:?}");
+        assert!(
+            hits[0]["evidence"]["value"]
+                .as_str()
+                .is_some_and(|v| v.contains('8'))
         );
     }
 

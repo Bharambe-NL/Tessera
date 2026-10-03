@@ -128,7 +128,8 @@ body {
 
 /* The verbs in the head keep their own pointer: a press on one is a press on a
    button, and the drag handler lets it through. */
-.card .head button {
+.card .head button,
+.card .turn-meta button {
   cursor: pointer;
 }
 
@@ -143,7 +144,9 @@ body {
 
 /* Doc 09 section 5's Rerun verb, pushed to the trailing edge of the header. */
 .card .head .rerun,
-.card .head .save {
+.card .head .save,
+.card .turn-meta .rerun,
+.card .turn-meta .save {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -155,12 +158,15 @@ body {
 /* Whichever verb comes first takes the gap; the second sits beside it. Doc 16
    section 3.2's Save is offered only until the card has a page, so the rerun
    has to be able to take the gap back. */
-.card .head .save + .rerun {
+.card .head .save + .rerun,
+.card .turn-meta .save + .rerun {
   margin-left: 0;
 }
 
 .card .head .rerun:hover:not(:disabled),
-.card .head .save:hover:not(:disabled) {
+.card .head .save:hover:not(:disabled),
+.card .turn-meta .rerun:hover:not(:disabled),
+.card .turn-meta .save:hover:not(:disabled) {
   color: var(--ink);
   background: var(--bg);
 }
@@ -218,10 +224,37 @@ body {
   color: var(--ink-2);
 }
 
+/* A tile holds its whole discussion, so the body scrolls inside the tile once
+   the follow-ups outgrow it, and the board keeps its shape. */
 .card .body {
-  padding: var(--s5);
+  padding: var(--s5) var(--s6);
   font-size: 13.5px;
   line-height: 1.55;
+  max-height: 620px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* One follow-up asked in the tile: its question, its answer, its own verbs. */
+.turn {
+  margin-top: var(--s8);
+  padding-top: var(--s6);
+  border-top: 1px solid var(--line);
+}
+
+.turn-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 22px;
+  margin-bottom: var(--s3);
+  color: var(--ink-2);
+}
+
+.turn .msg {
+  margin-bottom: var(--s4);
 }
 
 .msg {
@@ -247,22 +280,36 @@ sup.cite {
 }
 
 .findings {
-  margin-top: var(--s5);
-  padding-top: var(--s4);
+  margin-top: var(--s6);
+  padding-top: var(--s5);
   border-top: 1px solid var(--line);
 }
 
 .findings b {
   display: block;
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ink-3);
-  margin-bottom: var(--s2);
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+  margin-bottom: var(--s3);
 }
 
 .findings div {
-  margin-bottom: var(--s2);
+  position: relative;
+  padding-left: var(--s6);
+  margin-bottom: var(--s3);
+}
+
+.findings div::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .status.dots {
@@ -290,173 +337,359 @@ sup.cite {
 }
 
 .failed {
+  padding: var(--s4) var(--s5);
+  border-left: 3px solid var(--rust-ink);
+  border-radius: 0 var(--r-node) var(--r-node) 0;
+  background: var(--bg);
   color: var(--rust-ink);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
-/* ---- visuals ---- */
-
-.vis {
-  margin-top: var(--s5);
-  padding: var(--s5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-visual);
-}
-
-.vis h4 {
-  margin: 0 0 var(--s4);
-  font-size: 12px;
+.failed b {
+  display: block;
   font-weight: 600;
+}
+
+.failed span {
+  display: block;
+  margin-top: 2px;
   color: var(--ink-2);
 }
 
-.vis.tree {
-  text-align: center;
+/* ---- visuals ----
+   Colour carries rank, never a cycle of hues: the root or start is solid ink,
+   the first level is the accent's soft tint, deeper levels are plain surface
+   with a rule. Every fill pairs with an ink token that flips with the theme. */
+
+.vis {
+  margin-top: var(--s6);
+  padding: var(--s5) var(--s5) var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--r-visual);
+  background: var(--surface);
 }
 
-.vis .row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
-  justify-content: center;
-}
-
-.vis .arrow {
-  color: var(--ink-3);
+.vis h4 {
+  margin: 0 0 var(--s5);
   font-size: 11px;
-  margin: var(--s1) 0;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
 }
 
 .node {
-  display: inline-block;
-  padding: var(--s2) var(--s3);
+  display: block;
+  padding: var(--s2) var(--s4);
   border-radius: var(--r-node);
-  font-size: 12px;
-  background: var(--slate);
-  color: var(--slate-ink);
+  font-size: 12.5px;
+  line-height: 1.35;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  transition:
+    border-color var(--t-hover) var(--ease),
+    background var(--t-hover) var(--ease);
 }
 
-.node.h0 {
+.node b {
+  display: block;
+  font-weight: 600;
+}
+
+.node span {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.node.clk:hover,
+.node.clk:focus-visible {
+  border-color: var(--accent);
+}
+
+.node.root,
+.node.start {
   background: var(--ink);
+  border-color: var(--ink);
   color: var(--surface);
 }
 
-.node.h1 {
-  background: var(--olive);
-  color: var(--olive-ink);
+.node.root span,
+.node.start span {
+  color: var(--surface);
+  opacity: 0.82;
 }
 
-.node.h2 {
-  background: var(--slate);
-  color: var(--slate-ink);
-}
-
-.node.h3 {
-  background: var(--rust);
-  color: var(--rust-ink);
-}
-
-.node.h4 {
-  background: var(--amber);
-  color: var(--amber-ink);
+.node.d1 {
+  background: var(--accent-soft);
+  border-color: transparent;
 }
 
 .clk {
   cursor: pointer;
 }
 
+/* -- tree: an outline whose connector lines show which part is whose -- */
+
+.vis.tree .t > .node {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.t-kids {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--s7);
+}
+
+.t > .t-kids {
+  padding-left: var(--s4);
+}
+
+.t-kids li {
+  position: relative;
+  padding: var(--s2) 0 0 var(--s6);
+}
+
+/* The vertical rule runs down the side of every sibling, and stops at the
+   last one's elbow so the branch reads as closed. */
+.t-kids li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-left: 1.5px solid var(--line-strong);
+}
+
+.t-kids li:last-child::before {
+  bottom: auto;
+  height: calc(var(--s2) + 15px);
+}
+
+.t-kids li::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(var(--s2) + 15px);
+  width: calc(var(--s6) - 2px);
+  border-top: 1.5px solid var(--line-strong);
+}
+
+.t-kids .node {
+  display: inline-block;
+  max-width: 100%;
+}
+
 /* Wide content scrolls inside its own container; the card never scrolls sideways. */
 .scroll-x {
   overflow-x: auto;
+  margin: 0 calc(-1 * var(--s2));
+  padding: 0 var(--s2);
 }
+
+/* -- table: rules between rows, no boxes, figures aligned on the right -- */
 
 table.cmp {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 table.cmp th,
 table.cmp td {
-  border: 1px solid var(--line);
-  padding: var(--s2) var(--s3);
+  padding: var(--s3) var(--s3);
   text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
 }
 
 /* The header row reads as one before the columns are read. No zebra: the
    table is generated content, and stripes are chrome. */
 table.cmp th {
-  background: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+  border-bottom: 1.5px solid var(--line-strong);
+  white-space: nowrap;
+}
+
+table.cmp td.lead {
   font-weight: 600;
 }
 
+table.cmp .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.cmp tbody tr:last-child td {
+  border-bottom: none;
+}
+
+table.cmp tbody tr:hover td {
+  background: var(--bg);
+}
+
+/* -- the bottom line: the one sentence to take away -- */
+
 .vis .bottom {
-  margin-top: var(--s4);
-  padding-top: var(--s3);
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-  color: var(--ink-2);
+  margin-top: var(--s5);
+  padding: var(--s4) var(--s5);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--r-node) var(--r-node) 0;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  color: var(--ink);
 }
 
 .vis .bottom b {
-  margin-right: var(--s2);
-  color: var(--ink);
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.vis .bottom p {
+  margin: 0;
+}
+
+/* -- list -- */
+
+.vis.list .grp + .grp {
+  margin-top: var(--s5);
 }
 
 .vis.list .g {
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ink-3);
-  margin: var(--s4) 0 var(--s2);
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+  margin: 0 0 var(--s2);
+}
+
+.vis.list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .vis.list .it {
-  display: flex;
-  gap: var(--s3);
-  padding: var(--s2) var(--s3);
+  position: relative;
+  padding: var(--s2) var(--s3) var(--s2) var(--s7);
   border-radius: var(--r-node);
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.vis.list .it::before {
+  content: '';
+  position: absolute;
+  left: var(--s3);
+  top: calc(var(--s2) + 0.6em);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.vis.list .it b {
+  font-weight: 600;
+}
+
+.vis.list .it span {
+  color: var(--ink-2);
+}
+
+.vis.list .it span::before {
+  content: ' \2014  ';
+  color: var(--ink-3);
 }
 
 .vis.list .it:hover {
-  background: var(--accent-soft);
+  background: var(--bg);
 }
 
+/* -- steps: a numbered timeline -- */
+
 .vis .steps {
-  display: grid;
-  gap: var(--s2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: none;
 }
 
 .vis .steps .s {
+  position: relative;
   display: flex;
-  gap: var(--s3);
+  gap: var(--s4);
   align-items: flex-start;
+  padding-bottom: var(--s4);
+}
+
+.vis .steps .s:last-child {
+  padding-bottom: 0;
+}
+
+/* The line joining one number to the next. */
+.vis .steps .s:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 24px;
+  bottom: 0;
+  border-left: 1.5px solid var(--line-strong);
 }
 
 .vis .steps i {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--ink-3);
-  padding-top: var(--s2);
   flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-style: normal;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vis .steps .s:first-child i {
+  background: var(--ink);
+  color: var(--surface);
 }
 
 .vis .steps .clk {
   flex: 1;
-  padding: var(--s2) var(--s3);
+  min-width: 0;
+  padding: 2px var(--s3) var(--s1);
+  margin-left: calc(-1 * var(--s3));
   border-radius: var(--r-node);
+}
+
+.vis .steps .clk:hover {
+  background: var(--bg);
 }
 
 .vis .steps .clk b {
   display: block;
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .vis .steps .clk span {
-  font-size: 11px;
-  opacity: 0.8;
+  display: block;
+  font-size: 12px;
+  color: var(--ink-2);
 }
 
 /* Doc 16 section 3.6's edge handles. One overlay for the board, moved onto the
@@ -577,89 +810,153 @@ table.cmp th {
   opacity: 1;
 }
 
-/* Doc 16 section 3.5: a small layered layout, with every edge named below it. */
-.vis.flow {
+/* -- flow: boxes and arrows. Doc 16 section 3.5's small layered layout -- */
+
+.fdiagram {
+  display: block;
+  overflow: visible;
+}
+
+.fdiagram foreignObject {
+  overflow: visible;
+}
+
+.fdiagram .node {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--s1) var(--s3);
+  text-align: center;
+  overflow: hidden;
+}
+
+.fdiagram .node b,
+.fdiagram .node span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.fdiagram .node span {
+  -webkit-line-clamp: 1;
+}
+
+.fedge {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.fedge.back {
+  stroke-dasharray: 4 4;
+}
+
+.fhead {
+  fill: var(--line-strong);
+}
+
+.flab {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
+
+/* A loop's label sits in the gutter beside the line that goes back up. */
+.flab.side {
+  justify-content: flex-start;
+}
+
+.flab.side .how {
+  -webkit-line-clamp: 3;
+  text-align: left;
+  border-style: dashed;
+}
+
+.flab .how {
+  /* At most two lines, clamped, with the whole label in the title: an edge
+     label names a relation, and a clause that runs past the drawing names
+     nothing the reader can see. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 1px var(--s3);
+  border-radius: var(--r-node);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.4;
   text-align: center;
 }
 
-.vis .edges {
-  list-style: none;
-  margin: var(--s4) 0 0;
-  padding: 0;
-  display: grid;
-  gap: var(--s1);
-  text-align: left;
+.flab .how:hover {
+  color: var(--ink);
+  border-color: var(--accent);
 }
 
-.vis .edge {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  font-size: 11px;
-  color: var(--ink-2);
-}
+/* -- stats: Doc 16 section 3.5's large numerals, every one of them cited -- */
 
-.vis .edge i {
-  font-style: normal;
-  color: var(--ink-3);
-}
-
-.vis .edge .how {
-  padding: 0 var(--s2);
-  border-radius: var(--r-node);
-  background: var(--slate);
-  color: var(--slate-ink);
-  cursor: pointer;
-}
-
-/* Doc 16 section 3.5: at most six large numerals, every one of them cited. */
 .vis .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: var(--s2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s3);
+}
+
+.vis .tiles.n1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.vis .tiles.n2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .vis .tile {
-  padding: var(--s3);
+  padding: var(--s4) var(--s5) var(--s5);
   border-radius: var(--r-node);
-  background: var(--slate);
-  color: var(--slate-ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.vis .tile:first-child {
+  border-top: 2px solid var(--accent);
+}
+
+.vis .tile:hover {
+  border-color: var(--line-strong);
 }
 
 .vis .tile b {
   display: block;
-  font-size: 22px;
+  font-size: 26px;
   line-height: 1.1;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
 }
 
 .vis .tile b i {
   font-style: normal;
   font-size: 13px;
-  margin-left: 2px;
-  opacity: 0.75;
+  font-weight: 500;
+  margin-left: 3px;
+  letter-spacing: 0;
+  color: var(--ink-2);
 }
 
 .vis .tile span {
   display: block;
-  margin-top: var(--s1);
-  font-size: 11px;
-  opacity: 0.8;
-}
-
-.vis .tile.h1 {
-  background: var(--olive);
-  color: var(--olive-ink);
-}
-
-.vis .tile.h3 {
-  background: var(--rust);
-  color: var(--rust-ink);
-}
-
-.vis .tile.h4 {
-  background: var(--amber);
-  color: var(--amber-ink);
+  margin-top: var(--s2);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-2);
 }
 
 .vis.figure {

@@ -60,7 +60,7 @@ impl Agent for Visualizer {
         let hint = packet["visual_hint"].as_str().unwrap_or("none");
 
         step(ctx, "selecting_type")?;
-        let Some(visual_type) = select_type(summary, hint) else {
+        let Some(mut visual_type) = select_type(summary, hint) else {
             return Ok(declined(ctx, "The summary carries too little structure to draw."));
         };
 
@@ -78,6 +78,54 @@ impl Agent for Visualizer {
         // in it can arrive either way, and until BN-110 only the pruned one was
         // caught: a tree the model returned as a bare root indexed cleanly,
         // because the root label traced, and drew a single box.
+        if !has_content(&composed, visual_type) {
+            // A table or tiles is the summary's own values laid out, and every
+            // one of them is labelled and cited already, so there is nothing
+            // for a model to add that the rule above could not. A live deep
+            // card on Basel III came back with five cited ratios and a
+            // composed table with no rows, and was drawn with no visual at all.
+            //
+            // And a tree or flow that came back empty falls to the figures when
+            // there are any, so a summary with both relations and cited values
+            // is drawn as the half that survived rather than not at all.
+            //
+            // A tree or flow that came back empty is drawn from the relations
+            // themselves, and failing that from the steps, which every summary
+            // label already traces to. A live research card whose summary held
+            // twelve relations and six steps was otherwise drawn with nothing.
+            let has = |k: &str, n: usize| summary[k].as_array().is_some_and(|v| v.len() >= n);
+            let mut order: Vec<&'static str> = Vec::new();
+            if matches!(visual_type, "table" | "stats") {
+                order.push(visual_type);
+            }
+            if has("relations", 2) {
+                order.push("flow");
+            }
+            if has("values", 2) {
+                order.push(if headline_figures(summary) {
+                    "stats"
+                } else {
+                    "table"
+                });
+            }
+            if has("steps", 2) {
+                order.push("steps");
+            }
+            for kind in order {
+                let built = match kind {
+                    "flow" => from_relations(summary),
+                    "steps" => from_steps(summary),
+                    _ => from_values(summary, kind),
+                };
+                if let Some(built) = built
+                    && has_content(&built, kind)
+                {
+                    composed = built;
+                    visual_type = kind;
+                    break;
+                }
+            }
+        }
         if !has_content(&composed, visual_type) {
             return Ok(declined(ctx, "The summary carries too little structure to draw."));
         }
@@ -181,7 +229,9 @@ fn select_type(summary: &Value, hint: &str) -> Option<&'static str> {
             .unwrap_or(0)
     };
 
-    if len("relations") >= 2 && strict_hierarchy(summary) {
+    // A chain is a hierarchy in which nothing branches, and drawn as a tree it
+    // is a stack of single children; it reads as what it is, a flow.
+    if len("relations") >= 2 && strict_hierarchy(summary) && branches(summary) {
         return Some("tree");
     }
     // Doc 16 section 3.5: a tree cannot express a cycle or a cross link, so a
@@ -251,6 +301,18 @@ fn leak(hint: &str) -> &'static str {
 /// relation set where a node is reached twice is a cross link and one that
 /// reaches back is a cycle; a tree can draw neither, and drawing it as a tree
 /// anyway would silently drop one of the two edges.
+/// Whether some node in the relations has two or more children.
+fn branches(summary: &Value) -> bool {
+    let mut seen: std::collections::BTreeSet<&str> = Default::default();
+    summary
+        .get("relations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r["from"].as_str())
+        .any(|from| !seen.insert(from))
+}
+
 fn strict_hierarchy(summary: &Value) -> bool {
     let Some(relations) = summary.get("relations").and_then(Value::as_array) else {
         return false;
@@ -332,7 +394,11 @@ notes under fifteen.",
             &CompletionRequest::new(ctx.model_for("visualize"), "visualize")
                 .system(system)
                 .user(prompt)
-                .effort(Effort::High)
+                // Layout of a summary already written and checked. At high
+                // effort a live run spent its whole budget thinking about where
+                // five ratios should go and was cut off. Medium places boxes and
+                // leaves the answer room.
+                .effort(Effort::Medium)
                 .max_tokens(2000)
                 .expecting(schema),
         )
@@ -359,7 +425,19 @@ fn payload_schema(visual_type: &str) -> Value {
                 "type": "object",
                 "required": ["label"],
                 "additionalProperties": false,
-                "properties": { "label": { "type": "string" }, "note": { "type": "string" } }
+                "properties": {
+                    "label": { "type": "string" },
+                    "note": { "type": "string" },
+                    // A third level, which the block index and the canvas both
+                    // already walk. Without it a part of a part had nowhere to
+                    // go and was dropped or flattened into its parent's row.
+                    "children": { "type": "array", "items": {
+                        "type": "object",
+                        "required": ["label"],
+                        "additionalProperties": false,
+                        "properties": { "label": { "type": "string" }, "note": { "type": "string" } }
+                    }}
+                }
             }}
         }
     });
@@ -618,6 +696,119 @@ fn prune_untraceable(composed: &mut Value, visual_type: &str, untraceable: &[Str
 }
 
 /// Whether a pruned payload still has anything to draw.
+/// A table or tiles built straight from the summary's values, for when the
+/// composed one came back empty. Labels and values are copied as written, so
+/// every cell traces to the summary entry it came from.
+fn from_values(summary: &Value, visual_type: &str) -> Option<Value> {
+    let values = summary.get("values").and_then(Value::as_array)?;
+    if values.is_empty() {
+        return None;
+    }
+    let text = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().trim().to_string();
+    match visual_type {
+        "table" => {
+            // The unit rides with its value in the form the index already
+            // traces ("2.5 %"), rather than as a column of bare symbols.
+            let columns = vec![json!("Measure"), json!("Value")];
+            let rows: Vec<Value> = values
+                .iter()
+                .map(|v| {
+                    let unit = text(v, "unit");
+                    let value = if unit.is_empty() {
+                        text(v, "value")
+                    } else {
+                        format!("{} {unit}", text(v, "value"))
+                    };
+                    json!([text(v, "label"), value])
+                })
+                .collect();
+            Some(json!({ "title": "Figures", "payload": { "columns": columns, "rows": rows } }))
+        }
+        "stats" => {
+            let tiles: Vec<Value> = values
+                .iter()
+                .take(STATS_TILES)
+                .map(|v| {
+                    let mut tile = json!({ "value": text(v, "value"), "label": text(v, "label") });
+                    let unit = text(v, "unit");
+                    if !unit.is_empty() {
+                        tile["unit"] = json!(unit);
+                    }
+                    tile
+                })
+                .collect();
+            Some(json!({ "title": "Figures", "payload": { "tiles": tiles } }))
+        }
+        _ => None,
+    }
+}
+
+/// A flow built straight from the summary's relations: one node per endpoint,
+/// in the order first named, and one edge per relation carrying its kind.
+fn from_relations(summary: &Value) -> Option<Value> {
+    let relations = summary.get("relations").and_then(Value::as_array)?;
+    let mut labels: Vec<String> = Vec::new();
+    let mut edges = Vec::new();
+    for r in relations {
+        let (Some(from), Some(to)) = (r["from"].as_str(), r["to"].as_str()) else {
+            continue;
+        };
+        let (from, to) = (from.trim(), to.trim());
+        if from.is_empty() || to.is_empty() || from == to {
+            continue;
+        }
+        let known = |l: &str, labels: &Vec<String>| labels.iter().any(|x| x == l);
+        let new = usize::from(!known(from, &labels)) + usize::from(!known(to, &labels));
+        if labels.len() + new > FALLBACK_NODES {
+            continue;
+        }
+        let mut id = |label: &str| -> String {
+            let at = labels.iter().position(|l| l == label).unwrap_or_else(|| {
+                labels.push(label.to_string());
+                labels.len() - 1
+            });
+            format!("n{at}")
+        };
+        let (a, b) = (id(from), id(to));
+        let mut edge = json!({ "from": a, "to": b });
+        if let Some(kind) = r["kind"].as_str().map(str::trim).filter(|k| !k.is_empty()) {
+            edge["label"] = json!(kind);
+        }
+        edges.push(edge);
+    }
+    if edges.is_empty() {
+        return None;
+    }
+    let nodes: Vec<Value> = labels
+        .iter()
+        .enumerate()
+        .map(|(i, label)| json!({ "id": format!("n{i}"), "label": label }))
+        .collect();
+    Some(json!({ "title": "How it connects", "payload": { "nodes": nodes, "edges": edges } }))
+}
+
+/// Steps built straight from the summary's steps, in their order.
+fn from_steps(summary: &Value) -> Option<Value> {
+    let steps: Vec<Value> = summary
+        .get("steps")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .take(FALLBACK_NODES)
+        .map(|s| json!({ "label": s }))
+        .collect();
+    if steps.len() < 2 {
+        return None;
+    }
+    Some(json!({ "title": "In order", "payload": { "steps": steps } }))
+}
+
+/// Doc 16 section 3.5's "small" layout: a drawn fallback stays readable in a
+/// 440 pixel card.
+const FALLBACK_NODES: usize = 10;
+
 fn has_content(composed: &Value, visual_type: &str) -> bool {
     let payload = &composed["payload"];
     match visual_type {
@@ -1076,6 +1267,72 @@ mod tests {
         // making a third, so it carries no citation and says so.
         let edge = blocks.iter().find(|b| b["ref"] == "/edges/0").expect("the edge");
         assert_eq!(edge["no_claim"], json!(true));
+    }
+
+    #[test]
+    fn a_chain_is_a_flow_and_a_branch_is_a_tree() {
+        let chain = json!({ "relations": [
+            { "from": "Router", "to": "Planner", "kind": "hands to" },
+            { "from": "Planner", "to": "Retrievers", "kind": "assigns" }
+        ]});
+        assert_eq!(select_type(&chain, "none"), Some("flow"));
+        let branch = json!({ "relations": [
+            { "from": "Model", "to": "Encoder", "kind": "has" },
+            { "from": "Model", "to": "Dynamics", "kind": "has" }
+        ]});
+        assert_eq!(select_type(&branch, "none"), Some("tree"));
+    }
+
+    #[test]
+    fn an_empty_diagram_is_drawn_from_the_relations() {
+        // The live research card: twelve relations, and a composed diagram
+        // with nothing in it.
+        let summary = json!({ "relations": [
+            { "from": "Router", "to": "Planner", "kind": "hands to" },
+            { "from": "Planner", "to": "Retrievers", "kind": "assigns" },
+            { "from": "Retrievers", "to": "Synthesizer", "kind": "feeds" }
+        ]});
+        let built = from_relations(&summary).expect("a flow");
+        assert!(has_content(&built, "flow"));
+        assert_eq!(built["payload"]["nodes"].as_array().map(Vec::len), Some(4));
+        assert_eq!(
+            built["payload"]["edges"][2],
+            json!({ "from": "n2", "to": "n3", "label": "feeds" })
+        );
+        // And every node traces to the summary it came from.
+        assert!(index_blocks(&built, "flow", &summary, Shape::default()).is_ok());
+
+        let steps = from_steps(&json!({ "steps": ["Route", "Plan", "Retrieve"] })).expect("steps");
+        assert_eq!(steps["payload"]["steps"][1]["label"], "Plan");
+        assert!(from_steps(&json!({ "steps": ["Only one"] })).is_none());
+    }
+
+    #[test]
+    fn an_empty_table_is_rebuilt_from_the_cited_values() {
+        // The live Basel III card: five cited ratios, a composed table with no
+        // rows, and no visual. The values are the table, and every cell traces.
+        let summary = json!({ "values": [
+            { "label": "CET1 minimum", "value": "4.5", "unit": "%", "citation": 11 },
+            { "label": "Tier 1 minimum", "value": "6", "unit": "%", "citation": 12 },
+            { "label": "Conservation buffer", "value": "2.5", "unit": "%", "citation": 12 }
+        ]});
+        let built = from_values(&summary, "table").expect("a table");
+        assert!(has_content(&built, "table"));
+        assert_eq!(built["payload"]["rows"][0], json!(["CET1 minimum", "4.5 %"]));
+
+        let indexed = index_blocks(&built, "table", &summary, Shape::default()).expect("every cell traces");
+        let cell = indexed
+            .blocks
+            .as_array()
+            .expect("blocks")
+            .iter()
+            .find(|b| b["ref"] == "/rows/1/1")
+            .expect("the second value");
+        assert_eq!(cell["citation_ordinals"], json!([12]));
+
+        let tiles = from_values(&summary, "stats").expect("tiles");
+        assert_eq!(tiles["payload"]["tiles"][2]["unit"], "%");
+        assert!(from_values(&json!({ "values": [] }), "table").is_none());
     }
 
     #[test]

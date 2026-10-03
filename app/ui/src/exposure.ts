@@ -79,7 +79,7 @@ export function watchExposure(host: ExposureHost): () => void {
   const rewatch = (): void => {
     observer.disconnect();
     for (const id of [...timers.keys()]) stop(id);
-    for (const card of host.cards.querySelectorAll<HTMLElement>('.card[data-card-id]')) {
+    for (const card of host.cards.querySelectorAll<HTMLElement>('[data-card-id]')) {
       if (!reported.has(card.dataset.cardId ?? '')) observer.observe(card);
     }
   };

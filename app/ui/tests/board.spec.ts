@@ -41,38 +41,42 @@ test('a question becomes a card the reader can see', async ({ page }) => {
   await expect(page.locator('#title')).toHaveValue(QUESTION);
 });
 
-test('the follow-up box on a card asks a follow-up', async ({ page }) => {
+test('a follow-up is answered inside the tile it was asked in', async ({ page }) => {
+  // The owner, 2026-10-03: a follow-up continues the tile's discussion, so its
+  // answer lands in the tile, and a new tile is for investigating further.
   await askFirst(page);
   const parent = page.locator('#cards .card').first();
-  const parentId = await parent.getAttribute('data-card-id');
 
   await parent.locator('.followup').fill('which article says so?');
   await parent.locator('.followup').press('Enter');
 
-  await expect(page.locator('#cards .card')).toHaveCount(2, { timeout: 30_000 });
+  const turn = parent.locator('.turn');
+  await expect(turn).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.locator('#cards .card')).toHaveCount(1);
 
-  // The follow-up card answered. Counting cards is not enough: a card that
-  // renders and fails is still a card, and the first version of this test
-  // passed against a follow-up carrying "This card did not finish."
-  const child = page.locator('#cards .card').nth(1);
-  await expect(child).not.toHaveAttribute('data-status', 'failed');
-  await expect(child.locator('.answer')).toContainText('world model');
-  await expect(child.locator('.failed')).toHaveCount(0);
+  // The turn answered. Counting is not enough: a turn that renders and fails
+  // is still a turn, and the first version of this test passed against a
+  // follow-up carrying "This card did not finish."
+  await expect(turn).not.toHaveAttribute('data-status', 'failed');
+  await expect(turn.locator('.msg')).toHaveText('which article says so?');
+  await expect(turn.locator('.answer')).toContainText('world model');
+  await expect(turn.locator('.failed')).toHaveCount(0);
 
-  // It names its parent rather than landing on the board as another root. This
-  // is the assertion the RPC could not satisfy before M9: `card.ask` passed
-  // `parent_card_id: None`.
-  const cards = page.locator('#cards .card');
-  const titles = await cards.locator('.head .title').allTextContents();
-  expect(titles).toContain('Follow-up');
+  // It is its own card with its own id, so its verbs act on it.
+  const turnId = await turn.getAttribute('data-card-id');
+  expect(turnId).toBeTruthy();
+  expect(turnId).not.toBe(await parent.getAttribute('data-card-id'));
 
-  const ids = await cards.evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.cardId));
-  expect(ids.filter((id) => id === parentId)).toHaveLength(1);
+  // No edge, because nothing left the tile; and the next follow-up continues
+  // from the newest turn, so the core reads the whole thread as ancestry.
+  // The edge layer keeps one path per kind, so no follow edge is an empty one.
+  await expect(page.locator('#edges .edge.follow')).toHaveAttribute('d', '');
+  await expect(parent.locator('.foot')).toHaveAttribute('data-follow-from', turnId ?? '');
 
-  // An edge is drawn from parent to child, which is what makes it a board
-  // rather than a list.
-  const followEdge = await page.locator('#edges .edge.follow').getAttribute('d');
-  expect(followEdge?.length ?? 0).toBeGreaterThan(0);
+  await parent.locator('.followup').fill('and the buffer?');
+  await parent.locator('.followup').press('Enter');
+  await expect(turn).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.locator('#cards .card')).toHaveCount(1);
 });
 
 test('the flag chip opens the reason and closes it again', async ({ page }) => {
@@ -213,9 +217,11 @@ test('a summary that loops is drawn as a flow, with the edge that goes back', as
 
   const flow = card.locator('.vis.flow');
   await expect(flow).toBeVisible();
-  await expect(flow.locator('.node[data-ref="/nodes/0"]')).toHaveText('Draft');
-  await expect(flow.locator('.edges .edge')).toHaveCount(2);
-  await expect(flow.locator('.edge .how[data-ref="/edges/1"]')).toHaveText('returns to');
+  await expect(flow.locator('.node[data-ref="/nodes/0"] b')).toHaveText('Draft');
+  // Both edges are drawn as lines, and the one that goes back is dashed.
+  await expect(flow.locator('.fdiagram .fedge')).toHaveCount(2);
+  await expect(flow.locator('.fdiagram .fedge.back')).toHaveCount(1);
+  await expect(flow.locator('.how[data-ref="/edges/1"]')).toHaveText('returns to');
 
   // And a node is a block like any other, so it can be investigated.
   await flow.locator('.node[data-ref="/nodes/1"]').click();
@@ -295,7 +301,7 @@ test('hovering a card offers four handles, and one puts the cursor in the follow
   // And the follow-up it focuses is the one that works.
   await card.locator('.followup').fill('which article says so?');
   await card.locator('.followup').press('Enter');
-  await expect(page.locator('#cards .card')).toHaveCount(2, { timeout: 30_000 });
+  await expect(card.locator('.turn .answer')).toBeVisible({ timeout: 30_000 });
 });
 
 test('escape puts the popover away without asking anything', async ({ page }) => {
@@ -355,8 +361,10 @@ test('no card on the board reports a failure', async ({ page }) => {
     await expect(page.locator('#mode-label')).toHaveText('Live', { timeout: 30_000 });
   }
 
-  expect(await cardCount(page)).toBe(3);
-  await expect(page.locator('#cards .card[data-status="failed"]')).toHaveCount(0);
+  // Both follow-ups are turns in the one tile.
+  expect(await cardCount(page)).toBe(1);
+  await expect(parent.locator('.turn')).toHaveCount(2);
+  await expect(page.locator('#cards [data-status="failed"]')).toHaveCount(0);
   await expect(page.locator('#cards .failed')).toHaveCount(0);
   await expect(page.locator('#toasts .toast.error')).toHaveCount(0);
 });

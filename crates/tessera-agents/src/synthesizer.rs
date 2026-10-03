@@ -40,7 +40,9 @@ Never calculate a value from two others.
 
 structured_summary is the only thing the diagram is built from, so every entity, \
 relation and value you want shown must appear there, and every value must carry \
-the citation number that supports it.";
+the citation number that supports it. Every figure the answer states belongs in \
+values, one entry each, with a short label, the number as written, its unit and \
+its citation, because a figure left out of values cannot be drawn.";
 
 const FAST_SYSTEM: &str = "\
 You write one short answer for a card on a research board, and the structured \
@@ -556,6 +558,35 @@ fn bind(draft: &Value, passages: &[Value], mode: &str, packet: &Value) -> Bound 
             }
         }
     } else if let Some(values) = summary.get_mut("values").and_then(Value::as_array_mut) {
+        // A value the model left uncited is often stated, cited, in the answer
+        // itself. The citation is taken from that sentence, and only when the
+        // sentence cites a passage this answer really used, so nothing gets a
+        // source it did not already have in the prose. A live deep card on
+        // Basel III lost all five of its ratios here, and with them its table.
+        let mut texts: Vec<String> = vec![answer.clone()];
+        texts.extend(
+            findings
+                .iter()
+                .filter_map(|f| f["text"].as_str().map(str::to_string)),
+        );
+        for v in values.iter_mut() {
+            let cited = v
+                .get("citation")
+                .and_then(Value::as_u64)
+                .is_some_and(|n| seen_ordinals.contains(&(n as usize)));
+            if cited {
+                continue;
+            }
+            let Some(value) = v.get("value").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            if let Some(n) = citation_stating(&value, &texts, &seen_ordinals)
+                && let Some(obj) = v.as_object_mut()
+            {
+                obj.insert("citation".into(), json!(n));
+            }
+        }
+
         // Doc 06 section A5: in deep and research a numeric value without a
         // citation is a schema violation. Dropping it here means the Visualizer
         // never sees an uncited value, so no block can be built from one.
@@ -647,7 +678,41 @@ fn bind(draft: &Value, passages: &[Value], mode: &str, packet: &Value) -> Bound 
 /// Split into sentences with their character offsets, which is what
 /// `Citation.claim_span` records. Doc 06 open question A1 keeps this at
 /// sentence level for v1.
-fn sentences(text: &str) -> Vec<(usize, usize, &str)> {
+/// The first cited ordinal of a sentence that states `value`, among those the
+/// answer really used. A figure matches as a whole number, so "4.5" is not
+/// found inside "14.5" and "6" is not found inside "60".
+fn citation_stating(
+    value: &str,
+    texts: &[String],
+    seen: &std::collections::BTreeSet<usize>,
+) -> Option<usize> {
+    let value = value.trim();
+    if value.is_empty() || !value.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let numberish = |c: char| c.is_ascii_digit() || c == '.' || c == ',';
+    for text in texts {
+        for (_, _, sentence) in sentences(text) {
+            let states = sentence.match_indices(value).any(|(at, _)| {
+                let before = sentence[..at].chars().next_back();
+                let after = sentence[at + value.len()..].chars().next();
+                !before.is_some_and(numberish)
+                    && !after.is_some_and(|c| {
+                        c.is_ascii_digit()
+                            || (c == '.' && {
+                                sentence[at + value.len() + 1..].starts_with(|d: char| d.is_ascii_digit())
+                            })
+                    })
+            });
+            if states && let Some(n) = markers_in(sentence).into_iter().find(|n| seen.contains(n)) {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn sentences(text: &str) -> Vec<(usize, usize, &str)> {
     let mut out = Vec::new();
     let mut start = 0usize;
     let chars: Vec<(usize, char)> = text.char_indices().collect();
@@ -848,6 +913,23 @@ fn detect_conflicts(summary: &Value, passages: &[Value]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_uncited_value_takes_the_citation_of_the_sentence_that_states_it() {
+        let seen: std::collections::BTreeSet<usize> = [11, 12].into_iter().collect();
+        let texts = vec![
+            "Basel III sets CET1 at 4.5% of RWA [11]. Tier 1 is 6% [12]. A 60% figure is uncited."
+                .to_string(),
+        ];
+        assert_eq!(citation_stating("4.5", &texts, &seen), Some(11));
+        assert_eq!(citation_stating("6", &texts, &seen), Some(12));
+        // Not inside a larger number, and not from a sentence with no citation.
+        assert_eq!(citation_stating("60", &texts, &seen), None);
+        assert_eq!(citation_stating("0.5", &texts, &seen), None);
+        // A marker the answer never bound is not a source.
+        let unbound = vec!["Total capital is 8% [3].".to_string()];
+        assert_eq!(citation_stating("8", &unbound, &seen), None);
+    }
 
     fn passages(n: usize) -> Vec<Value> {
         (1..=n)

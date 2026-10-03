@@ -153,6 +153,8 @@ export interface Card {
    * renders from it, and its absence is what the Save verb is offered for.
    */
   page_id?: string | null;
+  /** Why a failed card stopped, naming the fix. Absent on a card that did not fail. */
+  failure?: string | null;
 }
 
 /**

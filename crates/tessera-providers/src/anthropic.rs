@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::error::{ProviderError, Result};
-use crate::model::{Completion, CompletionRequest, ContentBlock, ModelProvider, Role, Usage};
+use crate::model::{Completion, CompletionRequest, ContentBlock, Effort, ModelProvider, Role, Usage};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
@@ -102,6 +102,20 @@ const ADAPTIVE_FAMILIES: &[&str] = &[
     "claude-mythos-5",
 ];
 
+/// Room for adaptive thinking on top of the answer's own budget.
+fn thinking_headroom(effort: Effort) -> u32 {
+    match effort {
+        Effort::Low => 2_000,
+        Effort::Medium => 4_000,
+        Effort::High => 8_000,
+        // A live research synthesis at xhigh thought through 16,000 tokens,
+        // was cut off at 20,000 after 159 seconds and had to run again. Room
+        // that is not used costs nothing; a cut off answer costs the whole call.
+        Effort::Xhigh => 32_000,
+        Effort::Max => 48_000,
+    }
+}
+
 /// Whether this model takes `thinking: {type: "adaptive"}` and an effort level.
 pub fn supports_adaptive(model: &str) -> bool {
     ADAPTIVE_FAMILIES.iter().any(|family| model.starts_with(family))
@@ -171,9 +185,21 @@ impl AnthropicProvider {
             );
         }
 
+        // Adaptive thinking spends from the same `max_tokens` as the answer.
+        // The agents size the limit for the answer they expect, so without room
+        // for the thinking a deep synthesis at high effort used all 4,000 tokens
+        // reasoning and was cut off before its JSON closed, which arrived as "no
+        // parsable json object". The OpenAI compatible provider has carried the
+        // same headroom since BN-150; this is its counterpart, scaled by effort
+        // because that is what decides how long the model thinks.
+        let max_tokens = if adaptive {
+            req.max_tokens + thinking_headroom(req.effort)
+        } else {
+            req.max_tokens
+        };
         let mut body = json!({
             "model": req.model,
-            "max_tokens": req.max_tokens,
+            "max_tokens": max_tokens,
             "messages": messages,
         });
 
@@ -370,6 +396,26 @@ mod tests {
         let body = p.body(&CompletionRequest::new("claude-opus-5", "verify").user("q"));
         assert_eq!(body["thinking"]["type"], "adaptive");
         assert!(body["thinking"].get("budget_tokens").is_none());
+    }
+
+    #[test]
+    fn thinking_gets_room_on_top_of_the_answer() {
+        // The deep card that failed live: 4,000 tokens asked for, all of them
+        // spent thinking at high effort, and the JSON cut off before it closed.
+        let p = AnthropicProvider::new("k").expect("provider");
+        let req = CompletionRequest::new("claude-opus-5", "synthesize")
+            .user("q")
+            .effort(Effort::High)
+            .max_tokens(4_000);
+        assert_eq!(p.body(&req)["max_tokens"], 12_000);
+        let deeper = req.clone().effort(Effort::Xhigh);
+        assert_eq!(p.body(&deeper)["max_tokens"], 36_000);
+
+        // A model with no thinking keeps the figure it was given.
+        let older = CompletionRequest::new("claude-haiku-4-5", "route")
+            .user("q")
+            .max_tokens(1_200);
+        assert_eq!(p.body(&older)["max_tokens"], 1_200);
     }
 
     #[test]

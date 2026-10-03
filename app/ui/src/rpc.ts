@@ -540,6 +540,11 @@ export class Rpc {
     }>('profile.watch_folder', folder);
   }
 
+  /** Doc 05 section 8.1: a site the web retriever may read from. */
+  watchWeb(url: string) {
+    return this.call<{ web_seeds: string[]; configured: boolean }>('profile.watch_web', { url });
+  }
+
   /**
    * Hand a key to the keychain. The secret crosses this boundary once, going in,
    * and nothing ever sends it back.

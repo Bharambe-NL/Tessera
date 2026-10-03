@@ -13,6 +13,7 @@
  *   - `pinned` lives inside `position` per doc 01 section 4.2.
  */
 
+import { threads } from './thread.js';
 import type { Card } from './types.js';
 
 export const CARD_W = 440;
@@ -37,16 +38,18 @@ interface Index {
   follows: Map<string, Card[]>;
 }
 
-function indexChildren(cards: Card[]): Index {
+function indexChildren(tiles: Card[], headOf: (id: string) => string): Index {
   const branches = new Map<string, Card[]>();
   const follows = new Map<string, Card[]>();
-  for (const c of cards) {
+  for (const c of tiles) {
     if (c.parent_card_id === null) continue;
-    // `read` and `exercise` cards attach like follow-ups.
+    // `read` and `exercise` cards attach like follow-ups. A tile whose parent
+    // is a turn hangs off the tile that turn is drawn in.
+    const parent = headOf(c.parent_card_id);
     const bucket = c.kind === 'branch' ? branches : follows;
-    const list = bucket.get(c.parent_card_id);
+    const list = bucket.get(parent);
     if (list) list.push(c);
-    else bucket.set(c.parent_card_id, [c]);
+    else bucket.set(parent, [c]);
   }
   return { branches, follows };
 }
@@ -110,7 +113,8 @@ function layoutSub(card: Card, x: number, y: number, idx: Index, h: HeightLookup
  * a pinned root keeps its position and only its subtree is re-laid.
  */
 export function layout(cards: Card[], heightOf: HeightLookup = () => DEFAULT_CARD_H): void {
-  const idx = indexChildren(cards);
+  const t = threads(cards);
+  const idx = indexChildren(t.tiles, t.headOf);
 
   // Every root lays out in order, the pinned ones included. `layoutSub` leaves a
   // pinned card where it was dropped, and the cursor still advances by the width
@@ -122,15 +126,29 @@ export function layout(cards: Card[], heightOf: HeightLookup = () => DEFAULT_CAR
   // The second pass this replaces is gone with it: a pinned card is now handled
   // wherever the walk reaches it, so a pinned branch holds too.
   let x = 0;
-  for (const root of cards) {
+  for (const root of t.tiles) {
     if (root.parent_card_id !== null) continue;
     const box = layoutSub(root, x, 0, idx, heightOf);
     x += box.w + BRANCH_X;
+  }
+
+  // A turn has no slot of its own. It sits where its tile sits, so anything
+  // that reads a card's position, a sticky kept from a turn for one, lands
+  // beside the tile the reader was looking at.
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  for (const [headId, turns] of t.turns) {
+    const head = byId.get(headId);
+    if (!head) continue;
+    for (const turn of turns) {
+      turn.position.x = head.position.x;
+      turn.position.y = head.position.y;
+    }
   }
 }
 
 /** Bounding box of every card, used by "fit to view". */
 export function boundsOf(cards: Card[], heightOf: HeightLookup = () => DEFAULT_CARD_H) {
+  cards = threads(cards).tiles;
   if (cards.length === 0) return { x: 0, y: 0, w: CARD_W, h: DEFAULT_CARD_H };
   let minX = Infinity;
   let minY = Infinity;

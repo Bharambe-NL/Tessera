@@ -22,8 +22,6 @@ import type {
   Visual,
 } from './types.js';
 
-const HUES = ['h1', 'h2', 'h3', 'h4'] as const;
-
 export function esc(s: string): string {
   return s.replace(
     /[&<>"']/g,
@@ -78,71 +76,85 @@ function block(ref: string, lookup: BlockLookup, render: (attrs: string) => stri
 
 function bottomLine(bl: BottomLine | undefined): string {
   if (!bl) return '';
-  return `<div class="bottom"><b>${esc(bl.head)}</b>${citeMarkers(esc(bl.text))}</div>`;
+  return `<div class="bottom"><b>${esc(bl.head)}</b><p>${citeMarkers(esc(bl.text))}</p></div>`;
 }
 
-function treeLevel(nodes: TreeNode[], depth: number, path: string, lookup: BlockLookup): string {
+/** A cell that is a quantity reads right aligned, so its digits line up. */
+const NUMERIC = /^[\s(]*[-+−~≈<>]?[$€£¥]?\s*\d[\d.,\s]*(%|bp|bps|[kmbKMB]n?|x)?[)\s]*$/;
+
+/** A node's label and, when it has one, the note that explains it. */
+function nodeText(label: string, note: string | undefined): string {
+  return `<b>${esc(label)}</b>` + (note ? `<span>${esc(note)}</span>` : '');
+}
+
+/**
+ * A tree as a nested outline with connector lines.
+ *
+ * Each child sits under its own parent, so a reader sees which part belongs to
+ * which. The earlier renderer flattened every level into one row of chips,
+ * which lost exactly that. Depth carries the emphasis: the root is solid, the
+ * first level is tinted, deeper levels are plain, so colour means rank rather
+ * than cycling through hues that mean nothing.
+ */
+function treeBranch(nodes: TreeNode[], path: string, depth: number, lookup: BlockLookup): string {
   if (nodes.length === 0) return '';
-  const row = `<div class="row">${nodes
-    .map((n, i) =>
-      block(`${path}/${i}`, lookup, (attrs) => {
-        const hue = HUES[(depth + i) % HUES.length];
-        const note = n.note ? ` data-note="${esc(n.note)}"` : '';
-        return `<span class="node clk ${hue}"${attrs}${note} tabindex="0" role="button">${esc(n.label)}</span>`;
-      }),
-    )
-    .join('')}</div>`;
-
-  // Children render as one row per level, matching the prototype's shape.
-  const kids: { node: TreeNode; path: string }[] = [];
-  nodes.forEach((n, i) => {
-    (n.children ?? []).forEach((c, j) =>
-      kids.push({ node: c, path: `${path}/${i}/children/${j}` }),
-    );
-  });
-  if (kids.length === 0) return row;
-
-  // Children of a level share a row; each keeps its own pointer.
-  const childRow = `<div class="row">${kids
-    .map(({ node, path: p }, i) =>
-      block(p, lookup, (attrs) => {
-        const hue = HUES[(depth + 1 + i) % HUES.length];
-        const note = node.note ? ` data-note="${esc(node.note)}"` : '';
-        return `<span class="node clk ${hue}"${attrs}${note} tabindex="0" role="button">${esc(node.label)}</span>`;
-      }),
-    )
-    .join('')}</div>`;
-
-  const grandKids = kids.some(({ node }) => (node.children ?? []).length > 0);
-  const deeper = grandKids
-    ? `<div class="arrow" aria-hidden="true">↓</div>` +
-      treeLevel(
-        kids.flatMap(({ node }) => node.children ?? []),
-        depth + 2,
-        `${path}/children`,
+  const items = nodes
+    .map((n, i) => {
+      const ref = `${path}/${i}`;
+      const node = block(
+        ref,
         lookup,
-      )
-    : '';
+        (attrs) =>
+          `<div class="node clk d${Math.min(depth, 2)}"${attrs} tabindex="0" role="button">${nodeText(
+            n.label,
+            n.note,
+          )}</div>`,
+      );
+      return `<li>${node}${treeBranch(n.children ?? [], `${ref}/children`, depth + 1, lookup)}</li>`;
+    })
+    .join('');
+  return `<ul class="t-kids">${items}</ul>`;
+}
 
-  return `${row}<div class="arrow" aria-hidden="true">↓</div>${childRow}${deeper}`;
+/**
+ * The edges that close a loop. A depth first walk in the order the nodes were
+ * given marks an edge back to a node still on the walk's path, which is the
+ * smallest set the reader would call "goes back".
+ */
+function backEdges(nodes: FlowNode[], edges: FlowEdge[]): Set<FlowEdge> {
+  const out = new Map<string, FlowEdge[]>(nodes.map((n) => [n.id, []]));
+  for (const e of edges) out.get(e.from)?.push(e);
+  const state = new Map<string, 'open' | 'done'>();
+  const back = new Set<FlowEdge>();
+  const walk = (id: string): void => {
+    state.set(id, 'open');
+    for (const e of out.get(id) ?? []) {
+      const s = state.get(e.to);
+      if (s === 'open') back.add(e);
+      else if (s === undefined && out.has(e.to)) walk(e.to);
+    }
+    state.set(id, 'done');
+  };
+  for (const n of nodes) if (!state.has(n.id)) walk(n.id);
+  return back;
 }
 
 /**
  * Lay a flow out in layers, longest path first.
  *
- * Doc 16 section 3.5 asks for "a small layered layout". A node sits one layer
- * below the deepest thing that reaches it, which puts sources at the top and
- * the ends at the bottom. A cycle has no such order, so a node already placed
- * stays where it is and the edge that closed the loop is drawn in the list
- * below rather than dragging a node down forever.
+ * Doc 16 section 3.5 asks for "a small layered layout". With the loop closing
+ * edges set aside the flow has an order, and a node sits one layer below the
+ * deepest thing that reaches it, which puts sources at the top and the ends at
+ * the bottom. Within a layer a node sits under the average of its parents, so
+ * lines cross as little as a small layout can manage, and a node a loop starts
+ * from goes last, nearest the gutter its loop runs up.
  */
-function layers(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[][] {
+function layers(nodes: FlowNode[], edges: FlowEdge[], back: Set<FlowEdge>): FlowNode[][] {
+  const forward = edges.filter((e) => !back.has(e));
   const depth = new Map(nodes.map((n) => [n.id, 0]));
-  // One pass per node is enough for any acyclic run, and it is what bounds the
-  // walk when the flow loops.
   for (let pass = 0; pass < nodes.length; pass += 1) {
     let moved = false;
-    for (const e of edges) {
+    for (const e of forward) {
       const from = depth.get(e.from);
       const to = depth.get(e.to);
       if (from === undefined || to === undefined) continue;
@@ -158,7 +170,171 @@ function layers(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[][] {
     const d = Math.min(depth.get(n.id) ?? 0, nodes.length - 1);
     (rows[d] ??= []).push(n);
   }
-  return rows.filter((r) => r && r.length);
+  const dense = rows.filter((r) => r && r.length);
+
+  const slot = new Map<string, number>();
+  const loops = new Set(Array.from(back, (e) => e.from));
+  dense.forEach((row, li) => {
+    if (li > 0) {
+      const at = (n: FlowNode): number => {
+        const parents = forward.filter((e) => e.to === n.id && slot.has(e.from));
+        if (!parents.length) return Number.MAX_SAFE_INTEGER;
+        return parents.reduce((sum, e) => sum + (slot.get(e.from) ?? 0), 0) / parents.length;
+      };
+      row.sort((a, b) => Number(loops.has(a.id)) - Number(loops.has(b.id)) || at(a) - at(b));
+    }
+    row.forEach((n, i) => slot.set(n.id, (i + 0.5) / row.length));
+  });
+  return dense;
+}
+
+/** Geometry for a flow diagram, in the drawing's own pixels. */
+const FLOW = { w: 392, gap: 12, nodeMax: 172, pitch: 54, pitchLong: 72, labelW: 176 } as const;
+
+interface Placed {
+  index: number;
+  layer: number;
+  x: number;
+  y: number;
+  w: number;
+}
+
+/** A rough width for a label at 11px, enough to reserve room for it. */
+function labelWidth(text: string | undefined): number {
+  return text ? text.length * 6.1 + 18 : 0;
+}
+
+/** A point on a cubic curve, for setting a label on the line it names. */
+function cubic(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const u = 1 - t;
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+}
+
+/**
+ * Draw a flow as boxes and arrows.
+ *
+ * Layers run top to bottom. A forward edge drops from the bottom of one box to
+ * the top of the next. An edge that closes a loop, the thing a tree cannot
+ * show, leaves its box on the right, runs up a gutter beside the diagram and
+ * comes back in dashed, so the cycle reads as a cycle; its label sits in that
+ * gutter, clear of the forward labels. Where one box fans out, each label sits
+ * nearer the box it leads to, so neighbouring labels do not collide.
+ *
+ * The boxes and labels are HTML placed inside the drawing, so their text can be
+ * selected and focused, and each is still a block with its own pointer.
+ */
+function flowDiagram(v: Visual, nodes: FlowNode[], edges: FlowEdge[], lookup: BlockLookup): string {
+  const back = backEdges(nodes, edges);
+  const rows = layers(nodes, edges, back);
+  const loops = edges.filter((e) => back.has(e));
+  const backLabel = Math.max(0, ...loops.map((e) => labelWidth(e.label)));
+  const gutter = loops.length
+    ? Math.min(110, Math.max(28, backLabel + 16)) + 8 * (loops.length - 1)
+    : 0;
+  const usable = FLOW.w - gutter;
+  const nodeH = nodes.some((n) => n.note) ? 56 : 40;
+  // A label longer than a pill wraps to two lines, and the gap between layers
+  // grows to hold it. A live research card labelled its edges with whole
+  // clauses, which on one line ran off both sides of the drawing.
+  const pitch = edges.some((e) => (e.label?.length ?? 0) > 24) ? FLOW.pitchLong : FLOW.pitch;
+
+  const placed = new Map<string, Placed>();
+  rows.forEach((row, li) => {
+    const w = Math.min(FLOW.nodeMax, (usable - (row.length - 1) * FLOW.gap) / row.length);
+    const total = row.length * w + (row.length - 1) * FLOW.gap;
+    const left = (usable - total) / 2;
+    row.forEach((n, i) => {
+      placed.set(n.id, {
+        index: nodes.indexOf(n),
+        layer: li,
+        x: left + i * (w + FLOW.gap),
+        y: li * (nodeH + pitch),
+        w,
+      });
+    });
+  });
+  const height = rows.length * nodeH + (rows.length - 1) * pitch;
+  const marker = `arrow-${v.id.replace(/[^\w-]/g, '')}`;
+  const fanOut = new Map<string, number>();
+  for (const e of edges) if (!back.has(e)) fanOut.set(e.from, (fanOut.get(e.from) ?? 0) + 1);
+
+  const paths: string[] = [];
+  const labels: string[] = [];
+  let loopIndex = 0;
+  edges.forEach((e, i) => {
+    const a = placed.get(e.from);
+    const b = placed.get(e.to);
+    if (!a || !b) return;
+    let d: string;
+    let box: string;
+    if (!back.has(e)) {
+      const x1 = a.x + a.w / 2;
+      const y1 = a.y + nodeH;
+      const x2 = b.x + b.w / 2;
+      const y2 = b.y - 2;
+      const my = (y1 + y2) / 2;
+      d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+      const t = (fanOut.get(e.from) ?? 1) > 1 ? 0.68 : 0.5;
+      const lx = cubic(x1, x1, x2, x2, t);
+      const ly = cubic(y1, my, my, y2, t);
+      box = `x="${lx - FLOW.labelW / 2}" y="${ly - 19}" width="${FLOW.labelW}" height="38"><div class="flab">`;
+    } else {
+      const gx = usable + 10 + 8 * loopIndex;
+      loopIndex += 1;
+      const x1 = a.x + a.w;
+      const y1 = a.y + nodeH / 2;
+      const x2 = b.x + b.w + 2;
+      const y2 = b.y + nodeH / 2;
+      const r = Math.min(8, Math.abs(y1 - y2) / 2);
+      const up = y2 < y1 ? -1 : 1;
+      d =
+        `M${x1},${y1} H${gx - r} Q${gx},${y1} ${gx},${y1 + up * r} ` +
+        `V${y2 - up * r} Q${gx},${y2} ${gx - r},${y2} H${x2}`;
+      const mid = (y1 + y2) / 2;
+      box = `x="${gx + 4}" y="${mid - 22}" width="${Math.max(24, FLOW.w - gx - 4)}" height="44"><div class="flab side">`;
+    }
+    paths.push(
+      `<path class="fedge${back.has(e) ? ' back' : ''}" d="${d}" marker-end="url(#${marker})"/>`,
+    );
+    if (e.label) {
+      const label = block(
+        `/edges/${i}`,
+        lookup,
+        (attrs) =>
+          `<span class="how clk"${attrs} tabindex="0" role="button" title="${esc(e.label ?? '')}">${citeMarkers(
+            esc(e.label ?? ''),
+          )}</span>`,
+      );
+      labels.push(`<foreignObject ${box}${label}</div></foreignObject>`);
+    }
+  });
+
+  const boxes = Array.from(placed.values())
+    .map((p) => {
+      const n = nodes[p.index];
+      const start = p.layer === 0 ? ' start' : '';
+      const box = block(
+        `/nodes/${p.index}`,
+        lookup,
+        (attrs) =>
+          `<div class="node clk${start}"${attrs} tabindex="0" role="button" title="${esc(
+            n.note ? `${n.label}: ${n.note}` : n.label,
+          )}">${nodeText(n.label, n.note)}</div>`,
+      );
+      return `<foreignObject x="${p.x}" y="${p.y}" width="${p.w}" height="${nodeH}">${box}</foreignObject>`;
+    })
+    .join('');
+
+  return (
+    `<svg class="fdiagram" viewBox="-2 -4 ${FLOW.w + 4} ${height + 8}" ` +
+    `width="100%" role="group" aria-label="${esc(v.title)}">` +
+    `<defs><marker id="${marker}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
+    `<path class="fhead" d="M0,0.5 L7.5,4 L0,7.5 z"/></marker></defs>` +
+    paths.join('') +
+    boxes +
+    labels.join('') +
+    `</svg>`
+  );
 }
 
 /**
@@ -186,15 +362,17 @@ export function visualHTML(v: Visual | null): string {
     case 'tree': {
       const payload = v.payload as { root: TreeNode };
       if (!payload.root) return '';
-      const root = block('/root', lookup, (attrs) => {
-        const note = payload.root.note ? ` data-note="${esc(payload.root.note)}"` : '';
-        return `<span class="node clk h0"${attrs}${note} tabindex="0" role="button">${esc(payload.root.label)}</span>`;
-      });
-      const children = payload.root.children ?? [];
-      const body = children.length
-        ? `<div class="arrow" aria-hidden="true">↓</div>${treeLevel(children, 0, '/root/children', lookup)}`
-        : '';
-      return `<div class="vis tree">${head}${root}${body}</div>`;
+      const root = block(
+        '/root',
+        lookup,
+        (attrs) =>
+          `<div class="node clk root"${attrs} tabindex="0" role="button">${nodeText(
+            payload.root.label,
+            payload.root.note,
+          )}</div>`,
+      );
+      const kids = treeBranch(payload.root.children ?? [], '/root/children', 1, lookup);
+      return `<div class="vis tree">${head}<div class="t">${root}${kids}</div></div>`;
     }
 
     case 'table': {
@@ -203,15 +381,23 @@ export function visualHTML(v: Visual | null): string {
         rows: string[][];
         bottom_line?: BottomLine;
       };
+      const rowsIn = payload.rows ?? [];
+      // A column is numeric when every filled cell in it is a quantity.
+      const numeric = (payload.columns ?? []).map((_, ci) => {
+        const cells = rowsIn.map((r) => (r[ci] ?? '').trim()).filter(Boolean);
+        return ci > 0 && cells.length > 0 && cells.every((c) => NUMERIC.test(c));
+      });
       const cols = (payload.columns ?? [])
         .map((c, i) =>
-          block(`/columns/${i}`, lookup, (attrs) => {
-            const hue = i ? 'h1' : 'h2';
-            return `<th class="clk ${hue}"${attrs} scope="col">${esc(c)}</th>`;
-          }),
+          block(
+            `/columns/${i}`,
+            lookup,
+            (attrs) =>
+              `<th class="clk${numeric[i] ? ' num' : ''}"${attrs} scope="col">${esc(c)}</th>`,
+          ),
         )
         .join('');
-      const rows = (payload.rows ?? [])
+      const rows = rowsIn
         .map(
           (r, ri) =>
             `<tr>${r
@@ -219,13 +405,16 @@ export function visualHTML(v: Visual | null): string {
                 block(
                   `/rows/${ri}/${ci}`,
                   lookup,
-                  (attrs) => `<td class="clk"${attrs}>${esc(cell)}</td>`,
+                  (attrs) =>
+                    `<td class="clk${numeric[ci] ? ' num' : ''}${ci === 0 ? ' lead' : ''}"${attrs}>${esc(
+                      cell,
+                    )}</td>`,
                 ),
               )
               .join('')}</tr>`,
         )
         .join('');
-      return `<div class="vis"><div class="scroll-x">${head}<table class="cmp"><thead><tr>${cols}</tr></thead><tbody>${rows}</tbody></table></div>${bottomLine(
+      return `<div class="vis table">${head}<div class="scroll-x"><table class="cmp"><thead><tr>${cols}</tr></thead><tbody>${rows}</tbody></table></div>${bottomLine(
         payload.bottom_line,
       )}</div>`;
     }
@@ -248,13 +437,13 @@ export function visualHTML(v: Visual | null): string {
                 `/groups/${gi}/items/${ii}`,
                 lookup,
                 (attrs) =>
-                  `<div class="it clk"${attrs} tabindex="0" role="button"><b>${esc(it.name)}</b><span>${esc(
-                    it.detail ?? '',
-                  )}</span></div>`,
+                  `<li class="it clk"${attrs} tabindex="0" role="button"><b>${esc(it.name)}</b>${
+                    it.detail ? `<span>${esc(it.detail)}</span>` : ''
+                  }</li>`,
               ),
             )
             .join('');
-          return heading + items;
+          return `<section class="grp">${heading}<ul>${items}</ul></section>`;
         })
         .join('');
       return `<div class="vis list">${head}${groups}${bottomLine(payload.bottom_line)}</div>`;
@@ -268,15 +457,13 @@ export function visualHTML(v: Visual | null): string {
             `/steps/${i}`,
             lookup,
             (attrs) =>
-              `<div class="s"><i aria-hidden="true">${i + 1}</i><div class="clk ${
-                HUES[i % HUES.length]
-              }"${attrs} tabindex="0" role="button"><b>${esc(s.label)}</b><span>${esc(
-                s.note ?? '',
-              )}</span></div></div>`,
+              `<li class="s"><i aria-hidden="true">${i + 1}</i><div class="clk"${attrs} tabindex="0" role="button"><b>${esc(
+                s.label,
+              )}</b>${s.note ? `<span>${esc(s.note)}</span>` : ''}</div></li>`,
           ),
         )
         .join('');
-      return `<div class="vis">${head}<div class="steps">${steps}</div></div>`;
+      return `<div class="vis">${head}<ol class="steps">${steps}</ol></div>`;
     }
 
     case 'flow': {
@@ -288,40 +475,9 @@ export function visualHTML(v: Visual | null): string {
       const nodes = payload.nodes ?? [];
       if (!nodes.length) return '';
       const edges = payload.edges ?? [];
-      const label = new Map(nodes.map((n) => [n.id, n.label]));
-      const rows = layers(nodes, edges)
-        .map(
-          (layer, depth) =>
-            `<div class="row">${layer
-              .map((n) =>
-                block(`/nodes/${nodes.indexOf(n)}`, lookup, (attrs) => {
-                  const hue = HUES[(depth + layer.indexOf(n)) % HUES.length];
-                  const note = n.note ? ` data-note="${esc(n.note)}"` : '';
-                  return `<span class="node clk ${hue}"${attrs}${note} tabindex="0" role="button">${esc(
-                    n.label,
-                  )}</span>`;
-                }),
-              )
-              .join('')}</div>`,
-        )
-        .join('<div class="arrow" aria-hidden="true">↓</div>');
-
-      // Every edge is named, not only the ones the layering could draw as a
-      // descent. Doc 16 section 3.5 adds this type for the cycles and cross
-      // links a tree cannot show, so the edge that goes back up is the one that
-      // most needs saying.
-      const written = edges
-        .map((e, i) =>
-          block(`/edges/${i}`, lookup, (attrs) => {
-            const middle = e.label ? `<span class="how"${attrs}>${esc(e.label)}</span>` : '';
-            return `<li class="edge">${esc(label.get(e.from) ?? e.from)}${middle}<i aria-hidden="true">→</i>${esc(
-              label.get(e.to) ?? e.to,
-            )}</li>`;
-          }),
-        )
-        .join('');
-      const list = written ? `<ul class="edges">${written}</ul>` : '';
-      return `<div class="vis flow">${head}${rows}${list}${bottomLine(payload.bottom_line)}</div>`;
+      return `<div class="vis flow">${head}${flowDiagram(v, nodes, edges, lookup)}${bottomLine(
+        payload.bottom_line,
+      )}</div>`;
     }
 
     case 'stats': {
@@ -332,14 +488,17 @@ export function visualHTML(v: Visual | null): string {
             `/tiles/${i}`,
             lookup,
             (attrs) =>
-              `<div class="tile clk ${HUES[i % HUES.length]}"${attrs} tabindex="0" role="button"><b>${esc(
-                t.value,
-              )}${t.unit ? `<i>${esc(t.unit)}</i>` : ''}</b><span>${esc(t.label)}</span></div>`,
+              `<div class="tile clk"${attrs} tabindex="0" role="button"><b>${esc(t.value)}${
+                t.unit ? `<i>${esc(t.unit)}</i>` : ''
+              }</b><span>${esc(t.label)}</span></div>`,
           ),
         )
         .join('');
       if (!tiles) return '';
-      return `<div class="vis">${head}<div class="tiles">${tiles}</div>${bottomLine(payload.bottom_line)}</div>`;
+      const count = Math.min((payload.tiles ?? []).length, 3);
+      return `<div class="vis">${head}<div class="tiles n${count}">${tiles}</div>${bottomLine(
+        payload.bottom_line,
+      )}</div>`;
     }
 
     case 'figure': {

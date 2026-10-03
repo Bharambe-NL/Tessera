@@ -215,18 +215,27 @@ pub fn retrieve(fetcher: &dyn Fetcher, config: &WebConfig, packet: &Packet) -> R
         // A seed that is itself a page is a candidate; a seed that is a listing
         // contributes its links. Both are true of the same fetch, so the body
         // is used twice rather than fetched twice.
+        //
+        // The page goes first. It was pointed at by name, and behind 64 links
+        // with a budget of eight fetches it was never read at all: a live deep
+        // question seeded with the Basel III article read Wikipedia's "Current
+        // events" portal and answered that nothing covered Basel III.
         let mut here: Vec<String> = Vec::new();
-        for url in links_within(&listing) {
-            if here.len() >= MAX_CANDIDATES {
-                break;
-            }
-            if seen.insert(dedupe_key(&url)) {
-                here.push(url);
-            }
-        }
         if has_prose(&listing.body) && seen.insert(dedupe_key(&listing.url)) {
             here.push(listing.url.clone());
         }
+        // Then its links, those whose address names the question first. A page
+        // opens with its navigation, so link order is the site's chrome rather
+        // than any guide to what answers this question. The sort is stable, so
+        // ties keep the page's order and two runs agree.
+        let terms = query_terms(&packet.query);
+        let mut links: Vec<String> = links_within(&listing)
+            .into_iter()
+            .filter(|url| seen.insert(dedupe_key(url)))
+            .take(MAX_CANDIDATES * 4)
+            .collect();
+        links.sort_by_key(|url| std::cmp::Reverse(address_match(url, &terms)));
+        here.extend(links.into_iter().take(MAX_CANDIDATES.saturating_sub(here.len())));
         per_seed.push(here);
     }
 
@@ -393,6 +402,30 @@ fn has_prose(body: &str) -> bool {
 /// internet and a profile pointed at one site cannot be walked onto another by
 /// a page that links there. Doc 05 section 8.1's denylist is the second gate;
 /// this is the first, and it is structural.
+/// The words of a question worth matching against an address.
+fn query_terms(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() > 2)
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// How many of the question's words a link's path names.
+fn address_match(url: &str, terms: &[String]) -> usize {
+    let path = url
+        .split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .split_once('/')
+        .map_or("", |(_, path)| path)
+        .to_lowercase();
+    let words: BTreeSet<&str> = path
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    terms.iter().filter(|t| words.contains(t.as_str())).count()
+}
+
 fn links_within(page: &Fetched) -> Vec<String> {
     let Some(host) = host_of(&page.url) else {
         return Vec::new();
@@ -682,6 +715,49 @@ mod tests {
             out.passages.iter().map(|p| &p.source.locator).collect::<Vec<_>>()
         );
         assert!(!out.passages.is_empty(), "the same host page was lost too");
+    }
+
+    #[test]
+    fn an_article_named_as_a_seed_is_read_before_its_navigation() {
+        // The live failure: a seed that is an article with dozens of navigation
+        // links ahead of its prose. The article and the link that names the
+        // question have to be read inside the fetch budget.
+        let seed = "http://127.0.0.1:9/wiki/Basel_III";
+        let mut nav: Vec<String> = (0..40).map(|i| format!("Portal_{i}")).collect();
+        nav.push("Capital_requirement".into());
+        let links: String = nav.iter().map(|n| format!("<a href=\"{n}\">{n}</a> ")).collect();
+        let mut map = BTreeMap::new();
+        map.insert(
+            seed.to_string(),
+            format!(
+                "<html><head><title>Basel III</title></head><body><nav>{links}</nav>                 <p>Basel III requires banks to hold common equity tier 1 capital of 4.5 per                  cent of risk weighted assets, plus a capital conservation buffer of 2.5 per                  cent.</p></body></html>"
+            ),
+        );
+        for n in &nav {
+            map.insert(
+                format!("http://127.0.0.1:9/wiki/{n}"),
+                page(n, "Something that happened somewhere today."),
+            );
+        }
+        map.insert(
+            "http://127.0.0.1:9/wiki/Capital_requirement".to_string(),
+            page(
+                "Capital requirement",
+                "A capital requirement is the capital a bank must hold.",
+            ),
+        );
+        let config = WebConfig::new(vec![seed.to_string()]);
+        let out = retrieve(
+            &Fixture(map),
+            &config,
+            &packet("Basel III capital requirement buffer"),
+        );
+        let read: Vec<&str> = out.passages.iter().map(|p| p.source.locator.as_str()).collect();
+        assert!(read.contains(&seed), "the seed article was never read: {read:?}");
+        assert!(
+            read.iter().any(|l| l.ends_with("Capital_requirement")),
+            "the link naming the question was left behind the navigation: {read:?}"
+        );
     }
 
     #[test]

@@ -156,6 +156,9 @@ export class ViewportHost {
   /** Wire wheel and drag panning. Returns a teardown function. */
   attach(): () => void {
     const onWheel = (e: WheelEvent) => {
+      // A tile whose discussion outgrew it scrolls its own body first, and the
+      // board pans once that body reaches its end.
+      if (!e.ctrlKey && !e.metaKey && scrollsInside(e.target, e.deltaY)) return;
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) this.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
       else this.panBy(-e.deltaX, -e.deltaY);
@@ -196,4 +199,13 @@ export class ViewportHost {
       if (this.frame) cancelAnimationFrame(this.frame);
     };
   }
+}
+
+/** Whether a wheel over `target` should scroll a tile body rather than the board. */
+export function scrollsInside(target: EventTarget | null, deltaY: number): boolean {
+  if (!(target instanceof Element) || deltaY === 0) return false;
+  const body = target.closest<HTMLElement>('.card .body');
+  if (!body || body.scrollHeight <= body.clientHeight + 1) return false;
+  if (deltaY < 0) return body.scrollTop > 0;
+  return body.scrollTop + body.clientHeight < body.scrollHeight - 1;
 }

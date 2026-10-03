@@ -438,6 +438,12 @@ pub struct CardView {
     /// Doc 16 section 4: the page this card was saved as, which the card header
     /// shows as a chip. `None` on every card nobody has saved.
     pub page_id: Option<String>,
+    /// Why a failed card stopped, in words that name the fix, from its newest
+    /// `card.failed.v1`. The desktop shell also hears it as a push, but a
+    /// client that only reads the board, a browser for one, has no other way
+    /// to learn it. `None` on every card that did not fail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
@@ -489,6 +495,7 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
                     stages: Vec::new(),
                     position: parse_json(&r.get::<_, String>(13)?),
                     page_id: r.get(16)?,
+                    failure: None,
                 },
                 r.get(14)?,
             ))
@@ -502,6 +509,9 @@ pub fn read_cards(store: &Store, board_id: &str) -> Result<Vec<CardView>> {
         }
         card.citations = read_citations(store, &card.id)?;
         card.flags = read_flags(store, &card.id)?;
+        if card.status == "failed" {
+            card.failure = read_failure(store, &card.id)?;
+        }
         out.push(card);
     }
     Ok(out)
@@ -541,6 +551,20 @@ pub fn move_card(store: &mut Store, board_id: &str, card_id: &str, position: &Va
         },
     )?;
     Ok(())
+}
+
+/// The detail of a card's newest failure, when it recorded one.
+fn read_failure(store: &Store, card_id: &str) -> Result<Option<String>> {
+    let payload: Option<String> = store
+        .conn()
+        .query_row(
+            "SELECT payload FROM event WHERE card_id = ?1 AND event_type = 'card.failed.v1'
+             ORDER BY monotonic_index DESC LIMIT 1",
+            params![card_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(payload.and_then(|p| parse_json(&p)["failure"]["detail"].as_str().map(str::to_string)))
 }
 
 fn read_visual(store: &Store, visual_id: &str) -> Result<Option<Value>> {

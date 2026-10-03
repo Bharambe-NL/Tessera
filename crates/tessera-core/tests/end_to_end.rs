@@ -1957,6 +1957,19 @@ fn a_lesson_plans_against_what_a_lesson_may_open() {
         refused.contains("Add a site to search"),
         "the message sent the learner at the one retriever a lesson never reads: {refused}"
     );
+    // The board read carries the same words, so a client that hears no push,
+    // a browser for one, can still say why the card stopped.
+    let board = call(&router, &mut core, "board.get", json!({ "board_id": board_id }));
+    let failure = board["cards"]
+        .as_array()
+        .and_then(|cards| cards.iter().find(|c| c["status"] == "failed"))
+        .and_then(|c| c["failure"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        failure.contains("Add a site to search"),
+        "the failed card does not say why: {board}"
+    );
 
     // The packet says the same thing: on a lesson board, `local` is not on
     // offer, whatever the profile has configured.
@@ -4373,6 +4386,7 @@ fn a_card_with_nothing_to_keep_is_refused_with_a_reason() {
         stages: Vec::new(),
         position: json!({}),
         page_id: None,
+        failure: None,
     };
     let refused = tessera_core::vault::save_card_as_page(&mut core.store, &profile_id, None, &running);
     assert!(matches!(

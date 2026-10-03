@@ -167,6 +167,20 @@ export const COPY = {
   setupFolderIndexed: 'Documents indexed:',
   setupFolderUnreadable: 'Files this reader could not open:',
 
+  /**
+   * The planner's own refusal says "Add a site to search in Profile", and until
+   * this step nothing in the product could. Deep and research read only what a
+   * person pointed at, so on a profile with no folder this is the step that
+   * makes them run at all.
+   */
+  setupWebTitle: 'Search a website',
+  profileAddSources: 'Add a folder or a site',
+  setupWebNote:
+    'Deep and research answers read the pages you name here and the pages they link to on the same site. Paste an article or a site’s front page.',
+  setupWebUrl: 'Web address, starting with https://',
+  setupWebAdd: 'Add this site',
+  setupWebAdded: 'Searching',
+
   // ------------------------------------------------ Learn mode, doc 14 --
 
   /** Doc 14 section 4: a Learn toggle left of the depth selector. */

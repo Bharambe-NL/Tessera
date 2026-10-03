@@ -265,8 +265,10 @@ export function wireCardActions(): void {
   cardsEl.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null;
     const button = target?.closest<HTMLElement>('[data-act]');
+    // The tile, and the card the verb belongs to: a turn inside the tile carries
+    // its own id, so Rerun on a follow-up reruns the follow-up.
     const cardEl = target?.closest<HTMLElement>('.card');
-    const cardId = cardEl?.dataset.cardId;
+    const cardId = target?.closest<HTMLElement>('[data-card-id]')?.dataset.cardId;
     if (!button || !cardId || !state.boardId) return;
 
     switch (button.dataset.act) {
@@ -283,7 +285,7 @@ export function wireCardActions(): void {
           break;
         }
         if (input) input.value = '';
-        void submit(question, { parentCardId: cardId });
+        void submit(question, { parentCardId: followFrom(cardEl) ?? cardId });
         break;
       }
       case 'rerun': {
@@ -312,10 +314,20 @@ export function wireCardActions(): void {
     const input = (e.target as HTMLElement | null)?.closest<HTMLInputElement>('.followup');
     if (!input || e.key !== 'Enter') return;
     e.preventDefault();
-    const cardId = input.closest<HTMLElement>('.card')?.dataset.cardId;
+    const tile = input.closest<HTMLElement>('.card');
+    const cardId = followFrom(tile) ?? tile?.dataset.cardId;
     if (!cardId || !input.value.trim()) return;
     const question = input.value;
     input.value = '';
     void submit(question, { parentCardId: cardId });
   });
+}
+
+/**
+ * A follow-up continues the thread from its newest turn, so the core reads the
+ * whole discussion as the new card's ancestry and the answer lands at the end
+ * of the tile.
+ */
+function followFrom(tile: HTMLElement | null | undefined): string | undefined {
+  return tile?.querySelector<HTMLElement>('.foot')?.dataset.followFrom;
 }

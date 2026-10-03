@@ -56,9 +56,9 @@ describe('layout', () => {
     expect(b.position.x).toBeGreaterThanOrEqual(a.position.x + CARD_W);
   });
 
-  it('drops a follow-up below its parent by the parent measured height', () => {
+  it('drops a read card below its parent by the parent measured height', () => {
     const root = card('root');
-    const follow = card('follow', 'root', 'follow');
+    const follow = card('follow', 'root', 'read');
     // The lookup is what proves the injection: a taller parent must push its
     // follow-up further down, and nothing here has touched the DOM.
     layout([root, follow], (id) => (id === 'root' ? 500 : 200));
@@ -67,7 +67,7 @@ describe('layout', () => {
     expect(follow.position.y).toBe(root.position.y + 500 + GAP_Y);
 
     const shorter = card('root');
-    const under = card('follow', 'root', 'follow');
+    const under = card('follow', 'root', 'read');
     layout([shorter, under], (id) => (id === 'root' ? 250 : 200));
     expect(under.position.y).toBe(shorter.position.y + 250 + GAP_Y);
   });
@@ -83,11 +83,27 @@ describe('layout', () => {
 
   it('leaves a pinned card where it was dropped', () => {
     const root = card('root');
-    const pinned = card('pinned', 'root', 'follow');
+    const pinned = card('pinned', 'root', 'read');
     pinned.position = { x: 900, y: 40, dx: 0, dy: 0, pinned: true };
     layout([root, pinned], () => 200);
 
     expect(pinned.position.x).toBe(900);
     expect(pinned.position.y).toBe(40);
+  });
+
+  it('puts a follow-up inside its tile rather than in a slot of its own', () => {
+    const root = card('root');
+    const first = card('first', 'root', 'follow');
+    const second = card('second', 'first', 'follow');
+    const beside = card('beside', 'root', 'branch');
+    root.position.dx = 30;
+    layout([root, first, second, beside], () => 200);
+
+    // Both turns sit where their tile sits, the second through the first.
+    expect(first.position).toMatchObject({ x: root.position.x, y: root.position.y });
+    expect(second.position).toMatchObject({ x: root.position.x, y: root.position.y });
+    // And the branch still goes to the right, as if the turns took no room.
+    expect(beside.position.x).toBe(root.position.x - 30 + CARD_W + BRANCH_X);
+    expect(beside.position.y).toBe(root.position.y);
   });
 });

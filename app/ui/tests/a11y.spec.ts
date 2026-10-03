@@ -41,15 +41,24 @@ async function askOne(page: import('@playwright/test').Page): Promise<void> {
 async function contrastFailures(page: import('@playwright/test').Page) {
   return await page.evaluate(() => {
     const srgb = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    // Any CSS colour to sRGB through a canvas. The tokens are oklch, and the
+    // browser reports a computed oklch colour as `oklch(...)`, which an rgb()
+    // parser skips: this test once passed while most of the UI went unchecked,
+    // and a dark mode badge nobody could read went with it.
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    const cache = new Map<string, [number, number, number, number] | null>();
     const parse = (value: string): [number, number, number, number] | null => {
-      const m = value.match(/rgba?\(([^)]+)\)/);
-      if (!m) return null;
-      const parts = m[1]
-        .split(/[,\s/]+/)
-        .filter(Boolean)
-        .map(Number);
-      const [r, g, b, a] = parts;
-      return [r, g, b, a === undefined ? 1 : a];
+      if (!ctx || !value || value === 'transparent') return null;
+      const known = cache.get(value);
+      if (known !== undefined) return known;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = '#000';
+      ctx.fillStyle = value;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = Array.from(ctx.getImageData(0, 0, 1, 1).data);
+      const out: [number, number, number, number] = [r, g, b, a / 255];
+      cache.set(value, out);
+      return out;
     };
     const luminance = ([r, g, b]: [number, number, number, number]) =>
       0.2126 * srgb(r / 255) + 0.7152 * srgb(g / 255) + 0.0722 * srgb(b / 255);
@@ -103,37 +112,67 @@ async function contrastFailures(page: import('@playwright/test').Page) {
   });
 }
 
-test('text on the board meets the contrast floor', async ({ page }) => {
-  await askOne(page);
-  const failures = await contrastFailures(page);
-  expect(failures, JSON.stringify(failures, null, 2)).toEqual([]);
-});
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`in the ${colorScheme} theme`, () => {
+    test.use({ colorScheme });
 
-test('text in a flow and in a tile meets the contrast floor', async ({ page }) => {
-  // Doc 16 section 3.5's two shapes paint their own colours: a tile is a large
-  // numeral on a filled block and an edge label is small text on another, and
-  // neither is on screen when the board draws a tree.
-  for (const question of ['how does the review loop work?', 'the hall in numbers']) {
-    await freshCore(page);
-    await useCore(page);
-    await page.goto('/');
-    await page.locator('#ask').fill(question);
-    await page.locator('#ask').press('Enter');
-    await expect(page.locator('#cards .card .answer')).toBeVisible({ timeout: 30_000 });
-    const failures = await contrastFailures(page);
-    expect(failures, `${question}: ${JSON.stringify(failures, null, 2)}`).toEqual([]);
-  }
-});
+    test('text on the board meets the contrast floor, at every depth', async ({ page }) => {
+      // One card per depth, so each depth badge's colour pair is on screen.
+      await askOne(page);
+      for (const depth of ['deep', 'research'] as const) {
+        await page.locator(`[data-depth="${depth}"]`).first().click();
+        await page.locator('#ask').fill(`${QUESTION} (${depth})`);
+        await page.locator('#ask').press('Enter');
+        await expect(page.locator(`#cards .badge.${depth}`).first()).toBeVisible({
+          timeout: 30_000,
+        });
+      }
+      await expect(page.locator('#cards .card[data-status="running"]')).toHaveCount(0, {
+        timeout: 60_000,
+      });
+      const failures = await contrastFailures(page);
+      expect(failures, JSON.stringify(failures, null, 2)).toEqual([]);
+    });
 
-test('text on every page meets the contrast floor', async ({ page }) => {
-  await askOne(page);
-  for (const view of ['home', 'flags', 'library', 'notebook', 'pages', 'map', 'profile'] as const) {
-    await page.locator(`#rail [data-view="${view}"]`).click();
-    await expect(page.locator('#page-title')).not.toBeEmpty();
-    const failures = await contrastFailures(page);
-    expect(failures, `${view}: ${JSON.stringify(failures, null, 2)}`).toEqual([]);
-  }
-});
+    contrastAcrossTheProduct();
+  });
+}
+
+function contrastAcrossTheProduct(): void {
+  test('text in a flow and in a tile meets the contrast floor', async ({ page }) => {
+    // Doc 16 section 3.5's two shapes paint their own colours: a tile is a large
+    // numeral on a filled block and an edge label is small text on another, and
+    // neither is on screen when the board draws a tree.
+    for (const question of ['how does the review loop work?', 'the hall in numbers']) {
+      await freshCore(page);
+      await useCore(page);
+      await page.goto('/');
+      await page.locator('#ask').fill(question);
+      await page.locator('#ask').press('Enter');
+      await expect(page.locator('#cards .card .answer')).toBeVisible({ timeout: 30_000 });
+      const failures = await contrastFailures(page);
+      expect(failures, `${question}: ${JSON.stringify(failures, null, 2)}`).toEqual([]);
+    }
+  });
+
+  test('text on every page meets the contrast floor', async ({ page }) => {
+    await askOne(page);
+    for (const view of [
+      'home',
+      'flags',
+      'library',
+      'notebook',
+      'pages',
+      'map',
+      'profile',
+    ] as const) {
+      await page.locator(`#rail [data-view="${view}"]`).click();
+      await expect(page.locator('#page-title')).not.toBeEmpty();
+      const failures = await contrastFailures(page);
+      expect(failures, `${view}: ${JSON.stringify(failures, null, 2)}`).toEqual([]);
+    }
+  });
+}
 
 test('every verb on a card is reachable by keyboard', async ({ page }) => {
   await askOne(page);
@@ -201,12 +240,12 @@ test('flag rows are navigable with arrows', async ({ page }) => {
 
 test('the board reads as a document', async ({ page }) => {
   await askOne(page);
-  // Branch, so the document has a relation to state that the canvas draws as an
-  // edge and a screen reader cannot see.
+  // Follow up, so the document has a relation to state that the canvas shows
+  // by nesting the answer in its tile and a screen reader cannot see.
   const card = page.locator('#cards .card').first();
   await card.locator('.followup').fill('which article says so?');
   await card.locator('.followup').press('Enter');
-  await expect(page.locator('#cards .card')).toHaveCount(2, { timeout: 30_000 });
+  await expect(card.locator('.turn .answer')).toBeVisible({ timeout: 30_000 });
 
   await page.locator('#reading-toggle').click();
   const reading = page.locator('#reading');

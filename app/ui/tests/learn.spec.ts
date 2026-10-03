@@ -125,8 +125,11 @@ test('the next card opens as a follow-up on the card that was checked', async ({
   await check.locator('.opt').first().click();
   await expect(page.locator('#tutor-body .feedback')).toBeVisible({ timeout: 30_000 });
 
+  // A follow-up continues the tile it was asked in, so the next card is a
+  // turn inside the checked card's tile rather than a fourth tile.
   await page.locator('[data-learn-act="next"]').click();
-  await expect(page.locator('#cards .card')).toHaveCount(4, { timeout: 90_000 });
+  await expect(page.locator('#cards .card .turn')).toHaveCount(1, { timeout: 90_000 });
+  await expect(page.locator('#cards .card')).toHaveCount(3);
 });
 
 test('ending the session reports the score and leaves the board standing', async ({ page }) => {

@@ -22,9 +22,9 @@ test('a profile with no key opens on the setup screen', async ({ page }) => {
 
   await expect(page.locator('#page')).toBeVisible();
   await expect(page.locator('#page-title')).toHaveText('Set up Tessera');
-  await expect(page.locator('ol.setup .step')).toHaveCount(3);
+  await expect(page.locator('ol.setup .step')).toHaveCount(4);
 
-  // Doc 11 section 6: choose a pack, add a key, optionally a folder. The pack
+  // Doc 11 section 6: choose a pack, add a key, optionally a folder or a site. The pack
   // step is already satisfied because a profile always has one.
   await expect(page.locator('[data-step="1"]')).toHaveClass(/done/);
   await expect(page.locator('[data-step="2"]')).not.toHaveClass(/done/);
@@ -131,6 +131,43 @@ test('watching a folder reads it and says what it found', async ({ page }) => {
   await expect(page.locator('[data-step="3"]')).toHaveClass(/done/, { timeout: 30_000 });
   await expect(page.locator('[data-step="3"]')).toContainText('Internal documents');
   await expect(page.locator('[data-step="3"]')).toContainText('Documents indexed: 1');
+});
+
+test('a website can be added as a source, and a bad address is refused', async ({ page }) => {
+  // The planner tells a person with nothing to read to "Add a site to search
+  // in Profile", and until this step there was nowhere to do it.
+  await keylessCore(page);
+  await useCore(page);
+  await page.goto('/');
+
+  await page.locator('#setup-web-url').fill('ftp://example.org/');
+  await page.locator('#setup-web button[type="submit"]').click();
+  await expect(page.locator('.setup-error')).toContainText('https://', { timeout: 30_000 });
+  await expect(page.locator('[data-step="4"]')).not.toHaveClass(/done/);
+
+  await page.locator('#setup-web-url').fill('https://en.wikipedia.org/wiki/Basel_III');
+  await page.locator('#setup-web button[type="submit"]').click();
+  await expect(page.locator('[data-step="4"]')).toHaveClass(/done/, { timeout: 30_000 });
+  await expect(page.locator('[data-step="4"]')).toContainText('Basel_III');
+});
+
+test('a profile past first run reaches the sources from Profile', async ({ page }) => {
+  // Deep and research refuse with "Add a site to search in Profile", so Profile
+  // has to lead somewhere that can.
+  await freshCore(page);
+  await useCore(page);
+  await page.goto('/');
+  await expect(page.locator('#mode-label')).toHaveText('Live');
+
+  await page.locator('#rail [data-view="profile"]').click();
+  await page.locator('[data-go-setup]').click();
+  await expect(page.locator('#setup-web-url')).toBeVisible();
+
+  await page.locator('#setup-web-url').fill('https://example.org/');
+  await page.locator('#setup-web button[type="submit"]').click();
+  await expect(page.locator('[data-step="4"]')).toHaveClass(/done/, { timeout: 30_000 });
+  await page.locator('#setup-done').click();
+  await expect(page.locator('#page')).toBeHidden();
 });
 
 test('choosing a pack switches it', async ({ page }) => {

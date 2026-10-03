@@ -26,6 +26,8 @@ export interface SetupState {
   keySaved: boolean;
   /** What the folder step added, and what reading it found. */
   folderAdded: { label: string; indexed: number; unreadable: number } | null;
+  /** The sites added this session. The form stays, so a second can follow. */
+  webAdded: string[];
   busy: boolean;
   error: string | null;
 }
@@ -82,6 +84,16 @@ export function setupHTML(state: SetupState): string {
       button(COPY.setupFolderAdd, { submit: true }) +
       `</form>`;
 
+  const webBody =
+    (state.webAdded.length
+      ? `<p class="note">${COPY.setupWebAdded} ${state.webAdded.map(esc).join(', ')}</p>`
+      : '') +
+    `<form id="setup-web" class="setup-folder">` +
+    `<input id="setup-web-url" type="url" placeholder="${COPY.setupWebUrl}" ` +
+    `aria-label="${COPY.setupWebUrl}" autocomplete="off" />` +
+    button(COPY.setupWebAdd, { submit: true }) +
+    `</form>`;
+
   const ready = run.has_key || state.keySaved;
 
   return (
@@ -91,6 +103,7 @@ export function setupHTML(state: SetupState): string {
     step(1, COPY.setupPackTitle, true, packs, COPY.setupPackNote) +
     step(2, COPY.setupKeyTitle, ready, keyBody, COPY.setupKeyNote) +
     step(3, COPY.setupFolderTitle, state.folderAdded !== null, folderBody, COPY.setupFolderNote) +
+    step(4, COPY.setupWebTitle, state.webAdded.length > 0, webBody, COPY.setupWebNote) +
     `</ol>` +
     (state.error ? `<p class="setup-error" role="alert">${esc(state.error)}</p>` : '') +
     (state.busy ? `<p class="page-empty">${COPY.setupWorking}</p>` : '') +
